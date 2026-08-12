@@ -1,0 +1,17 @@
+{
+  "name": "Shoreline Watch",
+  "short_name": "Shoreline",
+  "description": "Live, offline distance to the Croatian shoreline.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#06151b",
+  "theme_color": "#06151b",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
