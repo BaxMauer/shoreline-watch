@@ -8,6 +8,7 @@ import {
   geoBearing,
   geoDistanceMetres,
   planWaterRoute,
+  routeGeometryIsWaterOnly,
   routeSegmentCrossesShoreline,
 } from "../lib/route-planning.ts";
 
@@ -81,6 +82,21 @@ const LONG_PENINSULA_PACK = {
       0.055, 0.015, 0.055, 0.085,
       0.055, 0.085, 0.045, 0.085,
       0.045, 0.085, 0.045, 0.015,
+    ],
+  },
+};
+
+const SHORT_ISLAND_PACK = {
+  ...ISLAND_PACK,
+  region: "Short route obstacle",
+  cellSize: 0.001,
+  segmentCount: 4,
+  cells: {
+    "10:10": [
+      0.01008, 0.0099, 0.01012, 0.0099,
+      0.01012, 0.0099, 0.01012, 0.0101,
+      0.01012, 0.0101, 0.01008, 0.0101,
+      0.01008, 0.0101, 0.01008, 0.0099,
     ],
   },
 };
@@ -205,13 +221,32 @@ test("speed settings affect ETA without changing geometric distance", () => {
   assert.ok(slow.route.estimatedSeconds > fast.route.estimatedSeconds * 1.9);
 });
 
-test("a sub-30-metre target produces a direct two-point route", () => {
+test("a sub-30-metre target produces a validated direct two-point route", () => {
   const start = { longitude: 0.01, latitude: 0.01 };
   const destination = { longitude: 0.0101, latitude: 0.01 };
   const result = planWaterRoute(ISLAND_PACK, start, destination, OPTIONS);
   assert.ok(result.route, result.failure);
   assert.deepEqual(result.route.points, [start, destination]);
   assert.ok(result.route.distanceMetres > 0 && result.route.distanceMetres < 30);
+});
+
+test("a sub-30-metre route cannot cross a tiny shoreline obstacle", () => {
+  const start = { longitude: 0.01, latitude: 0.01 };
+  const destination = { longitude: 0.0102, latitude: 0.01 };
+  assert.ok(geoDistanceMetres(start, destination) < 30);
+  assert.equal(routeGeometryIsWaterOnly(SHORT_ISLAND_PACK, [start, destination]), false);
+  assert.deepEqual(planWaterRoute(SHORT_ISLAND_PACK, start, destination, OPTIONS), { failure: "no-route" });
+});
+
+test("a short direct route uses conservative minimum-clearance sampling", () => {
+  const start = { longitude: 0.01, latitude: 0.01015 };
+  const destination = { longitude: 0.0102, latitude: 0.01015 };
+  const result = planWaterRoute(SHORT_ISLAND_PACK, start, destination, { ...OPTIONS, clearanceMetres: 20 });
+  assert.ok(result.route, result.failure);
+  assert.deepEqual(result.route.points, [start, destination]);
+  assert.equal(result.route.mode, "restricted");
+  assert.ok(result.route.minimumShoreDistanceMetres < 20);
+  assert.ok(result.route.restrictedDistanceMetres > 0);
 });
 
 test("negative and zero planning settings are sanitized to safe finite values", () => {
