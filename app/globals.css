@@ -89,6 +89,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .control-copy strong { display: block; font-size: .84rem; font-weight: 620; }
 .control-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: .72rem; }
 .vessel-select { min-width: 116px; border: 1px solid var(--line); border-radius: 6px; outline: 0; background: var(--panel); color: var(--foam); padding: 10px 31px 10px 11px; font-size: .79rem; }
+.alarm-state { border: 1px solid var(--line); border-radius: 999px; padding: 8px 11px; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .69rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.alarm-state.armed { border-color: rgba(115,229,203,.3); background: rgba(115,229,203,.07); color: var(--aqua); }
 .icon-button { border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--foam); padding: 10px 12px; font-size: .75rem; }
 .demo-control { margin-top: 23px; }
 .demo-control button { width: 100%; }

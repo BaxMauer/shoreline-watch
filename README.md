@@ -7,13 +7,12 @@ An installable, frontend-only web app that calculates the live distance from a p
 - high-accuracy live GPS tracking through `watchPosition()`
 - official Croatian coastline data from the Hydrographic Institute of the Republic of Croatia (HHI)
 - 270,000 indexed coastline segments covering all seven coastal counties
-- conservative warnings that subtract reported GPS accuracy from measured distance
-- Croatian vessel-distance presets: under 15 m, 15–30 m, and 30 m+
-- 8-knot coastal-zone warning inside 300 m
-- audio and supported-device vibration alerts
+- one conservative 300 m shoreline alarm that subtracts reported GPS accuracy from measured distance
+- an audio engine unlocked by the initial tap for reliable mobile-browser alarms
+- a clear three-beep alarm and supported-device vibration at each inward crossing
 - screen wake lock request during live tracking
 - service-worker caching for offline use
-- an eight-step Murter demo that exercises safe, speed, proximity, and critical states
+- a six-step Murter demo that crosses the 300 m boundary twice
 
 This is a prototype aid, not an approved navigation chart. It does not infer ports, anchorages, designated bathing zones, constrained channels, or regulatory exceptions.
 

@@ -9,7 +9,6 @@ import {
 } from "../lib/shoreline";
 
 type Mode = "idle" | "live" | "demo";
-type VesselClass = "small" | "medium" | "large";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -24,14 +23,9 @@ type Status = {
   level: "safe" | "warning" | "danger";
 };
 
-const LIMITS: Record<VesselClass, number> = {
-  small: 50,
-  medium: 150,
-  large: 300,
-};
-
-const DEMO_DISTANCES = [420, 315, 275, 145, 78, 48, 66, 108];
-const DEMO_SPEEDS = [12.2, 11.4, 10.6, 8.7, 6.2, 3.8, 4.1, 5.2];
+const SHORELINE_ALARM_METRES = 300;
+const DEMO_DISTANCES = [420, 315, 285, 245, 320, 285];
+const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
 
 function subscribeToConnection(callback: () => void) {
@@ -60,34 +54,33 @@ function ArrowIcon() {
   );
 }
 
-function playTone(level: "warning" | "danger" = "warning") {
-  const AudioContextClass = window.AudioContext ||
-    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextClass) return;
-  const context = new AudioContextClass();
+function scheduleTone(
+  context: AudioContext,
+  start: number,
+  duration: number,
+  frequency: number,
+  volume: number,
+) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
-  oscillator.type = level === "danger" ? "square" : "sine";
-  oscillator.frequency.value = level === "danger" ? 880 : 620;
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.025);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (level === "danger" ? 0.48 : 0.24));
+  oscillator.type = "square";
+  oscillator.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.025);
+  gain.gain.setValueAtTime(volume, start + duration - 0.04);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(gain);
   gain.connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.5);
-  oscillator.addEventListener("ended", () => context.close());
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.02);
 }
 
-function statusFor(distance: number | null, accuracy: number, speedKnots: number | null, limit: number): Status {
+function statusFor(distance: number | null, accuracy: number): Status {
   if (distance === null) return { label: "Waiting for position", level: "warning" };
   if (accuracy > 50) return { label: "GPS accuracy is weak", level: "warning" };
   const conservativeDistance = Math.max(0, distance - accuracy);
-  if (conservativeDistance < limit) return { label: `Inside ${limit} m shoreline limit`, level: "danger" };
-  if (conservativeDistance < limit + 30) return { label: "Approaching shoreline limit", level: "warning" };
-  if (distance < 300 && speedKnots !== null && speedKnots > 8) return { label: "Reduce speed below 8 kn", level: "danger" };
-  if (distance < 300) return { label: "Inside 300 m coastal zone", level: "warning" };
-  return { label: "Clear of configured limits", level: "safe" };
+  if (conservativeDistance < SHORELINE_ALARM_METRES) return { label: "Inside 300 m shoreline mark", level: "danger" };
+  return { label: "Outside 300 m shoreline mark", level: "safe" };
 }
 
 function formatDistance(distance: number | null) {
@@ -101,13 +94,15 @@ export default function ShorelineApp() {
   const [packError, setPackError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
   const [fix, setFix] = useState<Fix | null>(null);
-  const [vesselClass, setVesselClass] = useState<VesselClass>("small");
   const [demoIndex, setDemoIndex] = useState(0);
   const online = useSyncExternalStore(subscribeToConnection, () => navigator.onLine, () => true);
   const [trackingError, setTrackingError] = useState<string | null>(null);
+  const [alarmError, setAlarmError] = useState<string | null>(null);
+  const [alarmArmed, setAlarmArmed] = useState(false);
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
-  const previousLevel = useRef<Status["level"]>("safe");
+  const audioContext = useRef<AudioContext | null>(null);
+  const previousInside300 = useRef<boolean | null>(null);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -130,17 +125,70 @@ export default function ShorelineApp() {
   }, [pack, fix]);
 
   const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
-  const limit = LIMITS[vesselClass];
-  const status = statusFor(nearest?.distance ?? null, fix?.accuracy ?? 0, speedKnots, limit);
+  const status = statusFor(nearest?.distance ?? null, fix?.accuracy ?? 0);
+  const conservativeDistance = nearest && fix ? Math.max(0, nearest.distance - fix.accuracy) : null;
+  const inside300 = conservativeDistance !== null && conservativeDistance < SHORELINE_ALARM_METRES;
   const relativeBearing = nearest ? nearest.bearing - (fix?.heading ?? 0) : 0;
 
-  useEffect(() => {
-    if (mode !== "idle" && status.level !== previousLevel.current && status.level !== "safe") {
-      playTone(status.level);
-      if ("vibrate" in navigator) navigator.vibrate(status.level === "danger" ? [180, 100, 180] : 120);
+  const getAudioContext = useCallback(() => {
+    if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
+    const AudioContextClass = window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return null;
+    audioContext.current = new AudioContextClass();
+    return audioContext.current;
+  }, []);
+
+  const armAlarm = useCallback(async (playReadyChirp = true) => {
+    const context = getAudioContext();
+    if (!context) {
+      setAlarmError("This browser does not provide Web Audio alarms.");
+      return false;
     }
-    previousLevel.current = status.level;
-  }, [mode, status.level]);
+
+    try {
+      if (context.state === "suspended") await context.resume();
+      if (context.state !== "running") throw new Error("Audio did not start");
+      setAlarmArmed(true);
+      setAlarmError(null);
+      if (playReadyChirp) scheduleTone(context, context.currentTime + 0.02, 0.12, 660, 0.12);
+      return true;
+    } catch {
+      setAlarmArmed(false);
+      setAlarmError("Audio is blocked. Turn up media volume, then tap Test alarm.");
+      return false;
+    }
+  }, [getAudioContext]);
+
+  const soundAlarm = useCallback(async () => {
+    const context = getAudioContext();
+    if (!context) {
+      setAlarmError("This browser does not provide Web Audio alarms.");
+      return;
+    }
+
+    try {
+      if (context.state === "suspended") await context.resume();
+      if (context.state !== "running") throw new Error("Audio did not start");
+      const start = context.currentTime + 0.03;
+      scheduleTone(context, start, 0.32, 880, 0.3);
+      scheduleTone(context, start + 0.48, 0.32, 880, 0.3);
+      scheduleTone(context, start + 0.96, 0.48, 1040, 0.34);
+      setAlarmArmed(true);
+      setAlarmError(null);
+      if ("vibrate" in navigator) navigator.vibrate([220, 150, 220, 150, 350]);
+    } catch {
+      setAlarmArmed(false);
+      setAlarmError("Audio was suspended. Keep the app visible and tap Test alarm to re-arm it.");
+    }
+  }, [getAudioContext]);
+
+  useEffect(() => {
+    if (mode === "idle" || conservativeDistance === null) return;
+    const wasInside = previousInside300.current;
+    if (inside300 && wasInside !== true) void soundAlarm();
+    previousInside300.current = inside300;
+  }, [conservativeDistance, inside300, mode, soundAlarm]);
 
   const requestWakeLock = useCallback(async () => {
     const wakeNavigator = navigator as Navigator & {
@@ -160,16 +208,23 @@ export default function ShorelineApp() {
     wakeLock.current = null;
     setFix(null);
     setTrackingError(null);
+    setAlarmError(null);
     setMode("idle");
     setDemoIndex(0);
-    previousLevel.current = "safe";
+    previousInside300.current = null;
   }, []);
 
-  useEffect(() => stopTracking, [stopTracking]);
+  useEffect(() => {
+    return () => {
+      stopTracking();
+      audioContext.current?.close().catch(() => undefined);
+    };
+  }, [stopTracking]);
 
   const startLive = useCallback(async () => {
     if (!pack || !navigator.geolocation) return;
-    playTone("warning");
+    await armAlarm();
+    previousInside300.current = null;
     setMode("live");
     setTrackingError(null);
     await requestWakeLock();
@@ -197,7 +252,7 @@ export default function ShorelineApp() {
       },
       { enableHighAccuracy: true, maximumAge: 1_000, timeout: 15_000 },
     );
-  }, [pack, requestWakeLock]);
+  }, [armAlarm, pack, requestWakeLock]);
 
   const setDemoFix = useCallback((index: number) => {
     if (!pack) return;
@@ -214,13 +269,19 @@ export default function ShorelineApp() {
     });
   }, [pack]);
 
-  const startDemo = useCallback(() => {
-    playTone("warning");
+  const startDemo = useCallback(async () => {
+    await armAlarm();
+    previousInside300.current = null;
     setMode("demo");
     setTrackingError(null);
     setDemoIndex(0);
     setDemoFix(0);
-  }, [setDemoFix]);
+  }, [armAlarm, setDemoFix]);
+
+  const testAlarm = useCallback(async () => {
+    const armed = await armAlarm(false);
+    if (armed) await soundAlarm();
+  }, [armAlarm, soundAlarm]);
 
   const advanceDemo = useCallback(() => {
     const next = (demoIndex + 1) % DEMO_DISTANCES.length;
@@ -252,7 +313,7 @@ export default function ShorelineApp() {
               <h1>Know your margin.</h1>
             </div>
             <p className="intro-copy">
-              See your nearest shoreline distance, speed zone and GPS margin—even when mobile coverage drops away.
+              See your nearest shoreline distance and get an audible alert when you cross the 300 metre mark—even when mobile coverage drops away.
             </p>
           </section>
 
@@ -310,21 +371,18 @@ export default function ShorelineApp() {
 
           <div className="control-panel">
             <div className="control-row">
-              <div className="control-copy"><strong>Vessel category</strong><span>Sets a {limit} m shoreline warning</span></div>
-              <select className="vessel-select" value={vesselClass} onChange={(event) => setVesselClass(event.target.value as VesselClass)} aria-label="Vessel category">
-                <option value="small">Under 15 m</option>
-                <option value="medium">15–30 m</option>
-                <option value="large">30 m+</option>
-              </select>
+              <div className="control-copy"><strong>300 m shoreline alarm</strong><span>A short chirp confirms it is armed</span></div>
+              <span className={`alarm-state ${alarmArmed ? "armed" : ""}`}>{alarmArmed ? "Armed" : "Not armed"}</span>
             </div>
             <div className="control-row">
-              <div className="control-copy"><strong>Audible warning</strong><span>Test the current alarm volume</span></div>
-              <button className="icon-button" onClick={() => playTone("danger")}>Test alarm</button>
+              <div className="control-copy"><strong>Audible warning</strong><span>Three beeps at the 300 m crossing</span></div>
+              <button className="icon-button" onClick={testAlarm}>Test alarm</button>
             </div>
             {mode === "demo" && <div className="demo-control"><button className="secondary-button" onClick={advanceDemo}>Advance demo position</button></div>}
             {trackingError && <div className="error-box">{trackingError}</div>}
+            {alarmError && <div className="error-box">{alarmError}</div>}
             <p className="fine-print">
-              Coastline pack: HHI · {generatedDate ?? "loading"}. Warning distance uses measured distance minus reported GPS accuracy.
+              Coastline pack: HHI · {generatedDate ?? "loading"}. The 300 m crossing uses measured distance minus reported GPS accuracy.
             </p>
           </div>
         </section>
