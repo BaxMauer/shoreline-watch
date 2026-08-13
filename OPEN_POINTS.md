@@ -19,27 +19,28 @@ Last reviewed: 2026-08-13
     candidate, deploys it to Sites without manual source handling, and verifies
     the resulting production status and URL.
   - In progress: GitHub packages and marks the exact candidate with an immutable
-    provenance manifest. The hourly Sites deployment watch performs the
-    credentialed handoff; acceptance remains open until a newer candidate has
-    completed that path automatically in production.
+    provenance manifest. The hourly Sites deployment watch now synchronizes the
+    verified artifact into the Sites lifecycle checkout before checkpointing;
+    acceptance remains open until a newer candidate has completed that path
+    automatically in production.
 - [ ] **Repository merge policy is enforced.**
   - Acceptance: required checks are configured, auto-merge is enabled, direct
     unverified changes to `main` are prevented, and merged branches are deleted.
   - Blocked: the installed GitHub integration cannot mutate repository settings,
     and the current private-repository plan rejects ruleset creation. The exact
     owner settings are recorded in `.github/REPOSITORY_SETTINGS.md`.
-- [ ] **Weak GPS accuracy cannot produce `GO`.**
+- [x] **Weak GPS accuracy cannot produce `GO`.**
   - Acceptance: fixes worse than the agreed accuracy threshold produce an
     explicit unknown/check state in both distance and route modes, with boundary
     tests around the threshold.
-- [ ] **Stale GPS cannot produce `ROUTE READY`.**
+- [x] **Stale GPS cannot produce `ROUTE READY`.**
   - Acceptance: route calculation and readiness are gated by fresh, sufficiently
     accurate GPS, with stale/recovery regression tests.
-- [ ] **Navigation claims match the data model.**
+- [x] **Navigation claims match the data model.**
   - Acceptance: `GO`, `NO-GO`, and route copy are explicitly limited to
     shoreline geometry and clearance; the UI does not imply knowledge of depth,
     rocks, traffic, buoys, channels, weather, or legal restrictions.
-- [ ] **All route lengths receive shoreline validation.**
+- [x] **All route lengths receive shoreline validation.**
   - Acceptance: short direct routes and generated detours use the same exact or
     conservatively sampled crossing and minimum-clearance checks.
 
@@ -52,7 +53,7 @@ Last reviewed: 2026-08-13
 - [ ] Tighten start snapping: require trustworthy accuracy and remove the
   unconditional 120 m correction allowance.
 - [ ] Make auto-rerouting independent of high-frequency GPS effect resets.
-- [ ] Reacquire Wake Lock after visibility changes or a system release.
+- [x] Reacquire Wake Lock after visibility changes or a system release.
 - [ ] Replace forced service-worker activation/reload with a user-safe update
   flow that cannot interrupt an active trip.
 - [ ] Make offline-ready status reflect actual service-worker registration,
