@@ -12,10 +12,12 @@ import {
   type RoutePlanningFailure,
 } from "../lib/route-planning";
 import {
+  canPlanRoute,
   clampCruiseSpeed,
   clampRouteViewRange,
   formatRouteClearance,
   formatRouteEta,
+  getRouteReadinessState,
   parseRouteCoordinate,
   panRouteMapCentre,
   pinchRouteViewRange,
@@ -23,6 +25,10 @@ import {
   routeViewRangeForTarget,
   shouldRerouteRoute,
 } from "../lib/route-ui";
+import {
+  MAXIMUM_NAVIGATION_ACCURACY_METRES,
+  type GpsNavigationState,
+} from "../lib/navigation-metrics";
 import type { WarningConfig } from "../lib/warning-config";
 
 type Language = "de" | "en";
@@ -34,6 +40,9 @@ const COPY = {
     subtitle: "Ziel auf der Karte antippen",
     calculating: "Sichere Wasserroute wird berechnet …",
     noPosition: "Warte auf eine Position, um die Route zu starten.",
+    gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m ist zu ungenau. Für Routen sind höchstens ±${maximum} m erforderlich.`,
+    gpsStale: "GPS-Position ist veraltet. Route erst nach einem neuen Fix fortsetzen.",
+    gpsLost: "GPS-Signal verloren. Route erst nach einem neuen Fix fortsetzen.",
     distance: "Strecke",
     eta: "Fahrzeit",
     clearance: "Kleinster Abstand",
@@ -74,6 +83,9 @@ const COPY = {
     subtitle: "Tap a destination on the map",
     calculating: "Calculating a safe water route …",
     noPosition: "Waiting for a position to start routing.",
+    gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m is too inaccurate. Routing requires ±${maximum} m or better.`,
+    gpsStale: "GPS position is stale. Continue routing after a new fix.",
+    gpsLost: "GPS signal lost. Continue routing after a new fix.",
     distance: "Distance",
     eta: "Travel time",
     clearance: "Minimum clearance",
@@ -116,15 +128,16 @@ export default function RoutePlanner({
   fix,
   warningConfig,
   language,
-  gpsFresh,
+  gpsNavigationState,
 }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
   warningConfig: WarningConfig;
   language: Language;
-  gpsFresh: boolean;
+  gpsNavigationState: GpsNavigationState;
 }) {
   const copy = COPY[language];
+  const gpsReliable = canPlanRoute(gpsNavigationState, fix);
   const [target, setTarget] = useState<GeoPoint | null>(null);
   const [route, setRoute] = useState<PlannedRoute | null>(null);
   const [failure, setFailure] = useState<RoutePlanningFailure | null>(null);
@@ -147,7 +160,7 @@ export default function RoutePlanner({
 
   const calculate = useCallback((destination: GeoPoint, startOverride?: Fix) => {
     const start = startOverride ?? fix;
-    if (!pack || !start) return;
+    if (!pack || !start || !canPlanRoute(gpsNavigationState, start)) return;
     const sequence = ++calculationSequence.current;
     setPlanning(true);
     setFailure(null);
@@ -166,7 +179,12 @@ export default function RoutePlanner({
       plannedFrom.current = start;
       setPlanning(false);
     }, 30);
-  }, [cruiseSpeedKnots, fix, pack, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [cruiseSpeedKnots, fix, gpsNavigationState, pack, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+
+  useEffect(() => {
+    if (gpsReliable) return;
+    calculationSequence.current += 1;
+  }, [gpsReliable]);
 
   const selectTarget = useCallback((destination: GeoPoint) => {
     setTarget(destination);
@@ -177,19 +195,19 @@ export default function RoutePlanner({
   }, [calculate, fix]);
 
   useEffect(() => {
-    if (!target || !fix || !plannedFrom.current || planning) return;
+    if (!target || !fix || !gpsReliable || !plannedFrom.current || planning) return;
     if (!shouldRerouteRoute(plannedFrom.current, fix, warningConfig.distanceMetres)) return;
     const timer = window.setTimeout(() => calculate(target, fix), 500);
     return () => window.clearTimeout(timer);
-  }, [calculate, fix, planning, target, warningConfig.distanceMetres]);
+  }, [calculate, fix, gpsReliable, planning, target, warningConfig.distanceMetres]);
 
   useEffect(() => {
-    if (!target || !fix) return;
+    if (!target || !fix || !gpsReliable) return;
     const timer = window.setTimeout(() => calculate(target, fix), 0);
     return () => window.clearTimeout(timer);
   // Reroute when a planning preference changes; live position changes are handled by the distance threshold above.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cruiseSpeedKnots, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [cruiseSpeedKnots, gpsReliable, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const size = 360;
   const centre = size / 2;
@@ -226,7 +244,32 @@ export default function RoutePlanner({
   const nextRoutePoint = route && fix
     ? route.points.find((candidate, index) => index > 0 && geoDistanceMetres(fix, candidate) > 120) ?? target
     : null;
-  const nextBearing = fix && nextRoutePoint ? geoBearing(fix, nextRoutePoint) : null;
+  const nextBearing = gpsReliable && fix && nextRoutePoint ? geoBearing(fix, nextRoutePoint) : null;
+  const routeReadiness = getRouteReadinessState({
+    gpsNavigationState,
+    planning,
+    hasRoute: route !== null,
+    routeRestricted: route?.mode === "restricted",
+    hasFailure: failure !== null,
+  });
+  const routeStateClass = routeReadiness === "ready" ? "ready" : routeReadiness === "check" ? "check" : "";
+  const routeStateLabel = routeReadiness === "calculating"
+    ? "…"
+    : routeReadiness === "ready"
+      ? copy.ready
+      : routeReadiness === "check"
+        ? copy.check
+        : copy.waiting;
+  const gpsAccuracyLabel = fix && Number.isFinite(fix.accuracy)
+    ? Math.round(fix.accuracy ?? 0).toString()
+    : "—";
+  const gpsIssueMessage = gpsNavigationState === "inaccurate"
+    ? copy.gpsInaccurate(gpsAccuracyLabel, MAXIMUM_NAVIGATION_ACCURACY_METRES)
+    : gpsNavigationState === "stale"
+      ? copy.gpsStale
+      : gpsNavigationState === "lost"
+        ? copy.gpsLost
+        : copy.noPosition;
 
   const pointerMetrics = (element: HTMLDivElement) => {
     const bounds = element.getBoundingClientRect();
@@ -269,7 +312,7 @@ export default function RoutePlanner({
     const y = (event.clientY - bounds.top) / bounds.height * size;
     const wasSinglePointer = activePointers.current.size === 1;
     activePointers.current.delete(event.pointerId);
-    if (wasSinglePointer && !gesture?.moved && fix && !planning) selectTarget(routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y));
+    if (wasSinglePointer && !gesture?.moved && gpsReliable && !planning) selectTarget(routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y));
     if (activePointers.current.size > 0) beginGesture(event.currentTarget);
     else mapGesture.current = null;
   };
@@ -288,7 +331,7 @@ export default function RoutePlanner({
   const handleMapKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "+" || event.key === "=") setViewRangeMetres((value) => clampRouteViewRange(value / 1.7));
     else if (event.key === "-") setViewRangeMetres((value) => clampRouteViewRange(value * 1.7));
-    else if ((event.key === "Enter" || event.key === " ") && fix && !planning) selectTarget(mapCentre);
+    else if ((event.key === "Enter" || event.key === " ") && gpsReliable && !planning) selectTarget(mapCentre);
     else return;
     event.preventDefault();
   };
@@ -319,7 +362,7 @@ export default function RoutePlanner({
   return (
     <section className="route-planner" aria-label={copy.title}>
       <div className="route-map-wrap">
-        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={!fix} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
+        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={!gpsReliable} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
           <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-hidden="true">
             <defs>
               <pattern id="routeLandHatch" width="10" height="10" patternUnits="userSpaceOnUse">
@@ -341,7 +384,7 @@ export default function RoutePlanner({
         </div>
         <div className="route-map-heading">
           <span><strong>{copy.title}</strong><small>{copy.mapHint}</small></span>
-          <span className={`route-state ${route?.mode === "restricted" || failure ? "check" : route ? "ready" : ""}`}>{planning ? "…" : failure || route?.mode === "restricted" ? copy.check : route ? copy.ready : copy.waiting}</span>
+          <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
         </div>
         <div className="route-zoom" aria-label="Zoom">
           <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>
@@ -352,7 +395,7 @@ export default function RoutePlanner({
       </div>
 
       <div className="route-summary" aria-live="polite">
-        {planning ? <p className="route-message">{copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
+        {!gpsReliable ? <p className={`route-message ${gpsNavigationState === "waiting" ? "" : "error"}`}>{gpsIssueMessage}</p> : planning ? <p className="route-message">{copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
           <>
             <div className="route-metrics">
               <span><small>{copy.distance}</small><strong>{formatRouteDistance(route.distanceMetres).toFixed(route.distanceMetres < 18_520 ? 1 : 0)} {copy.nauticalMiles}</strong></span>
@@ -362,7 +405,7 @@ export default function RoutePlanner({
             </div>
             <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.safeDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
           </>
-        ) : <p className="route-message">{fix && gpsFresh ? copy.subtitle : copy.noPosition}</p>}
+        ) : <p className="route-message">{copy.subtitle}</p>}
       </div>
 
       <div className="route-controls">
@@ -370,7 +413,7 @@ export default function RoutePlanner({
         <div className="route-rule">{copy.rule(warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled)}</div>
         <details className="route-coordinates">
           <summary>{copy.coordinates}</summary>
-          <div><label>{copy.latitude}<input inputMode="decimal" value={coordinateLatitude} onChange={(event) => setCoordinateLatitude(event.target.value)} /></label><label>{copy.longitude}<input inputMode="decimal" value={coordinateLongitude} onChange={(event) => setCoordinateLongitude(event.target.value)} /></label><button type="button" onClick={useCoordinates}>{copy.useCoordinates}</button></div>
+          <div><label>{copy.latitude}<input inputMode="decimal" value={coordinateLatitude} onChange={(event) => setCoordinateLatitude(event.target.value)} /></label><label>{copy.longitude}<input inputMode="decimal" value={coordinateLongitude} onChange={(event) => setCoordinateLongitude(event.target.value)} /></label><button type="button" disabled={!gpsReliable} onClick={useCoordinates}>{copy.useCoordinates}</button></div>
         </details>
         {target && <button className="route-reset" type="button" onClick={reset}>{copy.reset}</button>}
       </div>

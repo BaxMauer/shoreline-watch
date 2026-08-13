@@ -35,7 +35,7 @@ test("plot range handles unavailable and invalid shore distances safely", () => 
 const POWER_INPUT = {
   enabled: true,
   tracking: true,
-  gpsIsFresh: true,
+  gpsIsReliable: true,
   distanceMetres: 700,
   farDistanceMetres: 2_000,
   lastMovementAt: 1_000,
@@ -52,7 +52,7 @@ test("power saver activates far offshore or after the configured stationary time
 
 test("power saver stays awake for danger, bad GPS, movement, or a temporary wake request", () => {
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, alertActive: true }), null);
-  assert.equal(getPowerSaveReason({ ...POWER_INPUT, gpsIsFresh: false }), null);
+  assert.equal(getPowerSaveReason({ ...POWER_INPUT, gpsIsReliable: false }), null);
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, lastMovementAt: 301_999 }), null);
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, wakeUntil: 400_000 }), null);
 });
@@ -67,6 +67,12 @@ test("power-saving thresholds activate exactly at their configured boundary", ()
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, distanceMetres: 2_000, lastMovementAt: 302_000 }), "far-shore");
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, distanceMetres: 700, now: 301_000 }), "stationary");
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, distanceMetres: 700, now: 300_999 }), null);
+});
+
+test("GO / NO GO honours the stabilized warning-zone state", () => {
+  assert.equal(getGoNoGoState(301, 300, true, true), "no-go");
+  assert.equal(getGoNoGoState(299, 300, true, false), "go");
+  assert.equal(getGoNoGoState(900, 300, false, false), "unknown");
 });
 
 const ANCHOR = {

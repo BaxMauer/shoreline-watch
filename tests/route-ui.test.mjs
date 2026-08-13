@@ -5,10 +5,12 @@ import {
   MAXIMUM_ROUTE_VIEW_METRES,
   MINIMUM_CRUISE_SPEED_KNOTS,
   MINIMUM_ROUTE_VIEW_METRES,
+  canPlanRoute,
   clampCruiseSpeed,
   clampRouteViewRange,
   formatRouteClearance,
   formatRouteEta,
+  getRouteReadinessState,
   parseRouteCoordinate,
   panRouteMapCentre,
   pinchRouteViewRange,
@@ -73,6 +75,32 @@ test("automatic rerouting uses at least 250 metres or the configured clearance",
   assert.equal(shouldRerouteRoute(null, plannedFrom, 300), false);
   assert.equal(shouldRerouteRoute(plannedFrom, { longitude: 15.001, latitude: 43 }, 300), false);
   assert.equal(shouldRerouteRoute(plannedFrom, { longitude: 15.005, latitude: 43 }, 300), true);
+});
+
+test("route calculation requires a fresh, accurate navigation fix", () => {
+  const fix = { longitude: 15, latitude: 43 };
+  assert.equal(canPlanRoute("reliable", fix), true);
+  assert.equal(canPlanRoute("reliable", null), false);
+  for (const state of ["waiting", "stale", "lost", "inaccurate"]) {
+    assert.equal(canPlanRoute(state, fix), false, state);
+  }
+});
+
+test("route readiness changes to check on stale GPS and recovers with the next reliable fix", () => {
+  const route = {
+    planning: false,
+    hasRoute: true,
+    routeRestricted: false,
+    hasFailure: false,
+  };
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "reliable" }), "ready");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "stale" }), "check");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "inaccurate" }), "check");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "reliable" }), "ready");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "reliable", routeRestricted: true }), "check");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "reliable", hasFailure: true }), "check");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "reliable", planning: true }), "calculating");
+  assert.equal(getRouteReadinessState({ ...route, gpsNavigationState: "waiting", hasRoute: false }), "waiting");
 });
 
 test("map pixel conversion keeps centre exact and cardinal directions correct", () => {

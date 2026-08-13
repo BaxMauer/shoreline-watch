@@ -46,10 +46,12 @@ export function updateStationaryState(
 export function getGoNoGoState(
   conservativeDistanceMetres: number | null,
   warningDistanceMetres: number,
-  gpsIsFresh: boolean,
+  gpsIsReliable: boolean,
+  warningZoneInside: boolean | null = null,
 ): GoNoGoState {
-  if (!gpsIsFresh || conservativeDistanceMetres === null) return "unknown";
-  return conservativeDistanceMetres < warningDistanceMetres ? "no-go" : "go";
+  if (!gpsIsReliable || conservativeDistanceMetres === null) return "unknown";
+  const inside = warningZoneInside ?? conservativeDistanceMetres < warningDistanceMetres;
+  return inside ? "no-go" : "go";
 }
 
 export function getPlotRangeMetres(nearestDistanceMetres: number | null, warningDistanceMetres: number) {
@@ -61,7 +63,7 @@ export function getPlotRangeMetres(nearestDistanceMetres: number | null, warning
 export function getPowerSaveReason({
   enabled,
   tracking,
-  gpsIsFresh,
+  gpsIsReliable,
   distanceMetres,
   farDistanceMetres,
   lastMovementAt,
@@ -72,7 +74,7 @@ export function getPowerSaveReason({
 }: {
   enabled: boolean;
   tracking: boolean;
-  gpsIsFresh: boolean;
+  gpsIsReliable: boolean;
   distanceMetres: number | null;
   farDistanceMetres: number;
   lastMovementAt: number;
@@ -81,7 +83,7 @@ export function getPowerSaveReason({
   wakeUntil: number;
   now: number;
 }): PowerSaveReason {
-  if (!enabled || !tracking || !gpsIsFresh || distanceMetres === null || alertActive || wakeUntil > now) return null;
+  if (!enabled || !tracking || !gpsIsReliable || distanceMetres === null || alertActive || wakeUntil > now) return null;
   if (distanceMetres >= farDistanceMetres) return "far-shore";
   const stationaryLongEnough = now - lastMovementAt >= stationaryAfterMinutes * 60_000;
   return stationaryLongEnough ? "stationary" : null;
