@@ -19,6 +19,7 @@ import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
 import {
+  getGoNoGoState,
   getPlotRangeMetres,
   getPowerSaveReason,
   updateStationaryState,
@@ -27,7 +28,9 @@ import {
 import {
   calculateClosingRate,
   classifyClosingRate,
+  getGpsNavigationState,
   getGpsSignalState,
+  MAXIMUM_NAVIGATION_ACCURACY_METRES,
   shouldUseSunlightMode,
   type DistanceSample,
 } from "../lib/navigation-metrics";
@@ -133,6 +136,7 @@ const COPY = {
     end: "Beenden",
     waitingGps: "Warte auf GPS",
     weakGps: "GPS ungenau",
+    weakGpsDetail: (accuracy: string, maximum: number) => `GPS-Genauigkeit ±${accuracy} m. Benötigt: ±${maximum} m oder besser.`,
     gpsStale: "GPS veraltet",
     gpsLost: "GPS-Signal verloren",
     gpsStaleDetail: (seconds: number) => `Letzte Position vor ${seconds} Sek.`,
@@ -245,6 +249,7 @@ const COPY = {
     end: "End",
     waitingGps: "Waiting for GPS",
     weakGps: "Low GPS accuracy",
+    weakGpsDetail: (accuracy: string, maximum: number) => `GPS accuracy ±${accuracy} m. Required: ±${maximum} m or better.`,
     gpsStale: "GPS data stale",
     gpsLost: "GPS signal lost",
     gpsStaleDetail: (seconds: number) => `Last position ${seconds} sec ago.`,
@@ -654,8 +659,11 @@ export default function ShorelineApp() {
     trackingStartedAt,
     clockNow,
   );
+  const gpsNavigationState = getGpsNavigationState(gpsSignalState, fix?.accuracy);
+  const gpsReliable = gpsNavigationState === "reliable";
   const gpsAgeSeconds = Math.max(0, Math.floor((clockNow - (fix?.timestamp ?? trackingStartedAt ?? clockNow)) / 1_000));
   const gpsSignalProblem = gpsSignalState === "stale" || gpsSignalState === "lost";
+  const gpsNavigationProblem = gpsNavigationState !== "reliable";
   const sunlightActive = mode !== "idle" && shouldUseSunlightMode(
     autoSunlight,
     clockNow,
@@ -688,22 +696,24 @@ export default function ShorelineApp() {
 
   const speedMetresPerSecond = fix?.speed ?? 0;
   const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
-  const conservativeDistance = nearest && fix ? Math.max(0, nearest.distance - fix.accuracy) : null;
+  const conservativeDistance = nearest && fix && Number.isFinite(fix.accuracy) && fix.accuracy >= 0
+    ? Math.max(0, nearest.distance - fix.accuracy)
+    : null;
   const rawInsideLimit = conservativeDistance !== null && conservativeDistance < warningConfig.distanceMetres;
   const insideLimit = warningZoneInside ?? rawInsideLimit;
   const speedViolation = warningConfig.speedWarningEnabled
     && insideLimit
     && speedKnots !== null
     && speedKnots > warningConfig.maxSpeedKnots;
-  const activeSpeedViolation = gpsSignalState === "fresh" && speedViolation;
+  const activeSpeedViolation = gpsReliable && speedViolation;
   const isUnderway = speedMetresPerSecond >= 0.77;
-  const closingTrend = classifyClosingRate(gpsSignalProblem ? null : closingRateMetresPerSecond);
-  const closingMetresPerMinute = closingRateMetresPerSecond === null || gpsSignalProblem
+  const closingTrend = classifyClosingRate(gpsReliable ? closingRateMetresPerSecond : null);
+  const closingMetresPerMinute = closingRateMetresPerSecond === null || !gpsReliable
     ? null
     : Math.round(Math.abs(closingRateMetresPerSecond) * 60);
 
   const courseRisk = useMemo<CourseRisk>(() => {
-    if (gpsSignalState !== "fresh" || !courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
+    if (!gpsReliable || !courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
     const secondsToShore = courseToShore.distance / speedMetresPerSecond;
     const secondsToMark = Math.max(0, (courseToShore.distance - warningConfig.distanceMetres) / speedMetresPerSecond);
 
@@ -722,15 +732,18 @@ export default function ShorelineApp() {
       };
     }
     return { level: "none", label: "", detail: "" };
-  }, [copy, courseToShore, gpsSignalState, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
+  }, [copy, courseToShore, gpsReliable, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
 
-  const goNoGoState = gpsSignalState !== "fresh" || conservativeDistance === null
-    ? "unknown"
-    : insideLimit ? "no-go" : "go";
+  const goNoGoState = getGoNoGoState(
+    conservativeDistance,
+    warningConfig.distanceMetres,
+    gpsReliable,
+    warningZoneInside,
+  );
   const powerSaveReason = getPowerSaveReason({
     enabled: warningConfig.powerSaveEnabled,
     tracking: mode === "live",
-    gpsIsFresh: gpsSignalState === "fresh",
+    gpsIsReliable: gpsReliable,
     distanceMetres: nearest?.distance ?? null,
     farDistanceMetres: warningConfig.powerSaveDistanceMetres,
     lastMovementAt: stationaryState.lastMovementAt,
@@ -931,7 +944,7 @@ export default function ShorelineApp() {
   }, [soundAlarm, triggerVibration, triggerVisualSignal, warningConfig.alertVolumePercent, warningConfig.warningSoundEnabled]);
 
   useEffect(() => {
-    if (mode === "idle" || conservativeDistance === null || gpsSignalState !== "fresh") return;
+    if (mode === "idle" || conservativeDistance === null || !gpsReliable) return;
     const wasInside = previousInsideLimit.current;
     const wasSpeedViolation = previousSpeedViolation.current;
     const nextInside = classifyWarningZone(wasInside, conservativeDistance, warningConfig.distanceMetres);
@@ -952,7 +965,7 @@ export default function ShorelineApp() {
     previousInsideLimit.current = nextInside;
     previousSpeedViolation.current = nextSpeedViolation;
     setWarningZoneInside(nextInside);
-  }, [conservativeDistance, gpsSignalState, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
+  }, [conservativeDistance, gpsReliable, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
 
   const requestWakeLock = useCallback(async () => {
     const wakeNavigator = navigator as Navigator & {
@@ -1098,22 +1111,25 @@ export default function ShorelineApp() {
   }, [demoIndex, setDemoFix]);
 
   const distanceUnit = nearest && nearest.distance >= 1_000 ? copy.kilometres : copy.metres;
-  const statusLabel = gpsSignalState === "lost"
+  const statusLabel = gpsNavigationState === "lost"
     ? copy.gpsLost
-    : gpsSignalState === "stale"
+    : gpsNavigationState === "stale"
       ? copy.gpsStale
-      : !nearest
+      : gpsNavigationState === "waiting" || !nearest
         ? copy.waitingGps
-        : (fix?.accuracy ?? 0) > 50
+        : gpsNavigationState === "inaccurate"
           ? copy.weakGps
           : activeSpeedViolation
             ? copy.speedDanger
             : insideLimit
               ? copy.insideLimit(warningConfig.distanceMetres)
               : copy.clearLimit(warningConfig.distanceMetres);
-  const gpsSignalDetail = gpsSignalState === "stale"
-    ? copy.gpsStaleDetail(gpsAgeSeconds)
-    : copy.gpsLostDetail(gpsAgeSeconds);
+  const gpsAccuracyLabel = fix && Number.isFinite(fix.accuracy) ? Math.round(fix.accuracy).toString() : "—";
+  const gpsNavigationDetail = gpsNavigationState === "inaccurate"
+    ? copy.weakGpsDetail(gpsAccuracyLabel, MAXIMUM_NAVIGATION_ACCURACY_METRES)
+    : gpsNavigationState === "stale"
+      ? copy.gpsStaleDetail(gpsAgeSeconds)
+      : copy.gpsLostDetail(gpsAgeSeconds);
   const closingDisplay = closingTrend === "approaching"
     ? `↓${closingMetresPerMinute}`
     : closingTrend === "receding"
@@ -1299,8 +1315,8 @@ export default function ShorelineApp() {
           </div>
 
           <div className="tracker-content">
-          <section hidden={trackerTab !== "distance"} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties} className={`instrument ${insideLimit && gpsSignalState === "fresh" ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsSignalProblem ? `gps-${gpsSignalState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
-            <div className={`status-pill ${gpsSignalState === "lost" || (gpsSignalState === "fresh" && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsSignalState === "stale" ? "stale" : ""} ${gpsSignalState === "waiting" || (!nearest && gpsSignalState === "fresh") ? "waiting" : ""}`} aria-live="assertive">
+          <section hidden={trackerTab !== "distance"} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties} className={`instrument ${insideLimit && gpsReliable ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsNavigationProblem ? `gps-${gpsNavigationState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
+            <div className={`status-pill ${gpsNavigationState === "lost" || (gpsReliable && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsNavigationState === "stale" || gpsNavigationState === "inaccurate" ? "stale" : ""} ${gpsNavigationState === "waiting" || (!nearest && gpsReliable) ? "waiting" : ""}`} aria-live="assertive">
               <span />{statusLabel}
             </div>
             <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""} ${warningSoundMuted ? "muted" : ""}`}>
@@ -1336,10 +1352,10 @@ export default function ShorelineApp() {
             />
 
             <div className="instrument-footer">
-              {gpsSignalProblem ? (
-                <div className={`course-alert gps-alert ${gpsSignalState}`} aria-live="assertive">
+              {gpsSignalProblem || gpsNavigationState === "inaccurate" ? (
+                <div className={`course-alert gps-alert ${gpsNavigationState}`} aria-live="assertive">
                   <span className="course-symbol">!</span>
-                  <span><strong>{gpsSignalState === "lost" ? copy.gpsLost : copy.gpsStale}</strong><small>{gpsSignalDetail}</small></span>
+                  <span><strong>{gpsNavigationState === "lost" ? copy.gpsLost : gpsNavigationState === "stale" ? copy.gpsStale : copy.weakGps}</strong><small>{gpsNavigationDetail}</small></span>
                 </div>
               ) : activeSpeedViolation ? (
                 <div className="course-alert danger speed-alert" aria-live="assertive">
@@ -1367,7 +1383,7 @@ export default function ShorelineApp() {
               fix={fix}
               warningConfig={warningConfig}
               language={language}
-              gpsFresh={gpsSignalState === "fresh"}
+              gpsNavigationState={gpsNavigationState}
             />
           </div>
           </div>

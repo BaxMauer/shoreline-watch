@@ -321,6 +321,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 
 .proximity-plot { position: absolute; z-index: 2; top: 50%; left: 50%; width: min(124%, 520px); height: auto; transform: translate(-50%, -31%); overflow: visible; }
 .gps-stale .proximity-plot { opacity: .62; }
+.gps-inaccurate .proximity-plot { opacity: .7; }
 .gps-lost .proximity-plot { opacity: .38; filter: grayscale(.45); }
 .gps-lost .distance-readout strong { opacity: .62; }
 .land-hatch-layer { pointer-events: none; }
@@ -359,11 +360,14 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .course-alert.danger small { color: #dca99f; }
 .course-alert.gps-alert.stale { background: rgba(65,49,17,.92); }
 .course-alert.gps-alert.stale .course-symbol { background: rgba(255,210,122,.16); color: var(--amber); }
+.course-alert.gps-alert.inaccurate { background: rgba(65,49,17,.92); }
+.course-alert.gps-alert.inaccurate .course-symbol { background: rgba(255,210,122,.16); color: var(--amber); }
 .course-alert.gps-alert.lost { background: rgba(75,22,18,.94); }
 .course-alert.gps-alert.lost .course-symbol { background: rgba(255,116,95,.16); color: var(--danger); }
 .course-alert.gps-alert.lost strong { color: #ffd4cd; }
 .course-alert.gps-alert.lost small { color: #dca99f; }
 .sunlight-mode .course-alert.gps-alert.stale { background: #ffedb1; }
+.sunlight-mode .course-alert.gps-alert.inaccurate { background: #ffedb1; }
 .sunlight-mode .course-alert.gps-alert.lost { background: #ffd6cf; }
 
 .compact-error { border-radius: 8px; background: rgba(255,116,95,.12); padding: 10px 13px; color: #ffd8d1; font-size: .76rem; line-height: 1.35; }

@@ -65,6 +65,17 @@ test("GO state and GPS problems are announced accessibly", () => {
   assert.match(app, /className=\{`course-alert gps-alert[\s\S]*aria-live="assertive"/);
 });
 
+test("distance and route readiness require fresh GPS at the accuracy threshold", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(app, /getGpsNavigationState\(gpsSignalState, fix\?\.accuracy\)/);
+  assert.match(app, /getGoNoGoState\([\s\S]*gpsReliable,[\s\S]*warningZoneInside/);
+  assert.match(app, /gpsIsReliable:\s*gpsReliable/);
+  assert.match(app, /gpsNavigationState=\{gpsNavigationState\}/);
+  assert.match(planner, /!canPlanRoute\(gpsNavigationState, start\)/);
+  assert.match(planner, /getRouteReadinessState\(\{/);
+  assert.match(planner, /if \(!target \|\| !fix \|\| !gpsReliable\) return;/);
+});
+
 test("power saver runs only in live mode, wakes on tap, and retains GPS tracking", () => {
   assert.match(app, /tracking:\s*mode === "live"/);
   assert.match(app, /setPowerSaveWakeUntil\(Date\.now\(\) \+ 30_000\)/);
@@ -117,13 +128,13 @@ test("route planning automatically recalculates after movement and preference ch
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /shouldRerouteRoute\(plannedFrom\.current, fix, warningConfig\.distanceMetres\)/);
   assert.match(planner, /window\.setTimeout\(\(\) => calculate\(target, fix\), 500\)/);
-  assert.match(planner, /\[cruiseSpeedKnots, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
+  assert.match(planner, /\[cruiseSpeedKnots, gpsReliable, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
 });
 
 test("route map controls are bounded and target selection requires a position", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /aria-disabled=\{!fix\}/);
-  assert.match(planner, /wasSinglePointer && !gesture\?\.moved && fix && !planning/);
+  assert.match(planner, /aria-disabled=\{!gpsReliable\}/);
+  assert.match(planner, /wasSinglePointer && !gesture\?\.moved && gpsReliable && !planning/);
   assert.match(planner, /clampRouteViewRange\(value \/ 1\.7\)/);
   assert.match(planner, /clampRouteViewRange\(value \* 1\.7\)/);
   assert.match(planner, /routeViewRangeForTarget\(current, fix, destination\)/);

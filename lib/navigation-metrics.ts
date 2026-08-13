@@ -9,6 +9,26 @@ export type DistanceSample = {
 export const GPS_STALE_AFTER_SECONDS = 10;
 export const GPS_LOST_AFTER_SECONDS = 30;
 export const GPS_INITIAL_FIX_TIMEOUT_SECONDS = 20;
+export const MAXIMUM_NAVIGATION_ACCURACY_METRES = 50;
+
+export type GpsNavigationState = "reliable" | "waiting" | "stale" | "lost" | "inaccurate";
+
+export function isGpsAccuracyReliable(accuracyMetres: number | null | undefined) {
+  return accuracyMetres !== null
+    && accuracyMetres !== undefined
+    && Number.isFinite(accuracyMetres)
+    && accuracyMetres >= 0
+    && accuracyMetres <= MAXIMUM_NAVIGATION_ACCURACY_METRES;
+}
+
+export function getGpsNavigationState(
+  signalState: GpsSignalState,
+  accuracyMetres: number | null | undefined,
+): GpsNavigationState {
+  if (signalState !== "fresh") return signalState;
+  if (accuracyMetres === null || accuracyMetres === undefined) return "waiting";
+  return isGpsAccuracyReliable(accuracyMetres) ? "reliable" : "inaccurate";
+}
 
 export function getGpsSignalState(
   live: boolean,

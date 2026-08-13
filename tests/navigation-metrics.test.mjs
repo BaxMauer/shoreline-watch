@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   calculateClosingRate,
   classifyClosingRate,
+  getGpsNavigationState,
   getGpsSignalState,
+  isGpsAccuracyReliable,
+  MAXIMUM_NAVIGATION_ACCURACY_METRES,
   shouldUseSunlightMode,
   solarElevationDegrees,
 } from "../lib/navigation-metrics.ts";
@@ -16,6 +19,27 @@ test("GPS state escalates from waiting to stale and lost at fixed thresholds", (
   assert.equal(getGpsSignalState(true, start, start, start + 10_000), "stale");
   assert.equal(getGpsSignalState(true, start, start, start + 30_000), "lost");
   assert.equal(getGpsSignalState(false, start, start, start + 90_000), "fresh");
+});
+
+test("navigation accuracy accepts the exact threshold and rejects weaker or invalid fixes", () => {
+  assert.equal(isGpsAccuracyReliable(0), true);
+  assert.equal(isGpsAccuracyReliable(MAXIMUM_NAVIGATION_ACCURACY_METRES), true);
+  assert.equal(isGpsAccuracyReliable(MAXIMUM_NAVIGATION_ACCURACY_METRES + 0.001), false);
+  for (const accuracy of [-1, Number.NaN, Number.POSITIVE_INFINITY, null, undefined]) {
+    assert.equal(isGpsAccuracyReliable(accuracy), false);
+  }
+});
+
+test("navigation state blocks weak and stale fixes and recovers on a new reliable fix", () => {
+  assert.equal(getGpsNavigationState("fresh", 5), "reliable");
+  assert.equal(getGpsNavigationState("fresh", 50.001), "inaccurate");
+  assert.equal(getGpsNavigationState("fresh", null), "waiting");
+  assert.equal(getGpsNavigationState("waiting", 5), "waiting");
+  assert.equal(getGpsNavigationState("stale", 5), "stale");
+  assert.equal(getGpsNavigationState("lost", 5), "lost");
+
+  const recoveredSignal = getGpsSignalState(true, 31_000, 0, 31_000);
+  assert.equal(getGpsNavigationState(recoveredSignal, 12), "reliable");
 });
 
 test("closing rate uses the distance trend across several samples", () => {

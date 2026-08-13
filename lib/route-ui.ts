@@ -1,9 +1,37 @@
 import { geoDistanceMetres, type GeoPoint } from "./route-planning.ts";
+import type { GpsNavigationState } from "./navigation-metrics.ts";
 
 export const MINIMUM_ROUTE_VIEW_METRES = 2_500;
 export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
+
+export type RouteReadinessState = "waiting" | "calculating" | "check" | "ready";
+
+export function canPlanRoute(gpsNavigationState: GpsNavigationState, fix: GeoPoint | null) {
+  return gpsNavigationState === "reliable" && fix !== null;
+}
+
+export function getRouteReadinessState({
+  gpsNavigationState,
+  planning,
+  hasRoute,
+  routeRestricted,
+  hasFailure,
+}: {
+  gpsNavigationState: GpsNavigationState;
+  planning: boolean;
+  hasRoute: boolean;
+  routeRestricted: boolean;
+  hasFailure: boolean;
+}): RouteReadinessState {
+  if (gpsNavigationState !== "reliable") {
+    return gpsNavigationState === "waiting" && !hasRoute ? "waiting" : "check";
+  }
+  if (planning) return "calculating";
+  if (hasFailure || routeRestricted) return "check";
+  return hasRoute ? "ready" : "waiting";
+}
 
 export function parseRouteCoordinate(value: string) {
   const normalized = value.trim().replace(",", ".");
