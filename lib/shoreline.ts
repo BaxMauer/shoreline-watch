@@ -185,7 +185,8 @@ export function findNearestShore(pack: CoastlinePack, longitude: number, latitud
       }
     }
 
-    if (nearest && ring >= 2 && nearest.distance < (ring - 1) * minimumCellSpan) break;
+    const nearestAfterRing = nearest as NearestShore | null;
+    if (nearestAfterRing && ring >= 2 && nearestAfterRing.distance < (ring - 1) * minimumCellSpan) break;
   }
 
   return nearest;
