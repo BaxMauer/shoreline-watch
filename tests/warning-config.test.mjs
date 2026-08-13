@@ -10,6 +10,19 @@ test("older saved settings receive safe alert-output defaults", () => {
   assert.equal(config.visualAlertsEnabled, true);
   assert.equal(config.vibrationEnabled, true);
   assert.equal(config.alertVolumePercent, 100);
+  assert.equal(config.suppressDistanceSoundAtSafeSpeed, true);
+  assert.equal(config.powerSaveEnabled, true);
+  assert.equal(config.powerSaveDistanceMetres, 2_000);
+  assert.equal(config.powerSaveStationaryMinutes, 5);
+});
+
+test("power-saving thresholds are sanitized to practical ranges", () => {
+  const low = sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, powerSaveDistanceMetres: 20, powerSaveStationaryMinutes: 0 });
+  assert.equal(low.powerSaveDistanceMetres, 500);
+  assert.equal(low.powerSaveStationaryMinutes, 1);
+  const high = sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, powerSaveDistanceMetres: 50_000, powerSaveStationaryMinutes: 99 });
+  assert.equal(high.powerSaveDistanceMetres, 20_000);
+  assert.equal(high.powerSaveStationaryMinutes, 30);
 });
 
 test("alert volume is configurable from muted to 200 percent", () => {

@@ -63,3 +63,16 @@ test("sunlight mode provides a dedicated high-contrast instrument", () => {
   assert.match(css, /\.sunlight-mode \.distance-readout strong\s*\{[^}]*#071b22/s);
   assert.match(css, /\.sunlight-mode\s*\{[^}]*--shore-stroke:\s*#385f64/s);
 });
+
+test("distance digits cannot collide on a narrow phone", () => {
+  assert.match(css, /\.distance-readout strong\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(css, /\.distance-readout strong\s*\{[^}]*letter-spacing:\s*-\.055em/s);
+  assert.match(css, /\.distance-readout strong\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.doesNotMatch(css, /\.distance-readout strong\s*\{[^}]*letter-spacing:\s*-\.10[5-9]em/s);
+});
+
+test("GO status and OLED power saver have dedicated high-contrast surfaces", () => {
+  assert.match(css, /\.go-no-go\.no-go\s*\{[^}]*#ff9b8c/s);
+  assert.match(css, /\.power-save-screen\s*\{[^}]*background:\s*#000/s);
+  assert.match(css, /\.power-save-active \*\s*\{[^}]*animation-play-state:\s*paused/s);
+});

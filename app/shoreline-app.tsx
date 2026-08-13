@@ -14,6 +14,8 @@ import {
 } from "../lib/shoreline";
 import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
 import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
+import { getGeneratedAlertPeak } from "../lib/audio-levels";
+import { getGoNoGoState, getPlotRangeMetres, getPowerSaveReason } from "../lib/navigation-display";
 import {
   calculateClosingRate,
   classifyClosingRate,
@@ -79,6 +81,8 @@ const COPY = {
     speedWarning: "Tempo im Küstenbereich prüfen",
     speedLimit: "Maximaltempo",
     speedWarningHint: (distance: number) => `Warnt über dem Limit innerhalb von ${distance} m.`,
+    quietAtSafeSpeed: "Distanzton nur bei zu hohem Tempo",
+    quietAtSafeSpeedHint: (speed: number) => `Bis ${speed} kn bleibt der Ton beim Einfahren aus. Bildschirmwarnung und Vibration bleiben aktiv.`,
     croatiaPreset: "Kroatienwerte",
     croatiaRule: "Kroatien: maximal 8 kn bis 300 m zur Küste; Glisierfahrt erst außerhalb von 300 m.",
     alertOutputs: "Alarmausgabe",
@@ -92,6 +96,18 @@ const COPY = {
     visualAlertsHint: "Deutlicher Farbblitz zusätzlich zum Ton.",
     vibration: "Vibration",
     vibrationHint: "Haptisches Signal, wenn das Gerät es unterstützt.",
+    energySaving: "Energiesparmodus",
+    energySavingHint: "OLED-schwarze Anzeige weit vor der Küste oder nach längerem Stillstand. GPS und Warnungen bleiben aktiv.",
+    energyDistance: "Aktiv ab Küstenabstand",
+    energyStationary: "Aktiv nach Stillstand",
+    energySection: "Energiesparen",
+    go: "GO",
+    noGo: "NO GO",
+    goUnknown: "PRÜFEN",
+    powerSavingActive: "Energiesparmodus aktiv",
+    powerFar: "Küste weit entfernt",
+    powerStationary: "Keine Bewegung erkannt",
+    tapToWake: "Antippen für volle Anzeige",
     muted: "Stumm",
     visualDistance: "Warnbereich erreicht",
     visualDistanceDetail: (distance: number) => `Weniger als ${distance} m zur Küste`,
@@ -170,6 +186,8 @@ const COPY = {
     speedWarning: "Check speed near shore",
     speedLimit: "Maximum speed",
     speedWarningHint: (distance: number) => `Warn above the limit while within ${distance} m.`,
+    quietAtSafeSpeed: "Distance sound only above speed limit",
+    quietAtSafeSpeedHint: (speed: number) => `At or below ${speed} kn, entering the zone stays silent. Screen alert and vibration remain active.`,
     croatiaPreset: "Croatia preset",
     croatiaRule: "Croatia: maximum 8 kn within 300 m of shore; planing only beyond 300 m.",
     alertOutputs: "Alert outputs",
@@ -183,6 +201,18 @@ const COPY = {
     visualAlertsHint: "A clear colour flash in addition to sound.",
     vibration: "Vibration",
     vibrationHint: "Haptic signal when supported by the device.",
+    energySaving: "Power-saving mode",
+    energySavingHint: "OLED-black display far from shore or after no movement. GPS and warnings stay active.",
+    energyDistance: "Activate beyond shoreline distance",
+    energyStationary: "Activate after stationary",
+    energySection: "Power saving",
+    go: "GO",
+    noGo: "NO GO",
+    goUnknown: "CHECK",
+    powerSavingActive: "Power-saving mode active",
+    powerFar: "Shoreline is far away",
+    powerStationary: "No movement detected",
+    tapToWake: "Tap for full display",
     muted: "Muted",
     visualDistance: "Warning zone reached",
     visualDistanceDetail: (distance: number) => `Less than ${distance} m from shore`,
@@ -261,13 +291,13 @@ function SoundIcon() {
   );
 }
 
-function scheduleTone(context: AudioContext, start: number, frequency: number, volumeMultiplier: number) {
+function scheduleTone(context: AudioContext, start: number, frequency: number, volumePercent: number) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "square";
   oscillator.frequency.setValueAtTime(frequency, start);
   gain.gain.setValueAtTime(0.0001, start);
-  const peak = Math.max(0.0001, 0.32 * volumeMultiplier);
+  const peak = Math.max(0.0001, getGeneratedAlertPeak(volumePercent));
   gain.gain.exponentialRampToValueAtTime(peak, start + 0.025);
   gain.gain.setValueAtTime(peak, start + 0.27);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
@@ -277,13 +307,13 @@ function scheduleTone(context: AudioContext, start: number, frequency: number, v
   oscillator.stop(start + 0.35);
 }
 
-function scheduleChimeTone(context: AudioContext, start: number, frequency: number, volumeMultiplier: number, duration = 0.36) {
+function scheduleChimeTone(context: AudioContext, start: number, frequency: number, volumePercent: number, duration = 0.36) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
-  oscillator.type = "sine";
+  oscillator.type = "triangle";
   oscillator.frequency.setValueAtTime(frequency, start);
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, 0.2 * volumeMultiplier), start + 0.025);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, getGeneratedAlertPeak(volumePercent)), start + 0.025);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(gain);
   gain.connect(context.destination);
@@ -467,6 +497,8 @@ export default function ShorelineApp() {
   const [alarmPlayback, setAlarmPlayback] = useState<AlarmPlayback>("idle");
   const [alarmPlayCount, setAlarmPlayCount] = useState(0);
   const [visualSignal, setVisualSignal] = useState<{ kind: VisualSignalKind; sequence: number } | null>(null);
+  const [powerSaveWakeUntil, setPowerSaveWakeUntil] = useState(0);
+  const [lastMovementAt, setLastMovementAt] = useState(0);
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
@@ -574,9 +606,7 @@ export default function ShorelineApp() {
     setClosingRateMetresPerSecond(calculateClosingRate(distanceSamples.current));
   }, [fix, mode, nearest]);
 
-  const viewRangeMetres = nearest
-    ? Math.min(6_000, Math.max(warningConfig.distanceMetres * 1.35, nearest.distance * 1.15 + 35))
-    : warningConfig.distanceMetres * 1.35;
+  const viewRangeMetres = getPlotRangeMetres(nearest?.distance ?? null, warningConfig.distanceMetres);
   const nearbySegments = useMemo(() => {
     if (!pack || !fix) return [];
     return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.15);
@@ -623,6 +653,25 @@ export default function ShorelineApp() {
     }
     return { level: "none", label: "", detail: "" };
   }, [copy, courseToShore, gpsSignalState, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
+
+  const goNoGoState = getGoNoGoState(conservativeDistance, warningConfig.distanceMetres, gpsSignalState === "fresh");
+  const powerSaveReason = getPowerSaveReason({
+    enabled: warningConfig.powerSaveEnabled,
+    tracking: mode === "live",
+    gpsIsFresh: gpsSignalState === "fresh",
+    distanceMetres: nearest?.distance ?? null,
+    farDistanceMetres: warningConfig.powerSaveDistanceMetres,
+    speedMetresPerSecond: fix?.speed ?? null,
+    lastMovementAt,
+    stationaryAfterMinutes: warningConfig.powerSaveStationaryMinutes,
+    alertActive: insideLimit || activeSpeedViolation || courseRisk.level !== "none" || visualSignal !== null,
+    wakeUntil: powerSaveWakeUntil,
+    now: clockNow,
+  });
+
+  const wakePowerDisplay = useCallback(() => {
+    setPowerSaveWakeUntil(Date.now() + 30_000);
+  }, []);
 
   const getAudioContext = useCallback(() => {
     if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
@@ -672,10 +721,9 @@ export default function ShorelineApp() {
       if (context.state === "suspended") await context.resume();
       if (context.state !== "running") return false;
       const start = context.currentTime + 0.02;
-      const volumeMultiplier = warningConfig.alertVolumePercent / 100;
-      scheduleTone(context, start, 880, volumeMultiplier);
-      scheduleTone(context, start + 0.46, 880, volumeMultiplier);
-      scheduleTone(context, start + 0.92, 1_040, volumeMultiplier);
+      scheduleTone(context, start, 880, warningConfig.alertVolumePercent);
+      scheduleTone(context, start + 0.46, 880, warningConfig.alertVolumePercent);
+      scheduleTone(context, start + 0.92, 1_040, warningConfig.alertVolumePercent);
       return true;
     } catch {
       return false;
@@ -774,13 +822,12 @@ export default function ShorelineApp() {
       if (context.state === "suspended") await context.resume();
       if (context.state !== "running") return false;
       const start = context.currentTime + 0.02;
-      const volumeMultiplier = warningConfig.alertVolumePercent / 100;
-      scheduleChimeTone(context, start, 523.25, volumeMultiplier, 0.32);
-      scheduleChimeTone(context, start + 0.14, 659.25, volumeMultiplier, 0.34);
-      scheduleChimeTone(context, start + 0.29, 783.99, volumeMultiplier, 0.48);
+      scheduleChimeTone(context, start, 523.25, warningConfig.alertVolumePercent, 0.26);
+      scheduleChimeTone(context, start + 0.3, 659.25, warningConfig.alertVolumePercent, 0.26);
+      scheduleChimeTone(context, start + 0.6, 783.99, warningConfig.alertVolumePercent, 0.38);
       setAlarmError(null);
       setAlarmPlayback("playing");
-      window.setTimeout(() => setAlarmPlayback("ready"), 820);
+      window.setTimeout(() => setAlarmPlayback("ready"), 1_050);
       return true;
     } catch {
       setAlarmPlayback("blocked");
@@ -817,14 +864,18 @@ export default function ShorelineApp() {
     const wasInside = previousInsideLimit.current;
     const wasSpeedViolation = previousSpeedViolation.current;
     const transition = getWarningTransition(wasInside, insideLimit, wasSpeedViolation, activeSpeedViolation);
-    const outputPlan = getWarningOutputPlan(transition, warningConfig);
+    const outputPlan = getWarningOutputPlan(transition, {
+      ...warningConfig,
+      speedKnown: speedKnots !== null,
+      speedViolation: activeSpeedViolation,
+    });
     if (outputPlan.visual) triggerVisualSignal(outputPlan.visual);
     if (outputPlan.vibration) triggerVibration(outputPlan.vibration);
     if (outputPlan.sound === "warning") void soundAlarm();
     if (outputPlan.sound === "safe") void soundSafeChime();
     previousInsideLimit.current = insideLimit;
     previousSpeedViolation.current = activeSpeedViolation;
-  }, [activeSpeedViolation, conservativeDistance, gpsSignalState, insideLimit, mode, soundAlarm, soundSafeChime, triggerVibration, triggerVisualSignal, warningConfig]);
+  }, [activeSpeedViolation, conservativeDistance, gpsSignalState, insideLimit, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
 
   const requestWakeLock = useCallback(async () => {
     const wakeNavigator = navigator as Navigator & {
@@ -858,6 +909,8 @@ export default function ShorelineApp() {
     distanceSamples.current = [];
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    setPowerSaveWakeUntil(0);
+    setLastMovementAt(0);
   }, []);
 
   useEffect(() => () => {
@@ -882,6 +935,8 @@ export default function ShorelineApp() {
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
     const startedAt = Date.now();
+    setLastMovementAt(startedAt);
+    setPowerSaveWakeUntil(0);
     setClockNow(startedAt);
     setTrackingStartedAt(startedAt);
     setClosingRateMetresPerSecond(null);
@@ -892,6 +947,7 @@ export default function ShorelineApp() {
     navigator.storage?.persist?.().catch(() => false);
     watchId.current = navigator.geolocation.watchPosition(
       (position) => {
+        if (position.coords.speed !== null && position.coords.speed >= 0.5) setLastMovementAt(position.timestamp);
         setFix({
           longitude: position.coords.longitude,
           latitude: position.coords.latitude,
@@ -998,7 +1054,7 @@ export default function ShorelineApp() {
       : { title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) };
 
   return (
-    <main className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""} ${sunlightActive ? "sunlight-mode" : ""}`}>
+    <main className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""} ${sunlightActive ? "sunlight-mode" : ""} ${powerSaveReason ? "power-save-active" : ""}`}>
       <audio
         className="alarm-audio"
         ref={alarmAudio}
@@ -1074,10 +1130,16 @@ export default function ShorelineApp() {
                   <input type="checkbox" checked={warningConfig.speedWarningEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, speedWarningEnabled: event.target.checked }))} />
                 </label>
                 {warningConfig.speedWarningEnabled && (
-                  <label className="setting-row" htmlFor="speed-limit">
-                    <span>{copy.speedLimit}</span>
-                    <span className="number-field"><input id="speed-limit" type="number" inputMode="decimal" min="1" max="40" step="0.5" value={warningConfig.maxSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, maxSpeedKnots: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>kn</b></span>
-                  </label>
+                  <>
+                    <label className="setting-row" htmlFor="speed-limit">
+                      <span>{copy.speedLimit}</span>
+                      <span className="number-field"><input id="speed-limit" type="number" inputMode="decimal" min="1" max="40" step="0.5" value={warningConfig.maxSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, maxSpeedKnots: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>kn</b></span>
+                    </label>
+                    <label className="toggle-row">
+                      <span><strong>{copy.quietAtSafeSpeed}</strong><small>{copy.quietAtSafeSpeedHint(warningConfig.maxSpeedKnots)}</small></span>
+                      <input type="checkbox" checked={warningConfig.suppressDistanceSoundAtSafeSpeed} onChange={(event) => setWarningConfig((current) => ({ ...current, suppressDistanceSoundAtSafeSpeed: event.target.checked }))} />
+                    </label>
+                  </>
                 )}
                 <p className="settings-section-label">{copy.alertOutputs}</p>
                 <label className="volume-setting" htmlFor="alert-volume">
@@ -1101,6 +1163,23 @@ export default function ShorelineApp() {
                   <span><strong>{copy.vibration}</strong><small>{copy.vibrationHint}</small></span>
                   <input type="checkbox" checked={warningConfig.vibrationEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, vibrationEnabled: event.target.checked }))} />
                 </label>
+                <p className="settings-section-label">{copy.energySection}</p>
+                <label className="toggle-row">
+                  <span><strong>{copy.energySaving}</strong><small>{copy.energySavingHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.powerSaveEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, powerSaveEnabled: event.target.checked }))} />
+                </label>
+                {warningConfig.powerSaveEnabled && (
+                  <>
+                    <label className="setting-row" htmlFor="power-distance">
+                      <span>{copy.energyDistance}</span>
+                      <span className="number-field"><input id="power-distance" type="number" inputMode="numeric" min="500" max="20000" step="100" value={warningConfig.powerSaveDistanceMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveDistanceMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
+                    </label>
+                    <label className="setting-row" htmlFor="power-stationary">
+                      <span>{copy.energyStationary}</span>
+                      <span className="number-field"><input id="power-stationary" type="number" inputMode="numeric" min="1" max="30" step="1" value={warningConfig.powerSaveStationaryMinutes} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveStationaryMinutes: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>min</b></span>
+                    </label>
+                  </>
+                )}
                 <div className="preset-row">
                   <p>{copy.croatiaRule}</p>
                   <button type="button" onClick={() => setWarningConfig((current) => ({ ...current, distanceMetres: CROATIA_WARNING_CONFIG.distanceMetres, speedWarningEnabled: CROATIA_WARNING_CONFIG.speedWarningEnabled, maxSpeedKnots: CROATIA_WARNING_CONFIG.maxSpeedKnots }))}>{copy.croatiaPreset}</button>
@@ -1142,6 +1221,10 @@ export default function ShorelineApp() {
               <span>{copy.nearestShore}</span>
               <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
               <small>{gpsSignalProblem && nearest ? `${copy.lastKnown} · ${distanceUnit}` : nearest ? distanceUnit : copy.acquiring}</small>
+              <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+                <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+                <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
+              </div>
             </div>
 
             <ProximityPlot
@@ -1193,6 +1276,17 @@ export default function ShorelineApp() {
             </div>
           )}
         </section>
+      )}
+
+      {powerSaveReason && (
+        <button className="power-save-screen" type="button" onClick={wakePowerDisplay} aria-label={copy.tapToWake}>
+          <span className="power-save-mode">{copy.powerSavingActive}</span>
+          <span className="power-save-go"><i aria-hidden="true">✓</i> {copy.go}</span>
+          <strong>{formatDistance(nearest?.distance ?? null, language)}</strong>
+          <small>{distanceUnit}</small>
+          <em>{powerSaveReason === "far-shore" ? copy.powerFar : copy.powerStationary}</em>
+          <span className="power-save-wake">{copy.tapToWake}</span>
+        </button>
       )}
     </main>
   );

@@ -8,6 +8,10 @@ export type WarningOutputOptions = {
   safeSoundEnabled: boolean;
   visualAlertsEnabled: boolean;
   vibrationEnabled: boolean;
+  speedWarningEnabled: boolean;
+  speedKnown: boolean;
+  speedViolation: boolean;
+  suppressDistanceSoundAtSafeSpeed: boolean;
 };
 
 export function getWarningTransition(
@@ -25,11 +29,16 @@ export function getWarningTransition(
 export function getWarningOutputPlan(transition: WarningTransition, options: WarningOutputOptions) {
   if (transition === "none") return { sound: null, visual: null, vibration: null } as const;
   const isSafe = transition === "exit-distance";
+  const suppressDistanceSound = transition === "enter-distance"
+    && options.suppressDistanceSoundAtSafeSpeed
+    && options.speedWarningEnabled
+    && options.speedKnown
+    && !options.speedViolation;
   const sound: WarningSound = options.alertVolumePercent <= 0
     ? null
     : isSafe
       ? options.safeSoundEnabled ? "safe" : null
-      : options.warningSoundEnabled ? "warning" : null;
+      : options.warningSoundEnabled && !suppressDistanceSound ? "warning" : null;
   const visual: WarningVisual = options.visualAlertsEnabled
     ? isSafe ? "safe" : transition === "enter-speed" ? "speed" : "distance"
     : null;
