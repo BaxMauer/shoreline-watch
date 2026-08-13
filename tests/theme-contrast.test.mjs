@@ -50,3 +50,10 @@ test("tracking instrument is borderless and coast uses a readable stroke", () =>
   assert.match(css, /\.instrument\s*\{[^}]*box-shadow:\s*none;/s);
   assert.match(css, /\.shore-segment\s*\{[^}]*stroke-width:\s*3;/s);
 });
+
+test("visual alerts include distinct danger and safe-water signals", () => {
+  assert.match(css, /\.visual-signal\.distance, \.visual-signal\.speed\s*\{[^}]*danger-screen-signal/s);
+  assert.match(css, /\.visual-signal\.safe\s*\{[^}]*safe-screen-signal/s);
+  assert.match(css, /@keyframes danger-screen-signal/);
+  assert.match(css, /@keyframes safe-screen-signal/);
+});

@@ -1,4 +1,4 @@
-const CACHE_NAME = "shoreline-watch-v6";
+const CACHE_NAME = "shoreline-watch-v7";
 const CORE = ["/", "/manifest.webmanifest", "/favicon.svg", "/data/croatia-coastline.json", "/audio/shoreline-alarm.wav"];
 
 self.addEventListener("install", (event) => {

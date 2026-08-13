@@ -12,18 +12,15 @@ import {
   getNearbyShorelineSegments,
   offsetFromShore,
 } from "../lib/shoreline";
-import { getWarningTransition } from "../lib/warning-state";
+import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
+import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
 type RiskLevel = "none" | "warning" | "danger";
 type Language = "de" | "en";
 type Theme = "ocean" | "xp" | "dark" | "nautical";
-type WarningConfig = {
-  distanceMetres: number;
-  speedWarningEnabled: boolean;
-  maxSpeedKnots: number;
-};
+type VisualSignalKind = "distance" | "speed" | "safe";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -39,11 +36,6 @@ type CourseRisk = {
   detail: string;
 };
 
-const CROATIA_WARNING_CONFIG: WarningConfig = {
-  distanceMetres: 300,
-  speedWarningEnabled: true,
-  maxSpeedKnots: 8,
-};
 const WARNING_CONFIG_STORAGE_KEY = "shoreline-warning-config-v1";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
@@ -70,14 +62,32 @@ const COPY = {
     themeDark: "Dark Mode",
     themeNautical: "Klassisch nautisch",
     settings: "Warnungen",
-    settingsSummary: (distance: number, speedEnabled: boolean, speed: number) =>
-      speedEnabled ? `${distance} m · ${speed} kn` : `${distance} m · Tempo aus`,
+    settingsSummary: (distance: number, speedEnabled: boolean, speed: number, volume: number) =>
+      speedEnabled ? `${distance} m · ${speed} kn · ${volume} %` : `${distance} m · ${volume} %`,
     distanceWarning: "Warnabstand",
     speedWarning: "Tempo im Küstenbereich prüfen",
     speedLimit: "Maximaltempo",
     speedWarningHint: (distance: number) => `Warnt über dem Limit innerhalb von ${distance} m.`,
     croatiaPreset: "Kroatienwerte",
     croatiaRule: "Kroatien: maximal 8 kn bis 300 m zur Küste; Glisierfahrt erst außerhalb von 300 m.",
+    alertOutputs: "Alarmausgabe",
+    alertVolume: "Lautstärke",
+    volumeBoostHint: "Über 100 % wird der Alarm zusätzlich verstärkt.",
+    warningSound: "Warnalarm",
+    warningSoundHint: "Beim Einfahren oder Überschreiten des Tempolimits.",
+    safeSound: "Freifahrtton",
+    safeSoundHint: "Beim Verlassen des Warnbereichs.",
+    visualAlerts: "Bildschirmwarnung",
+    visualAlertsHint: "Deutlicher Farbblitz zusätzlich zum Ton.",
+    vibration: "Vibration",
+    vibrationHint: "Haptisches Signal, wenn das Gerät es unterstützt.",
+    muted: "Stumm",
+    visualDistance: "Warnbereich erreicht",
+    visualDistanceDetail: (distance: number) => `Weniger als ${distance} m zur Küste`,
+    visualSpeed: "Tempo reduzieren",
+    visualSpeedDetail: (speed: number) => `Mehr als ${speed} kn im Küstenbereich`,
+    visualSafe: "Abstand wieder frei",
+    visualSafeDetail: (distance: number) => `Mehr als ${distance} m zur Küste`,
     live: "Live",
     end: "Beenden",
     waitingGps: "Warte auf GPS",
@@ -132,14 +142,32 @@ const COPY = {
     themeDark: "Dark mode",
     themeNautical: "Old-school nautical",
     settings: "Warnings",
-    settingsSummary: (distance: number, speedEnabled: boolean, speed: number) =>
-      speedEnabled ? `${distance} m · ${speed} kn` : `${distance} m · speed off`,
+    settingsSummary: (distance: number, speedEnabled: boolean, speed: number, volume: number) =>
+      speedEnabled ? `${distance} m · ${speed} kn · ${volume}%` : `${distance} m · ${volume}%`,
     distanceWarning: "Warning distance",
     speedWarning: "Check speed near shore",
     speedLimit: "Maximum speed",
     speedWarningHint: (distance: number) => `Warn above the limit while within ${distance} m.`,
     croatiaPreset: "Croatia preset",
     croatiaRule: "Croatia: maximum 8 kn within 300 m of shore; planing only beyond 300 m.",
+    alertOutputs: "Alert outputs",
+    alertVolume: "Volume",
+    volumeBoostHint: "Above 100% adds extra alarm amplification.",
+    warningSound: "Warning alarm",
+    warningSoundHint: "When entering the zone or exceeding its speed limit.",
+    safeSound: "Safe-water chime",
+    safeSoundHint: "When leaving the warning zone.",
+    visualAlerts: "Screen alert",
+    visualAlertsHint: "A clear colour flash in addition to sound.",
+    vibration: "Vibration",
+    vibrationHint: "Haptic signal when supported by the device.",
+    muted: "Muted",
+    visualDistance: "Warning zone reached",
+    visualDistanceDetail: (distance: number) => `Less than ${distance} m from shore`,
+    visualSpeed: "Reduce speed",
+    visualSpeedDetail: (speed: number) => `Above ${speed} kn near shore`,
+    visualSafe: "Distance clear again",
+    visualSafeDetail: (distance: number) => `More than ${distance} m from shore`,
     live: "Live",
     end: "End",
     waitingGps: "Waiting for GPS",
@@ -203,14 +231,15 @@ function SoundIcon() {
   );
 }
 
-function scheduleTone(context: AudioContext, start: number, frequency: number) {
+function scheduleTone(context: AudioContext, start: number, frequency: number, volumeMultiplier: number) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "square";
   oscillator.frequency.setValueAtTime(frequency, start);
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.32, start + 0.025);
-  gain.gain.setValueAtTime(0.32, start + 0.27);
+  const peak = Math.max(0.0001, 0.32 * volumeMultiplier);
+  gain.gain.exponentialRampToValueAtTime(peak, start + 0.025);
+  gain.gain.setValueAtTime(peak, start + 0.27);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
   oscillator.connect(gain);
   gain.connect(context.destination);
@@ -218,36 +247,18 @@ function scheduleTone(context: AudioContext, start: number, frequency: number) {
   oscillator.stop(start + 0.35);
 }
 
-function scheduleChimeTone(context: AudioContext, start: number, frequency: number, duration = 0.36) {
+function scheduleChimeTone(context: AudioContext, start: number, frequency: number, volumeMultiplier: number, duration = 0.36) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "sine";
   oscillator.frequency.setValueAtTime(frequency, start);
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.2, start + 0.025);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, 0.2 * volumeMultiplier), start + 0.025);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(gain);
   gain.connect(context.destination);
   oscillator.start(start);
   oscillator.stop(start + duration + 0.03);
-}
-
-function sanitizeWarningConfig(value: unknown): WarningConfig {
-  if (!value || typeof value !== "object") return CROATIA_WARNING_CONFIG;
-  const candidate = value as Partial<WarningConfig>;
-  const distanceMetres = typeof candidate.distanceMetres === "number" && Number.isFinite(candidate.distanceMetres)
-    ? Math.min(2_000, Math.max(50, Math.round(candidate.distanceMetres / 10) * 10))
-    : CROATIA_WARNING_CONFIG.distanceMetres;
-  const maxSpeedKnots = typeof candidate.maxSpeedKnots === "number" && Number.isFinite(candidate.maxSpeedKnots)
-    ? Math.min(40, Math.max(1, Math.round(candidate.maxSpeedKnots * 10) / 10))
-    : CROATIA_WARNING_CONFIG.maxSpeedKnots;
-  return {
-    distanceMetres,
-    maxSpeedKnots,
-    speedWarningEnabled: typeof candidate.speedWarningEnabled === "boolean"
-      ? candidate.speedWarningEnabled
-      : CROATIA_WARNING_CONFIG.speedWarningEnabled,
-  };
 }
 
 function formatDistance(distance: number | null, language: Language) {
@@ -421,10 +432,15 @@ export default function ShorelineApp() {
   const [alarmArmed, setAlarmArmed] = useState(false);
   const [alarmPlayback, setAlarmPlayback] = useState<AlarmPlayback>("idle");
   const [alarmPlayCount, setAlarmPlayCount] = useState(0);
+  const [visualSignal, setVisualSignal] = useState<{ kind: VisualSignalKind; sequence: number } | null>(null);
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
+  const alarmMediaSource = useRef<MediaElementAudioSourceNode | null>(null);
+  const alarmGain = useRef<GainNode | null>(null);
+  const visualSignalTimer = useRef<number | null>(null);
+  const visualSignalSequence = useRef(0);
   const previousInsideLimit = useRef<boolean | null>(null);
   const previousSpeedViolation = useRef<boolean | null>(null);
   const copy = COPY[language];
@@ -539,6 +555,38 @@ export default function ShorelineApp() {
     return audioContext.current;
   }, []);
 
+  const ensureAlarmAudioGraph = useCallback(() => {
+    const context = getAudioContext();
+    const audio = alarmAudio.current;
+    if (!context || !audio) return context;
+    if (!alarmMediaSource.current || !alarmGain.current) {
+      try {
+        alarmMediaSource.current = context.createMediaElementSource(audio);
+        alarmGain.current = context.createGain();
+        alarmMediaSource.current.connect(alarmGain.current);
+        alarmGain.current.connect(context.destination);
+      } catch {
+        alarmMediaSource.current = null;
+        alarmGain.current = null;
+      }
+    }
+    if (alarmGain.current) {
+      alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+    } else {
+      audio.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+    }
+    return context;
+  }, [getAudioContext, warningConfig.alertVolumePercent]);
+
+  useEffect(() => {
+    const context = audioContext.current;
+    if (context && alarmGain.current) {
+      alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+    } else if (alarmAudio.current) {
+      alarmAudio.current.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+    }
+  }, [warningConfig.alertVolumePercent]);
+
   const soundWebAudioFallback = useCallback(async () => {
     const context = getAudioContext();
     if (!context) return false;
@@ -546,20 +594,21 @@ export default function ShorelineApp() {
       if (context.state === "suspended") await context.resume();
       if (context.state !== "running") return false;
       const start = context.currentTime + 0.02;
-      scheduleTone(context, start, 880);
-      scheduleTone(context, start + 0.46, 880);
-      scheduleTone(context, start + 0.92, 1_040);
+      const volumeMultiplier = warningConfig.alertVolumePercent / 100;
+      scheduleTone(context, start, 880, volumeMultiplier);
+      scheduleTone(context, start + 0.46, 880, volumeMultiplier);
+      scheduleTone(context, start + 0.92, 1_040, volumeMultiplier);
       return true;
     } catch {
       return false;
     }
-  }, [getAudioContext]);
+  }, [getAudioContext, warningConfig.alertVolumePercent]);
 
   const primeAlarm = useCallback(async () => {
     const audio = alarmAudio.current;
     if (!audio) return false;
     try {
-      const context = getAudioContext();
+      const context = ensureAlarmAudioGraph();
       if (context?.state === "suspended") await context.resume();
       if (context?.state === "running") {
         const oscillator = context.createOscillator();
@@ -571,14 +620,23 @@ export default function ShorelineApp() {
         oscillator.stop(context.currentTime + 0.02);
       }
       audio.muted = false;
-      audio.volume = 1;
+      if (alarmGain.current && context) {
+        alarmGain.current.gain.setValueAtTime(0.0001, context.currentTime);
+      } else {
+        audio.volume = 0;
+      }
       audio.currentTime = 0;
       await audio.play();
       window.setTimeout(() => {
         audio.pause();
         audio.currentTime = 0;
+        if (alarmGain.current && context) {
+          alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+        } else {
+          audio.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+        }
         setAlarmPlayback("ready");
-      }, 110);
+      }, 70);
       setAlarmArmed(true);
       setAlarmError(null);
       setAlarmPlayback("playing");
@@ -589,7 +647,7 @@ export default function ShorelineApp() {
       setAlarmError(copy.soundBlocked);
       return false;
     }
-  }, [copy.soundBlocked, getAudioContext]);
+  }, [copy.soundBlocked, ensureAlarmAudioGraph, warningConfig.alertVolumePercent]);
 
   const soundAlarm = useCallback(async () => {
     const audio = alarmAudio.current;
@@ -598,17 +656,22 @@ export default function ShorelineApp() {
       return false;
     }
     try {
+      const context = ensureAlarmAudioGraph();
+      if (context?.state === "suspended") await context.resume();
       audio.pause();
       audio.currentTime = 0;
       audio.muted = false;
-      audio.volume = 1;
+      if (alarmGain.current && context) {
+        alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+      } else {
+        audio.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+      }
       setAlarmPlayback("starting");
       await audio.play();
       setAlarmArmed(true);
       setAlarmError(null);
       setAlarmPlayback("playing");
       setAlarmPlayCount((count) => count + 1);
-      if ("vibrate" in navigator) navigator.vibrate([260, 140, 260, 140, 520]);
       return true;
     } catch {
       const fallbackWorked = await soundWebAudioFallback();
@@ -624,7 +687,7 @@ export default function ShorelineApp() {
       setAlarmError(copy.soundBlocked);
       return false;
     }
-  }, [copy.soundBlocked, copy.soundMissing, soundWebAudioFallback]);
+  }, [copy.soundBlocked, copy.soundMissing, ensureAlarmAudioGraph, soundWebAudioFallback, warningConfig.alertVolumePercent]);
 
   const soundSafeChime = useCallback(async () => {
     const context = getAudioContext();
@@ -633,9 +696,10 @@ export default function ShorelineApp() {
       if (context.state === "suspended") await context.resume();
       if (context.state !== "running") return false;
       const start = context.currentTime + 0.02;
-      scheduleChimeTone(context, start, 523.25, 0.32);
-      scheduleChimeTone(context, start + 0.14, 659.25, 0.34);
-      scheduleChimeTone(context, start + 0.29, 783.99, 0.48);
+      const volumeMultiplier = warningConfig.alertVolumePercent / 100;
+      scheduleChimeTone(context, start, 523.25, volumeMultiplier, 0.32);
+      scheduleChimeTone(context, start + 0.14, 659.25, volumeMultiplier, 0.34);
+      scheduleChimeTone(context, start + 0.29, 783.99, volumeMultiplier, 0.48);
       setAlarmError(null);
       setAlarmPlayback("playing");
       window.setTimeout(() => setAlarmPlayback("ready"), 820);
@@ -645,21 +709,44 @@ export default function ShorelineApp() {
       setAlarmError(copy.soundBlocked);
       return false;
     }
-  }, [copy.soundBlocked, getAudioContext]);
+  }, [copy.soundBlocked, getAudioContext, warningConfig.alertVolumePercent]);
+
+  const triggerVisualSignal = useCallback((kind: VisualSignalKind) => {
+    if (!warningConfig.visualAlertsEnabled) return;
+    visualSignalSequence.current += 1;
+    const sequence = visualSignalSequence.current;
+    setVisualSignal({ kind, sequence });
+    if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
+    visualSignalTimer.current = window.setTimeout(() => {
+      setVisualSignal((current) => current?.sequence === sequence ? null : current);
+      visualSignalTimer.current = null;
+    }, kind === "safe" ? 2_000 : 2_400);
+  }, [warningConfig.visualAlertsEnabled]);
+
+  const triggerVibration = useCallback((kind: "danger" | "safe") => {
+    if (!warningConfig.vibrationEnabled || !("vibrate" in navigator)) return;
+    navigator.vibrate(kind === "danger" ? [300, 120, 300, 120, 600] : [90, 70, 160]);
+  }, [warningConfig.vibrationEnabled]);
+
+  const testWarningOutputs = useCallback(() => {
+    triggerVisualSignal("distance");
+    triggerVibration("danger");
+    if (warningConfig.warningSoundEnabled && warningConfig.alertVolumePercent > 0) void soundAlarm();
+  }, [soundAlarm, triggerVibration, triggerVisualSignal, warningConfig.alertVolumePercent, warningConfig.warningSoundEnabled]);
 
   useEffect(() => {
     if (mode === "idle" || conservativeDistance === null) return;
     const wasInside = previousInsideLimit.current;
     const wasSpeedViolation = previousSpeedViolation.current;
     const transition = getWarningTransition(wasInside, insideLimit, wasSpeedViolation, speedViolation);
-    if (transition === "enter-distance" || transition === "enter-speed") {
-      void soundAlarm();
-    } else if (transition === "exit-distance") {
-      void soundSafeChime();
-    }
+    const outputPlan = getWarningOutputPlan(transition, warningConfig);
+    if (outputPlan.visual) triggerVisualSignal(outputPlan.visual);
+    if (outputPlan.vibration) triggerVibration(outputPlan.vibration);
+    if (outputPlan.sound === "warning") void soundAlarm();
+    if (outputPlan.sound === "safe") void soundSafeChime();
     previousInsideLimit.current = insideLimit;
     previousSpeedViolation.current = speedViolation;
-  }, [conservativeDistance, insideLimit, mode, soundAlarm, soundSafeChime, speedViolation]);
+  }, [conservativeDistance, insideLimit, mode, soundAlarm, soundSafeChime, speedViolation, triggerVibration, triggerVisualSignal, warningConfig]);
 
   const requestWakeLock = useCallback(async () => {
     const wakeNavigator = navigator as Navigator & {
@@ -683,6 +770,9 @@ export default function ShorelineApp() {
     setAlarmError(null);
     setAlarmArmed(false);
     setAlarmPlayback("idle");
+    setVisualSignal(null);
+    if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
+    visualSignalTimer.current = null;
     setMode("idle");
     setDemoIndex(0);
     previousInsideLimit.current = null;
@@ -693,6 +783,7 @@ export default function ShorelineApp() {
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
     wakeLock.current?.release().catch(() => undefined);
     audioContext.current?.close().catch(() => undefined);
+    if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
   }, []);
 
   const startLive = useCallback(async () => {
@@ -700,7 +791,13 @@ export default function ShorelineApp() {
       setTrackingError(copy.locationUnavailable);
       return;
     }
-    void primeAlarm();
+    if ((warningConfig.warningSoundEnabled || warningConfig.safeSoundEnabled) && warningConfig.alertVolumePercent > 0) {
+      void primeAlarm();
+    } else {
+      setAlarmArmed(false);
+      setAlarmPlayback("idle");
+      setAlarmError(null);
+    }
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
     setMode("live");
@@ -729,7 +826,7 @@ export default function ShorelineApp() {
       },
       { enableHighAccuracy: true, maximumAge: 1_000, timeout: 15_000 },
     );
-  }, [copy, pack, primeAlarm, requestWakeLock]);
+  }, [copy, pack, primeAlarm, requestWakeLock, warningConfig.alertVolumePercent, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
 
   const setDemoFix = useCallback((index: number) => {
     if (!pack) return;
@@ -747,14 +844,20 @@ export default function ShorelineApp() {
   }, [pack, warningConfig.distanceMetres]);
 
   const startDemo = useCallback(() => {
-    void primeAlarm();
+    if ((warningConfig.warningSoundEnabled || warningConfig.safeSoundEnabled) && warningConfig.alertVolumePercent > 0) {
+      void primeAlarm();
+    } else {
+      setAlarmArmed(false);
+      setAlarmPlayback("idle");
+      setAlarmError(null);
+    }
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
     setMode("demo");
     setTrackingError(null);
     setDemoIndex(0);
     setDemoFix(0);
-  }, [primeAlarm, setDemoFix]);
+  }, [primeAlarm, setDemoFix, warningConfig.alertVolumePercent, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
 
   const advanceDemo = useCallback(() => {
     const next = (demoIndex + 1) % DEMO_DISTANCE_FACTORS.length;
@@ -772,13 +875,21 @@ export default function ShorelineApp() {
         : insideLimit
           ? copy.insideLimit(warningConfig.distanceMetres)
           : copy.clearLimit(warningConfig.distanceMetres);
-  const alarmLabel = alarmPlayback === "playing" || alarmPlayback === "starting"
-    ? copy.playing
-    : alarmPlayback === "blocked"
-      ? copy.blocked
-      : alarmArmed
-        ? copy.ready
-        : copy.notReady;
+  const warningSoundMuted = !warningConfig.warningSoundEnabled || warningConfig.alertVolumePercent === 0;
+  const alarmLabel = warningSoundMuted
+    ? copy.muted
+    : alarmPlayback === "playing" || alarmPlayback === "starting"
+      ? copy.playing
+      : alarmPlayback === "blocked"
+        ? copy.blocked
+        : alarmArmed
+          ? copy.ready
+          : copy.notReady;
+  const visualSignalCopy = visualSignal?.kind === "speed"
+    ? { title: copy.visualSpeed, detail: copy.visualSpeedDetail(warningConfig.maxSpeedKnots) }
+    : visualSignal?.kind === "safe"
+      ? { title: copy.visualSafe, detail: copy.visualSafeDetail(warningConfig.distanceMetres) }
+      : { title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) };
 
   return (
     <main className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""}`}>
@@ -841,7 +952,7 @@ export default function ShorelineApp() {
             <details className="warning-settings">
               <summary>
                 <span>{copy.settings}</span>
-                <strong>{copy.settingsSummary(warningConfig.distanceMetres, warningConfig.speedWarningEnabled, warningConfig.maxSpeedKnots)}</strong>
+                <strong>{copy.settingsSummary(warningConfig.distanceMetres, warningConfig.speedWarningEnabled, warningConfig.maxSpeedKnots, warningConfig.alertVolumePercent)}</strong>
               </summary>
               <div className="settings-content">
                 <label className="setting-row" htmlFor="warning-distance">
@@ -858,9 +969,31 @@ export default function ShorelineApp() {
                     <span className="number-field"><input id="speed-limit" type="number" inputMode="decimal" min="1" max="40" step="0.5" value={warningConfig.maxSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, maxSpeedKnots: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>kn</b></span>
                   </label>
                 )}
+                <p className="settings-section-label">{copy.alertOutputs}</p>
+                <label className="volume-setting" htmlFor="alert-volume">
+                  <span><strong>{copy.alertVolume}</strong><small>{copy.volumeBoostHint}</small></span>
+                  <output htmlFor="alert-volume">{warningConfig.alertVolumePercent}%</output>
+                  <input id="alert-volume" type="range" min="0" max="200" step="5" value={warningConfig.alertVolumePercent} onChange={(event) => setWarningConfig((current) => sanitizeWarningConfig({ ...current, alertVolumePercent: event.target.valueAsNumber }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.warningSound}</strong><small>{copy.warningSoundHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.warningSoundEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, warningSoundEnabled: event.target.checked }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.safeSound}</strong><small>{copy.safeSoundHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.safeSoundEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, safeSoundEnabled: event.target.checked }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.visualAlerts}</strong><small>{copy.visualAlertsHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.visualAlertsEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, visualAlertsEnabled: event.target.checked }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.vibration}</strong><small>{copy.vibrationHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.vibrationEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, vibrationEnabled: event.target.checked }))} />
+                </label>
                 <div className="preset-row">
                   <p>{copy.croatiaRule}</p>
-                  <button type="button" onClick={() => setWarningConfig(CROATIA_WARNING_CONFIG)}>{copy.croatiaPreset}</button>
+                  <button type="button" onClick={() => setWarningConfig((current) => ({ ...current, distanceMetres: CROATIA_WARNING_CONFIG.distanceMetres, speedWarningEnabled: CROATIA_WARNING_CONFIG.speedWarningEnabled, maxSpeedKnots: CROATIA_WARNING_CONFIG.maxSpeedKnots }))}>{copy.croatiaPreset}</button>
                 </div>
               </div>
             </details>
@@ -882,9 +1015,15 @@ export default function ShorelineApp() {
             <div className={`status-pill ${insideLimit || speedViolation ? "danger" : ""} ${!nearest ? "waiting" : ""}`} aria-live="assertive">
               <span />{statusLabel}
             </div>
-            <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""}`}>
+            <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""} ${warningSoundMuted ? "muted" : ""}`}>
               <span />{alarmLabel}
             </div>
+
+            {visualSignal && (
+              <div key={visualSignal.sequence} className={`visual-signal ${visualSignal.kind}`} role="status" aria-live={visualSignal.kind === "safe" ? "polite" : "assertive"}>
+                <span className="visual-signal-card"><strong>{visualSignalCopy.title}</strong><small>{visualSignalCopy.detail}</small></span>
+              </div>
+            )}
 
             <div className="distance-readout">
               <span>{copy.nearestShore}</span>
@@ -928,9 +1067,9 @@ export default function ShorelineApp() {
 
           {mode === "demo" && (
             <div className="tracker-actions">
-              <button className="sound-button" onClick={() => void soundAlarm()}>
+              <button className="sound-button" onClick={testWarningOutputs}>
                 <SoundIcon />
-                <span><strong>{copy.testAlarm}</strong><small>{alarmLabel}</small></span>
+                <span><strong>{copy.testAlarm}</strong><small>{warningSoundMuted ? copy.muted : `${warningConfig.alertVolumePercent}%`}</small></span>
               </button>
               <button className="next-button" onClick={advanceDemo}>{copy.nextPosition}</button>
             </div>
