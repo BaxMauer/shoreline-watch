@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   type CoastlinePack,
   type NearestShore,
+  type ShorelineSegment,
   findNearestShore,
+  getNearbyShorelineSegments,
   offsetFromShore,
 } from "../lib/shoreline";
 
 type Mode = "idle" | "live" | "demo";
+type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -54,25 +57,19 @@ function ArrowIcon() {
   );
 }
 
-function scheduleTone(
-  context: AudioContext,
-  start: number,
-  duration: number,
-  frequency: number,
-  volume: number,
-) {
+function scheduleTone(context: AudioContext, start: number, frequency: number) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "square";
   oscillator.frequency.setValueAtTime(frequency, start);
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(volume, start + 0.025);
-  gain.gain.setValueAtTime(volume, start + duration - 0.04);
-  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  gain.gain.exponentialRampToValueAtTime(0.32, start + 0.025);
+  gain.gain.setValueAtTime(0.32, start + 0.27);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
   oscillator.connect(gain);
   gain.connect(context.destination);
   oscillator.start(start);
-  oscillator.stop(start + duration + 0.02);
+  oscillator.stop(start + 0.35);
 }
 
 function statusFor(distance: number | null, accuracy: number): Status {
@@ -89,6 +86,91 @@ function formatDistance(distance: number | null) {
   return (distance / 1_000).toFixed(distance < 10_000 ? 2 : 1);
 }
 
+function ShorelineView({
+  fix,
+  nearest,
+  segments,
+  rangeMetres,
+}: {
+  fix: Fix | null;
+  nearest: NearestShore | null;
+  segments: ShorelineSegment[];
+  rangeMetres: number;
+}) {
+  const width = 360;
+  const height = 220;
+  const centreX = width / 2;
+  const centreY = height / 2;
+  const pixelsPerMetre = Math.min((width - 32) / (rangeMetres * 2), (height - 32) / (rangeMetres * 2));
+  const metresPerLongitudeDegree = fix ? 111_320 * Math.cos((fix.latitude * Math.PI) / 180) : 1;
+  const metresPerLatitudeDegree = 110_540;
+
+  const point = (longitude: number, latitude: number) => ({
+    x: centreX + (longitude - (fix?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
+    y: centreY - (latitude - (fix?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
+  });
+
+  const nearestPoint = nearest ? point(nearest.longitude, nearest.latitude) : null;
+  const rangeLabel = rangeMetres < 1_000
+    ? `${Math.round(rangeMetres)} m radius`
+    : `${(rangeMetres / 1_000).toFixed(1)} km radius`;
+
+  return (
+    <section className="shoreline-card" aria-label="Nearest shoreline diagram">
+      <div className="shoreline-card-head">
+        <div><span>Local shoreline</span><strong>Boat to nearest point</strong></div>
+        <span className="view-range">{rangeLabel}</span>
+      </div>
+      <svg className="shoreline-view" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={nearest ? `Diagram showing the nearest shoreline ${Math.round(nearest.distance)} metres away` : "Waiting for a shoreline position"}>
+        <defs>
+          <radialGradient id="waterGlow">
+            <stop offset="0" stopColor="#123c46" />
+            <stop offset="1" stopColor="#071b22" />
+          </radialGradient>
+          <filter id="nearestGlow" x="-100%" y="-100%" width="300%" height="300%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <rect width={width} height={height} rx="9" fill="url(#waterGlow)" />
+        <path className="view-grid" d={`M${centreX} 0V${height}M0 ${centreY}H${width}`} />
+        {fix && segments.map((segment, index) => {
+          const start = point(segment[0], segment[1]);
+          const end = point(segment[2], segment[3]);
+          return <line className="shore-segment" key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
+        })}
+        {fix && (
+          <circle
+            className="limit-ring"
+            cx={centreX}
+            cy={centreY}
+            r={SHORELINE_ALARM_METRES * pixelsPerMetre}
+          />
+        )}
+        {nearestPoint && (
+          <>
+            <line className="nearest-line" x1={centreX} y1={centreY} x2={nearestPoint.x} y2={nearestPoint.y} />
+            <circle className="nearest-halo" cx={nearestPoint.x} cy={nearestPoint.y} r="9" />
+            <circle className="nearest-point" cx={nearestPoint.x} cy={nearestPoint.y} r="4.5" filter="url(#nearestGlow)" />
+          </>
+        )}
+        {fix ? (
+          <g className="map-boat" transform={`translate(${centreX} ${centreY}) rotate(${fix.heading ?? 0})`}>
+            <path d="M0-13 8 9 0 6-8 9Z" />
+            <circle cx="0" cy="0" r="2.5" />
+          </g>
+        ) : <text className="map-placeholder" x={centreX} y={centreY}>ACQUIRING GPS</text>}
+        <text className="north-label" x={width - 20} y="22">N</text>
+        <text className="ring-label" x={centreX + 5} y={centreY - SHORELINE_ALARM_METRES * pixelsPerMetre - 5}>300 m</text>
+      </svg>
+      <div className="shoreline-legend">
+        <span><i className="legend-dot nearest" />Nearest shoreline</span>
+        <span><i className="legend-line" />300 m alarm ring</span>
+      </div>
+    </section>
+  );
+}
+
 export default function ShorelineApp() {
   const [pack, setPack] = useState<CoastlinePack | null>(null);
   const [packError, setPackError] = useState<string | null>(null);
@@ -99,13 +181,24 @@ export default function ShorelineApp() {
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [alarmError, setAlarmError] = useState<string | null>(null);
   const [alarmArmed, setAlarmArmed] = useState(false);
+  const [alarmPlayback, setAlarmPlayback] = useState<AlarmPlayback>("idle");
+  const [alarmPlayCount, setAlarmPlayCount] = useState(0);
+  const [lastAlarmReason, setLastAlarmReason] = useState("No alarm played yet");
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
+  const alarmAudio = useRef<HTMLAudioElement | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
   const previousInside300 = useRef<boolean | null>(null);
 
   useEffect(() => {
+    let refreshing = false;
+    const refreshForUpdate = () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    };
     if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("controllerchange", refreshForUpdate);
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
 
@@ -117,12 +210,19 @@ export default function ShorelineApp() {
       .then((data) => setPack(data))
       .catch((error: unknown) => setPackError(error instanceof Error ? error.message : "Coastline pack could not be loaded."));
 
+    return () => navigator.serviceWorker?.removeEventListener("controllerchange", refreshForUpdate);
   }, []);
 
   const nearest = useMemo<NearestShore | null>(() => {
     if (!pack || !fix) return null;
     return findNearestShore(pack, fix.longitude, fix.latitude);
   }, [pack, fix]);
+
+  const viewRangeMetres = nearest ? Math.min(6_000, Math.max(450, nearest.distance * 1.25 + 50)) : 450;
+  const nearbySegments = useMemo(() => {
+    if (!pack || !fix) return [];
+    return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.1);
+  }, [fix, pack, viewRangeMetres]);
 
   const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
   const status = statusFor(nearest?.distance ?? null, fix?.accuracy ?? 0);
@@ -139,54 +239,89 @@ export default function ShorelineApp() {
     return audioContext.current;
   }, []);
 
-  const armAlarm = useCallback(async (playReadyChirp = true) => {
+  const soundWebAudioFallback = useCallback(async () => {
     const context = getAudioContext();
-    if (!context) {
-      setAlarmError("This browser does not provide Web Audio alarms.");
-      return false;
-    }
-
+    if (!context) return false;
     try {
       if (context.state === "suspended") await context.resume();
-      if (context.state !== "running") throw new Error("Audio did not start");
+      if (context.state !== "running") return false;
+      const start = context.currentTime + 0.02;
+      scheduleTone(context, start, 880);
+      scheduleTone(context, start + 0.46, 880);
+      scheduleTone(context, start + 0.92, 1_040);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [getAudioContext]);
+
+  const primeAlarm = useCallback(async () => {
+    const audio = alarmAudio.current;
+    if (!audio) return false;
+    try {
+      audio.muted = false;
+      audio.volume = 1;
+      audio.currentTime = 0;
+      await audio.play();
+      window.setTimeout(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        setAlarmPlayback("ready");
+      }, 110);
       setAlarmArmed(true);
       setAlarmError(null);
-      if (playReadyChirp) scheduleTone(context, context.currentTime + 0.02, 0.12, 660, 0.12);
+      setAlarmPlayback("playing");
       return true;
     } catch {
       setAlarmArmed(false);
-      setAlarmError("Audio is blocked. Turn up media volume, then tap Test alarm.");
+      setAlarmPlayback("blocked");
+      setAlarmError("Audio is blocked. Turn up media volume, then tap the large Test 300 m alarm button.");
       return false;
     }
-  }, [getAudioContext]);
+  }, []);
 
-  const soundAlarm = useCallback(async () => {
-    const context = getAudioContext();
-    if (!context) {
-      setAlarmError("This browser does not provide Web Audio alarms.");
-      return;
+  const soundAlarm = useCallback(async (reason: string) => {
+    const audio = alarmAudio.current;
+    if (!audio) {
+      setAlarmError("The alarm recording did not load. Refresh the app and try again.");
+      return false;
     }
 
     try {
-      if (context.state === "suspended") await context.resume();
-      if (context.state !== "running") throw new Error("Audio did not start");
-      const start = context.currentTime + 0.03;
-      scheduleTone(context, start, 0.32, 880, 0.3);
-      scheduleTone(context, start + 0.48, 0.32, 880, 0.3);
-      scheduleTone(context, start + 0.96, 0.48, 1040, 0.34);
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      audio.volume = 1;
+      setAlarmPlayback("starting");
+      await audio.play();
       setAlarmArmed(true);
       setAlarmError(null);
-      if ("vibrate" in navigator) navigator.vibrate([220, 150, 220, 150, 350]);
+      setAlarmPlayback("playing");
+      setAlarmPlayCount((count) => count + 1);
+      setLastAlarmReason(reason);
+      if ("vibrate" in navigator) navigator.vibrate([260, 140, 260, 140, 520]);
+      return true;
     } catch {
+      const fallbackWorked = await soundWebAudioFallback();
+      if (fallbackWorked) {
+        setAlarmArmed(true);
+        setAlarmError(null);
+        setAlarmPlayback("playing");
+        setAlarmPlayCount((count) => count + 1);
+        setLastAlarmReason(`${reason} · fallback tone`);
+        return true;
+      }
       setAlarmArmed(false);
-      setAlarmError("Audio was suspended. Keep the app visible and tap Test alarm to re-arm it.");
+      setAlarmPlayback("blocked");
+      setAlarmError("The browser blocked sound. Keep this page visible, turn up media volume, and tap Test 300 m alarm again.");
+      return false;
     }
-  }, [getAudioContext]);
+  }, [soundWebAudioFallback]);
 
   useEffect(() => {
     if (mode === "idle" || conservativeDistance === null) return;
     const wasInside = previousInside300.current;
-    if (inside300 && wasInside !== true) void soundAlarm();
+    if (inside300 && wasInside !== true) void soundAlarm("Automatic 300 m crossing");
     previousInside300.current = inside300;
   }, [conservativeDistance, inside300, mode, soundAlarm]);
 
@@ -206,24 +341,29 @@ export default function ShorelineApp() {
     watchId.current = null;
     wakeLock.current?.release().catch(() => undefined);
     wakeLock.current = null;
+    alarmAudio.current?.pause();
     setFix(null);
     setTrackingError(null);
     setAlarmError(null);
+    setAlarmArmed(false);
+    setAlarmPlayback("idle");
     setMode("idle");
     setDemoIndex(0);
     previousInside300.current = null;
   }, []);
 
-  useEffect(() => {
-    return () => {
-      stopTracking();
-      audioContext.current?.close().catch(() => undefined);
-    };
-  }, [stopTracking]);
+  useEffect(() => () => {
+    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
+    wakeLock.current?.release().catch(() => undefined);
+    audioContext.current?.close().catch(() => undefined);
+  }, []);
 
   const startLive = useCallback(async () => {
-    if (!pack || !navigator.geolocation) return;
-    await armAlarm();
+    if (!pack || !navigator.geolocation) {
+      setTrackingError("This browser does not provide live location.");
+      return;
+    }
+    void primeAlarm();
     previousInside300.current = null;
     setMode("live");
     setTrackingError(null);
@@ -252,7 +392,7 @@ export default function ShorelineApp() {
       },
       { enableHighAccuracy: true, maximumAge: 1_000, timeout: 15_000 },
     );
-  }, [armAlarm, pack, requestWakeLock]);
+  }, [pack, primeAlarm, requestWakeLock]);
 
   const setDemoFix = useCallback((index: number) => {
     if (!pack) return;
@@ -269,19 +409,18 @@ export default function ShorelineApp() {
     });
   }, [pack]);
 
-  const startDemo = useCallback(async () => {
-    await armAlarm();
+  const startDemo = useCallback(() => {
+    void primeAlarm();
     previousInside300.current = null;
     setMode("demo");
     setTrackingError(null);
     setDemoIndex(0);
     setDemoFix(0);
-  }, [armAlarm, setDemoFix]);
+  }, [primeAlarm, setDemoFix]);
 
-  const testAlarm = useCallback(async () => {
-    const armed = await armAlarm(false);
-    if (armed) await soundAlarm();
-  }, [armAlarm, soundAlarm]);
+  const testAlarm = useCallback(() => {
+    void soundAlarm("Manual test button");
+  }, [soundAlarm]);
 
   const advanceDemo = useCallback(() => {
     const next = (demoIndex + 1) % DEMO_DISTANCES.length;
@@ -291,9 +430,30 @@ export default function ShorelineApp() {
 
   const generatedDate = pack ? new Intl.DateTimeFormat("en", { month: "short", year: "numeric" }).format(new Date(pack.generatedAt)) : null;
   const distanceUnit = nearest && nearest.distance >= 1_000 ? "kilometres" : "metres";
+  const playbackLabel = alarmPlayback === "playing" || alarmPlayback === "starting"
+    ? "Sound playing"
+    : alarmPlayback === "blocked"
+      ? "Sound blocked"
+      : alarmArmed
+        ? "Sound ready"
+        : "Not armed";
 
   return (
     <main className="app-shell">
+      <audio
+        className="alarm-audio"
+        ref={alarmAudio}
+        src="/audio/shoreline-alarm.wav"
+        preload="auto"
+        playsInline
+        onPlaying={() => setAlarmPlayback("playing")}
+        onEnded={() => setAlarmPlayback("ready")}
+        onError={() => {
+          setAlarmPlayback("blocked");
+          setAlarmError("The alarm recording could not be loaded. Refresh the app and try again.");
+        }}
+      />
+
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark"><BoatIcon /></span>
@@ -328,7 +488,7 @@ export default function ShorelineApp() {
             <div className="data-row">
               <div>
                 <span className="data-label">Offline calculation</span>
-                <span className="data-detail">GPS positions stay on this device</span>
+                <span className="data-detail">GPS, shoreline view and alarm stay on this device</span>
               </div>
               <span className="data-state">LOCAL</span>
             </div>
@@ -339,18 +499,21 @@ export default function ShorelineApp() {
             </div>
             {packError && <div className="error-box">{packError}</div>}
             <p className="fine-print">
-              Prototype aid only—not a navigation chart. Keep an approved chart and normal lookout. Regulatory exceptions are not inferred.
+              Starting live or demo plays a brief ready chirp. Prototype aid only—not a navigation chart. Keep an approved chart and normal lookout.
             </p>
           </section>
         </>
       ) : (
-        <section className="tracker">
+        <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
           <div className="tracker-head">
             <span className="trip-mode">{mode === "live" ? "Live tracking" : `Murter demo · ${demoIndex + 1}/${DEMO_DISTANCES.length}`}</span>
             <button className="text-button" onClick={stopTracking}>End trip</button>
           </div>
 
-          <div className={`status-band ${status.level === "safe" ? "" : status.level}`}>{status.label}</div>
+          <div className={`status-band ${status.level === "safe" ? "" : status.level}`} aria-live="assertive">
+            <span>{status.level === "danger" ? "300 m alarm" : "300 m monitor"}</span>
+            <strong>{status.label}</strong>
+          </div>
 
           <div className="distance-stage">
             <div>
@@ -363,6 +526,8 @@ export default function ShorelineApp() {
             </div>
           </div>
 
+          <ShorelineView fix={fix} nearest={nearest} segments={nearbySegments} rangeMetres={viewRangeMetres} />
+
           <div className="metrics">
             <div className="metric"><span className="metric-value">{speedKnots === null ? "—" : speedKnots.toFixed(1)}</span><span className="metric-label">Speed · kn</span></div>
             <div className="metric"><span className="metric-value">{fix ? `±${Math.round(fix.accuracy)} m` : "—"}</span><span className="metric-label">GPS accuracy</span></div>
@@ -370,19 +535,24 @@ export default function ShorelineApp() {
           </div>
 
           <div className="control-panel">
-            <div className="control-row">
-              <div className="control-copy"><strong>300 m shoreline alarm</strong><span>A short chirp confirms it is armed</span></div>
-              <span className={`alarm-state ${alarmArmed ? "armed" : ""}`}>{alarmArmed ? "Armed" : "Not armed"}</span>
-            </div>
-            <div className="control-row">
-              <div className="control-copy"><strong>Audible warning</strong><span>Three beeps at the 300 m crossing</span></div>
-              <button className="icon-button" onClick={testAlarm}>Test alarm</button>
+            <div className="alarm-panel">
+              <div className="alarm-panel-head">
+                <div><span className="alarm-kicker">Audible warning</span><strong>300 m shoreline alarm</strong></div>
+                <span className={`alarm-state ${alarmArmed ? "armed" : ""}`}>{playbackLabel}</span>
+              </div>
+              <button className="alarm-test-button" onClick={testAlarm}>
+                <span>▶</span> Test 300 m alarm
+              </button>
+              <div className="alarm-receipt" aria-live="polite">
+                <span>{lastAlarmReason}</span>
+                <strong>{alarmPlayCount} full {alarmPlayCount === 1 ? "play" : "plays"} this trip</strong>
+              </div>
             </div>
             {mode === "demo" && <div className="demo-control"><button className="secondary-button" onClick={advanceDemo}>Advance demo position</button></div>}
             {trackingError && <div className="error-box">{trackingError}</div>}
             {alarmError && <div className="error-box">{alarmError}</div>}
             <p className="fine-print">
-              Coastline pack: HHI · {generatedDate ?? "loading"}. The 300 m crossing uses measured distance minus reported GPS accuracy.
+              Coastline pack: HHI · {generatedDate ?? "loading"}. The 300 m crossing uses measured distance minus reported GPS accuracy. Keep media volume up and the app visible.
             </p>
           </div>
         </section>
