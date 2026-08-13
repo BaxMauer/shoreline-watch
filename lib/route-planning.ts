@@ -33,6 +33,7 @@ export type RoutePlanningResult = { route: PlannedRoute; failure?: never } | { r
 
 const METRES_PER_LATITUDE_DEGREE = 110_540;
 const KNOTS_TO_METRES_PER_SECOND = 0.514444;
+const MAXIMUM_ROUTE_VALIDATION_SPACING_METRES = 40;
 
 function longitudeScale(latitude: number) {
   return 111_320 * Math.cos((latitude * Math.PI) / 180);
@@ -198,6 +199,24 @@ export function routeSegmentCrossesShoreline(pack: CoastlinePack, start: GeoPoin
   return false;
 }
 
+export function routeGeometryIsWaterOnly(
+  pack: CoastlinePack,
+  points: GeoPoint[],
+  allowedInitialLandExitMetres = 0,
+) {
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    if (index === 1
+      && allowedInitialLandExitMetres > 0
+      && isPointOnLand(pack, start.longitude, start.latitude)
+      && geoDistanceMetres(start, end) <= allowedInitialLandExitMetres
+      && segmentLandProfile(pack, start, end, 8).exitsLandOnce) continue;
+    if (routeSegmentCrossesShoreline(pack, start, end)) return false;
+  }
+  return true;
+}
+
 function shorelineDistanceWithin(pack: CoastlinePack, point: GeoPoint, limitMetres: number) {
   const safeLimit = Math.max(1, limitMetres);
   const longitudeRadius = safeLimit / longitudeScale(point.latitude);
@@ -244,16 +263,25 @@ function buildRoute(
     const start = points[index - 1];
     const end = points[index];
     const distance = geoDistanceMetres(start, end);
-    const samples = Math.max(1, Math.ceil(distance / Math.max(80, options.clearanceMetres / 2)));
+    const validationSpacing = Math.min(
+      MAXIMUM_ROUTE_VALIDATION_SPACING_METRES,
+      Math.max(10, options.clearanceMetres / 8),
+    );
+    const samples = Math.max(1, Math.ceil(distance / validationSpacing));
+    const sampleSpacing = distance / samples;
     let restrictedSamples = 0;
-    for (let sample = 0; sample <= samples; sample += 1) {
-      const samplePoint = interpolate(start, end, sample / samples);
+    for (let sample = 0; sample < samples; sample += 1) {
+      const samplePoint = interpolate(start, end, (sample + 0.5) / samples);
       const shore = findNearestShore(pack, samplePoint.longitude, samplePoint.latitude);
       if (!shore) continue;
-      minimumShoreDistanceMetres = Math.min(minimumShoreDistanceMetres, shore.distance);
-      if (shore.distance < options.clearanceMetres) restrictedSamples += 1;
+      // Distance to a fixed geometry is 1-Lipschitz. Subtracting half the
+      // sample interval therefore gives a conservative lower bound for every
+      // point between adjacent samples instead of trusting the midpoint alone.
+      const conservativeDistance = Math.max(0, shore.distance - sampleSpacing / 2);
+      minimumShoreDistanceMetres = Math.min(minimumShoreDistanceMetres, conservativeDistance);
+      if (conservativeDistance < options.clearanceMetres) restrictedSamples += 1;
     }
-    const restrictedFraction = Math.min(1, restrictedSamples / (samples + 1));
+    const restrictedFraction = Math.min(1, restrictedSamples / samples);
     const restrictedDistance = distance * restrictedFraction;
     const openDistance = distance - restrictedDistance;
     const openSpeed = Math.max(1, options.cruiseSpeedKnots) * KNOTS_TO_METRES_PER_SECOND;
@@ -292,7 +320,18 @@ export function planWaterRoute(
   if (isPointOnLand(pack, destination.longitude, destination.latitude)) return { failure: "destination-on-land" };
   const directDistance = geoDistanceMetres(start, destination);
   if (directDistance > options.maximumDistanceMetres) return { failure: "too-far" };
-  if (directDistance < 30) return { route: buildRoute(pack, [start, destination], options, "clearance") };
+  const startIsLand = isPointOnLand(pack, start.longitude, start.latitude);
+  // A phone fix can land a few metres inside the charted shoreline while the
+  // boat is still afloat. Permit one short, outward-only correction from that
+  // start; destinations and all later route legs remain strictly water-only.
+  const startSnapTolerance = Math.max(120, Math.min(350, (options.startAccuracyMetres ?? 0) * 2.5));
+  if (directDistance < 30) {
+    const directPoints = [start, destination];
+    if (!routeGeometryIsWaterOnly(pack, directPoints, startIsLand ? startSnapTolerance : 0)) return { failure: "no-route" };
+    const route = buildRoute(pack, directPoints, options, "clearance");
+    route.mode = route.restrictedDistanceMetres > 0 ? "restricted" : "clearance";
+    return { route };
+  }
 
   const centreLatitude = (start.latitude + destination.latitude) / 2;
   const metresPerLongitudeDegree = longitudeScale(centreLatitude);
@@ -307,11 +346,6 @@ export function planWaterRoute(
   });
   const startLocal = { x: 0, y: 0 };
   const destinationLocal = toLocal(destination);
-  const startIsLand = isPointOnLand(pack, start.longitude, start.latitude);
-  // A phone fix can land a few metres inside the charted shoreline while the
-  // boat is still afloat. Permit one short, outward-only correction from that
-  // start; destinations and all later route legs remain strictly water-only.
-  const startSnapTolerance = Math.max(120, Math.min(350, (options.startAccuracyMetres ?? 0) * 2.5));
   const baseMargin = Math.max(3_000, options.clearanceMetres * 3.5, Math.min(25_000, directDistance * 0.55));
   // Peninsulas and island chains often require a route that initially moves
   // away from the target. A second, wider search avoids treating the straight
@@ -475,13 +509,7 @@ export function planWaterRoute(
     }
     const points = [start, ...reversed.reverse(), destination]
       .filter((point, index, routePoints) => index === 0 || geoDistanceMetres(routePoints[index - 1], point) > 0.5);
-    for (let index = 1; index < points.length; index += 1) {
-      if (index === 1 && startIsLand) {
-        const profile = segmentLandProfile(pack, points[0], points[1], 8);
-        if (profile.exitsLandOnce && geoDistanceMetres(points[0], points[1]) <= startSnapTolerance) continue;
-      }
-      if (routeSegmentCrossesShoreline(pack, points[index - 1], points[index])) return null;
-    }
+    if (!routeGeometryIsWaterOnly(pack, points, startIsLand ? startSnapTolerance : 0)) return null;
     return points;
   };
 
@@ -559,6 +587,7 @@ export function planWaterRoute(
     }
   }
   if (!rawPoints) return { failure: "no-route" };
+  if (!routeGeometryIsWaterOnly(pack, rawPoints, startIsLand ? startSnapTolerance : 0)) return { failure: "no-route" };
   const route = buildRoute(pack, rawPoints, options, strict ? "clearance" : "restricted");
   // Endpoint grace helps with normal GPS drift close to shore, but the result
   // must still be labelled restricted whenever the measured route enters the
