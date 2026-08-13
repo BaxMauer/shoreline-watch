@@ -10,6 +10,7 @@ import {
   clampRouteViewRange,
   formatRouteClearance,
   formatRouteEta,
+  getProgressAwareRouteGuidance,
   getRouteReadinessState,
   parseRouteCoordinate,
   panRouteMapCentre,
@@ -75,6 +76,46 @@ test("automatic rerouting uses at least 250 metres or the configured clearance",
   assert.equal(shouldRerouteRoute(null, plannedFrom, 300), false);
   assert.equal(shouldRerouteRoute(plannedFrom, { longitude: 15.001, latitude: 43 }, 300), false);
   assert.equal(shouldRerouteRoute(plannedFrom, { longitude: 15.005, latitude: 43 }, 300), true);
+});
+
+test("route guidance projects beyond a passed waypoint instead of pointing backward", () => {
+  const points = [
+    { longitude: 15, latitude: 43 },
+    { longitude: 15.01, latitude: 43 },
+    { longitude: 15.02, latitude: 43 },
+  ];
+  const current = { longitude: 15.0125, latitude: 43 };
+  const guidance = getProgressAwareRouteGuidance(points, current);
+
+  assert.ok(guidance);
+  assert.ok(guidance.progressMetres > 900);
+  assert.ok(guidance.target.longitude > current.longitude);
+  assert.ok(guidance.distanceToRouteMetres < 1);
+});
+
+test("route progress cannot regress to a nearby earlier segment", () => {
+  const points = [
+    { longitude: 15, latitude: 43 },
+    { longitude: 15.01, latitude: 43 },
+    { longitude: 15.02, latitude: 43 },
+  ];
+  const guidance = getProgressAwareRouteGuidance(
+    points,
+    { longitude: 15.002, latitude: 43 },
+    1_200,
+    120,
+  );
+
+  assert.ok(guidance);
+  assert.ok(guidance.progressMetres >= 1_200);
+  assert.ok(guidance.target.longitude > 15.015);
+});
+
+test("route guidance rejects missing and degenerate polylines", () => {
+  const current = { longitude: 15, latitude: 43 };
+  assert.equal(getProgressAwareRouteGuidance([], current), null);
+  assert.equal(getProgressAwareRouteGuidance([current], current), null);
+  assert.equal(getProgressAwareRouteGuidance([current, current], current), null);
 });
 
 test("route calculation requires a fresh, accurate navigation fix", () => {

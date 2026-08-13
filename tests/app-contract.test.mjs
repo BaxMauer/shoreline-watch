@@ -176,6 +176,13 @@ test("route result exposes all navigation metrics and accessible status messages
   assert.match(planner, /route\.mode === "clearance" \? copy\.clearanceDetail/);
 });
 
+test("route bearing follows monotonic projected progress instead of a passed waypoint", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /getProgressAwareRouteGuidance\(route\.points, fix\)/);
+  assert.match(planner, /geoBearing\(fix, routeGuidance\.target\)/);
+  assert.doesNotMatch(planner, /route\.points\.find\(\(candidate, index\)/);
+});
+
 test("navigation claims stay within shoreline geometry and clearance data", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   for (const blindSpot of ["Tiefe", "Felsen", "Verkehr", "Bojen", "Fahrwasser", "Wetter", "Vorschriften"]) {
