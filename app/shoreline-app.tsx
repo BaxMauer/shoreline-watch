@@ -17,6 +17,7 @@ import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } fro
 import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
 import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
+import RoutePlanner from "./route-planner";
 import {
   getGoNoGoState,
   getPlotRangeMetres,
@@ -38,6 +39,7 @@ type RiskLevel = "none" | "warning" | "danger";
 type Language = "de" | "en";
 type Theme = "ocean" | "xp" | "dark" | "nautical";
 type VisualSignalKind = "distance" | "speed" | "safe";
+type TrackerTab = "distance" | "route";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -166,6 +168,8 @@ const COPY = {
     locationDenied: "Genaue Standortfreigabe erlauben und erneut versuchen.",
     locationUnknown: "Das Smartphone kann den Standort nicht bestimmen.",
     locationTimeout: "GPS-Zeitüberschreitung — App sichtbar lassen.",
+    distanceTab: "Abstand",
+    routeTab: "Route",
   },
   en: {
     online: "Online",
@@ -273,6 +277,8 @@ const COPY = {
     locationDenied: "Allow precise location and try again.",
     locationUnknown: "The phone cannot determine its location.",
     locationTimeout: "GPS timed out — keep the app visible.",
+    distanceTab: "Distance",
+    routeTab: "Route",
   },
 } as const;
 
@@ -555,6 +561,7 @@ export default function ShorelineApp() {
   const [visualSignal, setVisualSignal] = useState<{ kind: VisualSignalKind; sequence: number } | null>(null);
   const [powerSaveWakeUntil, setPowerSaveWakeUntil] = useState(0);
   const [stationaryState, setStationaryState] = useState<StationaryState>({ reference: null, lastMovementAt: 0 });
+  const [trackerTab, setTrackerTab] = useState<TrackerTab>("distance");
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
@@ -966,6 +973,7 @@ export default function ShorelineApp() {
     previousSpeedViolation.current = null;
     setPowerSaveWakeUntil(0);
     setStationaryState({ reference: null, lastMovementAt: 0 });
+    setTrackerTab("distance");
   }, []);
 
   useEffect(() => () => {
@@ -997,6 +1005,7 @@ export default function ShorelineApp() {
     setClosingRateMetresPerSecond(null);
     distanceSamples.current = [];
     setMode("live");
+    setTrackerTab("distance");
     setTrackingError(null);
     await requestWakeLock();
     navigator.storage?.persist?.().catch(() => false);
@@ -1057,6 +1066,7 @@ export default function ShorelineApp() {
     setClosingRateMetresPerSecond(null);
     distanceSamples.current = [];
     setMode("demo");
+    setTrackerTab("distance");
     setTrackingError(null);
     setDemoIndex(0);
     setDemoFix(0, demoTimestamp.current);
@@ -1264,7 +1274,8 @@ export default function ShorelineApp() {
             <button className="text-button" onClick={stopTracking}>{copy.end}</button>
           </div>
 
-          <section className={`instrument ${insideLimit && gpsSignalState === "fresh" ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsSignalProblem ? `gps-${gpsSignalState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
+          <div className="tracker-content">
+          <section hidden={trackerTab !== "distance"} className={`instrument ${insideLimit && gpsSignalState === "fresh" ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsSignalProblem ? `gps-${gpsSignalState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
             <div className={`status-pill ${gpsSignalState === "lost" || (gpsSignalState === "fresh" && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsSignalState === "stale" ? "stale" : ""} ${gpsSignalState === "waiting" || (!nearest && gpsSignalState === "fresh") ? "waiting" : ""}`} aria-live="assertive">
               <span />{statusLabel}
             </div>
@@ -1326,9 +1337,25 @@ export default function ShorelineApp() {
             </div>
           </section>
 
+          <div hidden={trackerTab !== "route"} className="route-tab-panel">
+            <RoutePlanner
+              pack={pack}
+              fix={fix}
+              warningConfig={warningConfig}
+              language={language}
+              gpsFresh={gpsSignalState === "fresh"}
+            />
+          </div>
+          </div>
+
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
 
-          {mode === "demo" && (
+          <nav className="tracker-tabs" aria-label={language === "de" ? "Ansicht" : "View"}>
+            <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => { setTrackerTab("distance"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
+            <button type="button" className={trackerTab === "route" ? "active" : ""} aria-current={trackerTab === "route" ? "page" : undefined} onClick={() => { setTrackerTab("route"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">↗</span>{copy.routeTab}</button>
+          </nav>
+
+          {mode === "demo" && trackerTab === "distance" && (
             <div className="tracker-actions">
               <button className="sound-button" onClick={testWarningOutputs}>
                 <SoundIcon />

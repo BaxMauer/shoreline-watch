@@ -54,7 +54,7 @@ test("alarm media is preloaded and primed from the user start gesture", () => {
 });
 
 test("test-alarm control is rendered only in demo mode", () => {
-  const demoBlock = app.match(/\{mode === "demo" && \([\s\S]*?copy\.nextPosition[\s\S]*?\)\}/)?.[0] ?? "";
+  const demoBlock = app.match(/\{mode === "demo" && trackerTab === "distance" && \([\s\S]*?copy\.nextPosition[\s\S]*?\)\}/)?.[0] ?? "";
   assert.match(demoBlock, /copy\.testAlarm/);
   assert.equal((app.match(/copy\.testAlarm/g) ?? []).length, 1);
 });
@@ -76,4 +76,30 @@ test("nearest shore, warning ring, collision course, and boat remain separate SV
   for (const className of ["land-hatch-layer", "nearest-shore-line", "coast-layer", "proximity-ring", "danger-ring-arc", "course-line", "nearest-point", "map-boat"]) {
     assert.match(app, new RegExp(`className=(?:\\{[^}]+\\}|\")${className}`));
   }
+});
+
+test("tracking exposes persistent distance and offline route-planning tabs", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(app, /type TrackerTab = "distance" \| "route"/);
+  assert.match(app, /<nav className="tracker-tabs"/);
+  assert.match(app, /<RoutePlanner[\s\S]*warningConfig=\{warningConfig\}/);
+  assert.match(planner, /planWaterRoute\(pack, start, destination/);
+  assert.match(planner, /getNearbyShorelineSegments/);
+  assert.doesNotMatch(planner, /fetch\(|XMLHttpRequest|WebSocket/);
+});
+
+test("route planning applies warning distance and near-shore speed settings", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /clearanceMetres: warningConfig\.distanceMetres/);
+  assert.match(planner, /speedWarningEnabled: warningConfig\.speedWarningEnabled/);
+  assert.match(planner, /nearShoreSpeedKnots: warningConfig\.maxSpeedKnots/);
+  assert.match(planner, /route\.mode === "clearance"/);
+  assert.match(planner, /route\?\.mode === "restricted"/);
+});
+
+test("route destination can be selected by map tap or entered coordinates", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /onPointerUp=\{handleMapPointer\}/);
+  assert.match(planner, /inputMode="decimal"/);
+  assert.match(planner, /selectTarget\(\{ latitude, longitude \}\)/);
 });

@@ -29,7 +29,7 @@ export type CourseToShore = {
 export type LongitudeInterval = readonly [number, number];
 
 const METRES_PER_LATITUDE_DEGREE = 110_540;
-const MAX_CACHED_SCANLINE_ROWS = 8;
+const MAX_CACHED_SCANLINE_ROWS = 128;
 const scanlineRowCache = new WeakMap<CoastlinePack, Map<number, ShorelineSegment[]>>();
 
 function getScanlineRowSegments(pack: CoastlinePack, cellY: number) {
@@ -116,6 +116,13 @@ export function getLandIntervalsAtLatitude(
     if (maximumLongitude > start) intervals.push([start, maximumLongitude]);
   }
   return intervals;
+}
+
+export function isPointOnLand(pack: CoastlinePack, longitude: number, latitude: number) {
+  if (![longitude, latitude].every(Number.isFinite)) return true;
+  if (longitude < pack.bounds[0] || longitude > pack.bounds[2] || latitude < pack.bounds[1] || latitude > pack.bounds[3]) return true;
+  const epsilon = Math.max(0.000001, pack.cellSize / 2_000);
+  return getLandIntervalsAtLatitude(pack, latitude, longitude - epsilon, longitude + epsilon).length > 0;
 }
 
 export function distanceToSegment(

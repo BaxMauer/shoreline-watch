@@ -127,5 +127,16 @@ test("danger, course, and speed states retain visible motion with a reduced-moti
 test("tracking view is locked to one viewport while launch settings remain scrollable", () => {
   assert.match(css, /\.is-tracking\s*\{[^}]*height:\s*100svh/s);
   assert.match(css, /\.is-tracking\s*\{[^}]*overflow:\s*hidden/s);
-  assert.match(css, /\.tracker\s*\{[^}]*minmax\(0, 1fr\)/s);
+  assert.match(css, /\.tracker\s*\{[^}]*display:\s*flex/s);
+  assert.match(css, /\.tracker-content\s*\{[^}]*flex:\s*1/s);
+  assert.match(css, /\.tracker-content\s*\{[^}]*overflow:\s*hidden/s);
+});
+
+test("route map keeps land hatched, coastline solid, and route visually separate", () => {
+  assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*url\(#routeLandHatch\)/s);
+  const routeCoast = css.match(/\.route-coast-layer line\s*\{[^}]*\}/s)?.[0] ?? "";
+  assert.match(routeCoast, /stroke:\s*var\(--shore-stroke\)/);
+  assert.doesNotMatch(routeCoast, /stroke-dasharray/);
+  assert.match(css, /\.planned-route\s*\{[^}]*stroke:\s*var\(--aqua\)/s);
+  assert.match(css, /\.planned-route\.restricted\s*\{[^}]*stroke:\s*var\(--danger\)/s);
 });

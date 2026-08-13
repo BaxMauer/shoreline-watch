@@ -1,8 +1,8 @@
-const CACHE_NAME = "shoreline-watch-v17";
+const CACHE_NAME = "shoreline-watch-v18";
 const CORE = [
   "/",
   "/manifest.webmanifest",
-  "/manifest.webmanifest?v=11",
+  "/manifest.webmanifest?v=12",
   "/favicon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
