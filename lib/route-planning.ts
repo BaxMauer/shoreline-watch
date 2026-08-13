@@ -6,6 +6,7 @@ import {
   type CoastlinePack,
   type LongitudeInterval,
 } from "./shoreline.ts";
+import { MAXIMUM_NAVIGATION_ACCURACY_METRES } from "./navigation-metrics.ts";
 
 export type GeoPoint = { longitude: number; latitude: number };
 
@@ -68,6 +69,14 @@ export function getRouteGridResolutions(widthMetres: number, heightMetres: numbe
   // 50–90 m cells around islands, marinas, and narrow passages.
   const boundedFine = Math.max(preferredFine, Math.sqrt(width * height / 260_000));
   return boundedFine < coarse * 0.82 ? [coarse, boundedFine] : [coarse];
+}
+
+export function getStartFixCorrectionTolerance(startAccuracyMetres: number | undefined) {
+  if (typeof startAccuracyMetres !== "number"
+    || !Number.isFinite(startAccuracyMetres)
+    || startAccuracyMetres <= 0
+    || startAccuracyMetres > MAXIMUM_NAVIGATION_ACCURACY_METRES) return 0;
+  return Math.min(100, startAccuracyMetres * 8);
 }
 
 type HeapEntry = { key: number; score: number };
@@ -324,7 +333,7 @@ export function planWaterRoute(
   // A phone fix can land a few metres inside the charted shoreline while the
   // boat is still afloat. Permit one short, outward-only correction from that
   // start; destinations and all later route legs remain strictly water-only.
-  const startSnapTolerance = Math.max(120, Math.min(350, (options.startAccuracyMetres ?? 0) * 2.5));
+  const startSnapTolerance = getStartFixCorrectionTolerance(options.startAccuracyMetres);
   if (directDistance < 30) {
     const directPoints = [start, destination];
     if (!routeGeometryIsWaterOnly(pack, directPoints, startIsLand ? startSnapTolerance : 0)) return { failure: "no-route" };

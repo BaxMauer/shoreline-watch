@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { isPointOnLand } from "../lib/shoreline.ts";
 import {
   formatRouteDistance,
+  getStartFixCorrectionTolerance,
   getRouteGridResolutions,
   geoBearing,
   geoDistanceMetres,
@@ -158,10 +159,27 @@ test("a coastal GPS fix just inside the chart can make one short outward correct
   const result = planWaterRoute(ISLAND_PACK, start, destination, { ...OPTIONS, startAccuracyMetres: 12 });
   assert.ok(result.route, result.failure);
   assert.equal(result.route.mode, "restricted");
-  assert.ok(geoDistanceMetres(result.route.points[0], result.route.points[1]) <= 120);
+  assert.ok(geoDistanceMetres(result.route.points[0], result.route.points[1]) <= 96);
   for (let index = 2; index < result.route.points.length; index += 1) {
     assert.equal(routeSegmentCrossesShoreline(ISLAND_PACK, result.route.points[index - 1], result.route.points[index]), false);
   }
+});
+
+test("start-fix correction requires trustworthy bounded accuracy", () => {
+  assert.equal(getStartFixCorrectionTolerance(undefined), 0);
+  assert.equal(getStartFixCorrectionTolerance(Number.NaN), 0);
+  assert.equal(getStartFixCorrectionTolerance(0), 0);
+  assert.equal(getStartFixCorrectionTolerance(12), 96);
+  assert.equal(getStartFixCorrectionTolerance(50), 100);
+  assert.equal(getStartFixCorrectionTolerance(50.01), 0);
+
+  const start = { longitude: 0.0451, latitude: 0.05 };
+  const destination = { longitude: 0.03, latitude: 0.05 };
+  assert.deepEqual(planWaterRoute(ISLAND_PACK, start, destination, OPTIONS), { failure: "no-route" });
+  assert.deepEqual(
+    planWaterRoute(ISLAND_PACK, start, destination, { ...OPTIONS, startAccuracyMetres: 51 }),
+    { failure: "no-route" },
+  );
 });
 
 test("start-fix recovery cannot tunnel from deep inside land", () => {
