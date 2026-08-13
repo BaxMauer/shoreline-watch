@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   type CoastlinePack,
+  type CourseToShore,
   type NearestShore,
   type ShorelineSegment,
+  distanceToSegment,
+  findCourseToShore,
   findNearestShore,
   getNearbyShorelineSegments,
   offsetFromShore,
@@ -12,6 +15,7 @@ import {
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
+type RiskLevel = "none" | "warning" | "danger";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -21,9 +25,10 @@ type Fix = {
   timestamp: number;
 };
 
-type Status = {
+type CourseRisk = {
+  level: RiskLevel;
   label: string;
-  level: "safe" | "warning" | "danger";
+  detail: string;
 };
 
 const SHORELINE_ALARM_METRES = 300;
@@ -49,10 +54,11 @@ function BoatIcon() {
   );
 }
 
-function ArrowIcon() {
+function SoundIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m12 3 5 15-5-3-5 3 5-15Z" fill="currentColor" />
+      <path d="M5 9.5h3.4L13 6v12l-4.6-3.5H5v-5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <path d="M16 9a4 4 0 0 1 0 6m2.2-8.2a7 7 0 0 1 0 10.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }
@@ -72,102 +78,152 @@ function scheduleTone(context: AudioContext, start: number, frequency: number) {
   oscillator.stop(start + 0.35);
 }
 
-function statusFor(distance: number | null, accuracy: number): Status {
-  if (distance === null) return { label: "Waiting for position", level: "warning" };
-  if (accuracy > 50) return { label: "GPS accuracy is weak", level: "warning" };
-  const conservativeDistance = Math.max(0, distance - accuracy);
-  if (conservativeDistance < SHORELINE_ALARM_METRES) return { label: "Inside 300 m shoreline mark", level: "danger" };
-  return { label: "Outside 300 m shoreline mark", level: "safe" };
-}
-
 function formatDistance(distance: number | null) {
   if (distance === null) return "—";
   if (distance < 1_000) return Math.round(distance).toLocaleString("en-US");
   return (distance / 1_000).toFixed(distance < 10_000 ? 2 : 1);
 }
 
-function ShorelineView({
+function formatEta(seconds: number) {
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} sec`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return remainder === 60 ? `${minutes + 1} min` : `${minutes}m ${remainder}s`;
+}
+
+function polarPoint(centre: number, radius: number, angle: number) {
+  const radians = (angle * Math.PI) / 180;
+  return { x: centre + Math.sin(radians) * radius, y: centre - Math.cos(radians) * radius };
+}
+
+function ringArc(centre: number, radius: number, startAngle: number, endAngle: number) {
+  const start = polarPoint(centre, radius, startAngle);
+  const end = polarPoint(centre, radius, endAngle);
+  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 0 1 ${end.x} ${end.y}`;
+}
+
+function ProximityPlot({
   fix,
   nearest,
   segments,
+  courseToShore,
+  courseRisk,
   rangeMetres,
 }: {
   fix: Fix | null;
   nearest: NearestShore | null;
   segments: ShorelineSegment[];
+  courseToShore: CourseToShore | null;
+  courseRisk: CourseRisk;
   rangeMetres: number;
 }) {
-  const width = 360;
-  const height = 220;
-  const centreX = width / 2;
-  const centreY = height / 2;
-  const pixelsPerMetre = Math.min((width - 32) / (rangeMetres * 2), (height - 32) / (rangeMetres * 2));
+  const size = 360;
+  const centre = size / 2;
+  const pixelsPerMetre = 146 / rangeMetres;
   const metresPerLongitudeDegree = fix ? 111_320 * Math.cos((fix.latitude * Math.PI) / 180) : 1;
   const metresPerLatitudeDegree = 110_540;
-
   const point = (longitude: number, latitude: number) => ({
-    x: centreX + (longitude - (fix?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
-    y: centreY - (latitude - (fix?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
+    x: centre + (longitude - (fix?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
+    y: centre - (latitude - (fix?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
   });
-
+  const ringRadius = SHORELINE_ALARM_METRES * pixelsPerMetre;
   const nearestPoint = nearest ? point(nearest.longitude, nearest.latitude) : null;
-  const rangeLabel = rangeMetres < 1_000
-    ? `${Math.round(rangeMetres)} m radius`
-    : `${(rangeMetres / 1_000).toFixed(1)} km radius`;
+  const coursePoint = courseToShore ? point(courseToShore.longitude, courseToShore.latitude) : null;
+
+  const dangerSectors = useMemo(() => {
+    if (!fix) return [];
+    const sectors = new Set<number>();
+    const longitudeScale = 111_320 * Math.cos((fix.latitude * Math.PI) / 180);
+
+    for (const segment of segments) {
+      const startX = (segment[0] - fix.longitude) * longitudeScale;
+      const startY = (segment[1] - fix.latitude) * metresPerLatitudeDegree;
+      const endX = (segment[2] - fix.longitude) * longitudeScale;
+      const endY = (segment[3] - fix.latitude) * metresPerLatitudeDegree;
+      const length = Math.hypot(endX - startX, endY - startY);
+      const steps = Math.min(100, Math.max(1, Math.ceil(length / 18)));
+
+      for (let index = 0; index <= steps; index += 1) {
+        const position = index / steps;
+        const east = startX + (endX - startX) * position;
+        const north = startY + (endY - startY) * position;
+        if (Math.hypot(east, north) > SHORELINE_ALARM_METRES) continue;
+        const bearing = (Math.atan2(east, north) * 180) / Math.PI;
+        const sector = Math.floor((((bearing + 360) % 360) / 5));
+        sectors.add(sector);
+        sectors.add((sector + 71) % 72);
+        sectors.add((sector + 1) % 72);
+      }
+    }
+
+    return Array.from(sectors).sort((left, right) => left - right);
+  }, [fix, metresPerLatitudeDegree, segments]);
 
   return (
-    <section className="shoreline-card" aria-label="Nearest shoreline diagram">
-      <div className="shoreline-card-head">
-        <div><span>Local shoreline</span><strong>Boat to nearest point</strong></div>
-        <span className="view-range">{rangeLabel}</span>
-      </div>
-      <svg className="shoreline-view" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={nearest ? `Diagram showing the nearest shoreline ${Math.round(nearest.distance)} metres away` : "Waiting for a shoreline position"}>
-        <defs>
-          <radialGradient id="waterGlow">
-            <stop offset="0" stopColor="#123c46" />
-            <stop offset="1" stopColor="#071b22" />
-          </radialGradient>
-          <filter id="nearestGlow" x="-100%" y="-100%" width="300%" height="300%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
-            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-        </defs>
-        <rect width={width} height={height} rx="9" fill="url(#waterGlow)" />
-        <path className="view-grid" d={`M${centreX} 0V${height}M0 ${centreY}H${width}`} />
+    <svg
+      className="proximity-plot"
+      viewBox={`0 0 ${size} ${size}`}
+      role="img"
+      aria-label={nearest ? `Nearest shoreline ${Math.round(nearest.distance)} metres away` : "Acquiring shoreline position"}
+    >
+      <defs>
+        <radialGradient id="plotGlow">
+          <stop offset="0" stopColor="#123740" stopOpacity=".72" />
+          <stop offset=".72" stopColor="#0a222a" stopOpacity=".18" />
+          <stop offset="1" stopColor="#071b22" stopOpacity="0" />
+        </radialGradient>
+        <filter id="boatGlow" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx={centre} cy={centre} r="166" fill="url(#plotGlow)" />
+
+      <g className="coast-layer">
         {fix && segments.map((segment, index) => {
           const start = point(segment[0], segment[1]);
           const end = point(segment[2], segment[3]);
-          return <line className="shore-segment" key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
+          const close = distanceToSegment(fix.longitude, fix.latitude, segment).distance < SHORELINE_ALARM_METRES;
+          return (
+            <line
+              className={`shore-segment ${close ? "close" : ""}`}
+              key={`${segment.join(":")}:${index}`}
+              x1={start.x}
+              y1={start.y}
+              x2={end.x}
+              y2={end.y}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
         })}
-        {fix && (
-          <circle
-            className="limit-ring"
-            cx={centreX}
-            cy={centreY}
-            r={SHORELINE_ALARM_METRES * pixelsPerMetre}
-          />
-        )}
-        {nearestPoint && (
-          <>
-            <line className="nearest-line" x1={centreX} y1={centreY} x2={nearestPoint.x} y2={nearestPoint.y} />
-            <circle className="nearest-halo" cx={nearestPoint.x} cy={nearestPoint.y} r="9" />
-            <circle className="nearest-point" cx={nearestPoint.x} cy={nearestPoint.y} r="4.5" filter="url(#nearestGlow)" />
-          </>
-        )}
-        {fix ? (
-          <g className="map-boat" transform={`translate(${centreX} ${centreY}) rotate(${fix.heading ?? 0})`}>
-            <path d="M0-13 8 9 0 6-8 9Z" />
-            <circle cx="0" cy="0" r="2.5" />
-          </g>
-        ) : <text className="map-placeholder" x={centreX} y={centreY}>ACQUIRING GPS</text>}
-        <text className="north-label" x={width - 20} y="22">N</text>
-        <text className="ring-label" x={centreX + 5} y={centreY - SHORELINE_ALARM_METRES * pixelsPerMetre - 5}>300 m</text>
-      </svg>
-      <div className="shoreline-legend">
-        <span><i className="legend-dot nearest" />Nearest shoreline</span>
-        <span><i className="legend-line" />300 m alarm ring</span>
-      </div>
-    </section>
+      </g>
+
+      <circle className="proximity-ring" cx={centre} cy={centre} r={ringRadius} />
+      {dangerSectors.map((sector) => (
+        <path
+          className="danger-ring-arc"
+          key={sector}
+          d={ringArc(centre, ringRadius, sector * 5 + 0.6, sector * 5 + 4.4)}
+        />
+      ))}
+
+      {coursePoint && courseRisk.level !== "none" && (
+        <>
+          <line className="course-line" x1={centre} y1={centre} x2={coursePoint.x} y2={coursePoint.y} />
+          <circle className="course-hit" cx={coursePoint.x} cy={coursePoint.y} r="4" />
+        </>
+      )}
+
+      {nearestPoint && <circle className="nearest-point" cx={nearestPoint.x} cy={nearestPoint.y} r="3.8" />}
+
+      {fix ? (
+        <g className="map-boat" transform={`translate(${centre} ${centre}) rotate(${fix.heading ?? 0})`} filter="url(#boatGlow)">
+          <circle className="boat-halo" cx="0" cy="0" r="17" />
+          <path d="M0-14 8.5 10 0 6.5-8.5 10Z" />
+          <circle className="boat-centre" cx="0" cy="0" r="2.6" />
+        </g>
+      ) : <text className="plot-placeholder" x={centre} y={centre}>ACQUIRING GPS</text>}
+    </svg>
   );
 }
 
@@ -183,7 +239,6 @@ export default function ShorelineApp() {
   const [alarmArmed, setAlarmArmed] = useState(false);
   const [alarmPlayback, setAlarmPlayback] = useState<AlarmPlayback>("idle");
   const [alarmPlayCount, setAlarmPlayCount] = useState(0);
-  const [lastAlarmReason, setLastAlarmReason] = useState("No alarm played yet");
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
@@ -218,17 +273,44 @@ export default function ShorelineApp() {
     return findNearestShore(pack, fix.longitude, fix.latitude);
   }, [pack, fix]);
 
-  const viewRangeMetres = nearest ? Math.min(6_000, Math.max(450, nearest.distance * 1.25 + 50)) : 450;
+  const viewRangeMetres = nearest ? Math.min(6_000, Math.max(420, nearest.distance * 1.15 + 35)) : 420;
   const nearbySegments = useMemo(() => {
     if (!pack || !fix) return [];
-    return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.1);
+    return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.15);
   }, [fix, pack, viewRangeMetres]);
 
+  const courseToShore = useMemo(() => {
+    if (!fix || fix.heading === null) return null;
+    return findCourseToShore(nearbySegments, fix.longitude, fix.latitude, fix.heading);
+  }, [fix, nearbySegments]);
+
+  const speedMetresPerSecond = fix?.speed ?? 0;
   const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
-  const status = statusFor(nearest?.distance ?? null, fix?.accuracy ?? 0);
   const conservativeDistance = nearest && fix ? Math.max(0, nearest.distance - fix.accuracy) : null;
   const inside300 = conservativeDistance !== null && conservativeDistance < SHORELINE_ALARM_METRES;
-  const relativeBearing = nearest ? nearest.bearing - (fix?.heading ?? 0) : 0;
+  const isUnderway = speedMetresPerSecond >= 0.77;
+
+  const courseRisk = useMemo<CourseRisk>(() => {
+    if (!courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
+    const secondsToShore = courseToShore.distance / speedMetresPerSecond;
+    const secondsToMark = Math.max(0, (courseToShore.distance - SHORELINE_ALARM_METRES) / speedMetresPerSecond);
+
+    if (inside300 && secondsToShore <= 300) {
+      return {
+        level: "danger",
+        label: "Shoreline on current course",
+        detail: `${formatEta(secondsToShore)} to shore · check course`,
+      };
+    }
+    if (!inside300 && secondsToMark <= 180) {
+      return {
+        level: "warning",
+        label: "300 m mark on current course",
+        detail: `${formatEta(secondsToMark)} at current speed`,
+      };
+    }
+    return { level: "none", label: "", detail: "" };
+  }, [courseToShore, inside300, isUnderway, speedMetresPerSecond]);
 
   const getAudioContext = useCallback(() => {
     if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
@@ -275,18 +357,17 @@ export default function ShorelineApp() {
     } catch {
       setAlarmArmed(false);
       setAlarmPlayback("blocked");
-      setAlarmError("Audio is blocked. Turn up media volume, then tap the large Test 300 m alarm button.");
+      setAlarmError("Sound blocked — raise media volume and tap Test alarm.");
       return false;
     }
   }, []);
 
-  const soundAlarm = useCallback(async (reason: string) => {
+  const soundAlarm = useCallback(async () => {
     const audio = alarmAudio.current;
     if (!audio) {
-      setAlarmError("The alarm recording did not load. Refresh the app and try again.");
+      setAlarmError("Alarm sound did not load — reopen the app.");
       return false;
     }
-
     try {
       audio.pause();
       audio.currentTime = 0;
@@ -298,7 +379,6 @@ export default function ShorelineApp() {
       setAlarmError(null);
       setAlarmPlayback("playing");
       setAlarmPlayCount((count) => count + 1);
-      setLastAlarmReason(reason);
       if ("vibrate" in navigator) navigator.vibrate([260, 140, 260, 140, 520]);
       return true;
     } catch {
@@ -308,12 +388,11 @@ export default function ShorelineApp() {
         setAlarmError(null);
         setAlarmPlayback("playing");
         setAlarmPlayCount((count) => count + 1);
-        setLastAlarmReason(`${reason} · fallback tone`);
         return true;
       }
       setAlarmArmed(false);
       setAlarmPlayback("blocked");
-      setAlarmError("The browser blocked sound. Keep this page visible, turn up media volume, and tap Test 300 m alarm again.");
+      setAlarmError("Sound blocked — keep the app visible and tap Test alarm.");
       return false;
     }
   }, [soundWebAudioFallback]);
@@ -321,7 +400,7 @@ export default function ShorelineApp() {
   useEffect(() => {
     if (mode === "idle" || conservativeDistance === null) return;
     const wasInside = previousInside300.current;
-    if (inside300 && wasInside !== true) void soundAlarm("Automatic 300 m crossing");
+    if (inside300 && wasInside !== true) void soundAlarm();
     previousInside300.current = inside300;
   }, [conservativeDistance, inside300, mode, soundAlarm]);
 
@@ -360,7 +439,7 @@ export default function ShorelineApp() {
 
   const startLive = useCallback(async () => {
     if (!pack || !navigator.geolocation) {
-      setTrackingError("This browser does not provide live location.");
+      setTrackingError("Live location is not available in this browser.");
       return;
     }
     void primeAlarm();
@@ -369,7 +448,6 @@ export default function ShorelineApp() {
     setTrackingError(null);
     await requestWakeLock();
     navigator.storage?.persist?.().catch(() => false);
-
     watchId.current = navigator.geolocation.watchPosition(
       (position) => {
         setFix({
@@ -384,9 +462,9 @@ export default function ShorelineApp() {
       },
       (error) => {
         const messages: Record<number, string> = {
-          1: "Location access was denied. Allow precise location and try again.",
-          2: "The phone cannot determine its current location.",
-          3: "The GPS fix timed out. Keep the app visible and try again.",
+          1: "Allow precise location and try again.",
+          2: "The phone cannot determine its location.",
+          3: "GPS timed out — keep the app visible.",
         };
         setTrackingError(messages[error.code] ?? "Live location is unavailable.");
       },
@@ -404,7 +482,7 @@ export default function ShorelineApp() {
       ...point,
       accuracy: 6,
       speed: DEMO_SPEEDS[index] / 1.943844,
-      heading: (anchorShore.bearing + 360) % 360,
+      heading: (anchorShore.bearing + (index === 4 ? 180 : 0)) % 360,
       timestamp: Date.now(),
     });
   }, [pack]);
@@ -418,28 +496,30 @@ export default function ShorelineApp() {
     setDemoFix(0);
   }, [primeAlarm, setDemoFix]);
 
-  const testAlarm = useCallback(() => {
-    void soundAlarm("Manual test button");
-  }, [soundAlarm]);
-
   const advanceDemo = useCallback(() => {
     const next = (demoIndex + 1) % DEMO_DISTANCES.length;
     setDemoIndex(next);
     setDemoFix(next);
   }, [demoIndex, setDemoFix]);
 
-  const generatedDate = pack ? new Intl.DateTimeFormat("en", { month: "short", year: "numeric" }).format(new Date(pack.generatedAt)) : null;
   const distanceUnit = nearest && nearest.distance >= 1_000 ? "kilometres" : "metres";
-  const playbackLabel = alarmPlayback === "playing" || alarmPlayback === "starting"
-    ? "Sound playing"
+  const statusLabel = !nearest
+    ? "Waiting for GPS"
+    : (fix?.accuracy ?? 0) > 50
+      ? "Low GPS accuracy"
+      : inside300
+        ? "Inside 300 m"
+        : "300 m clear";
+  const alarmLabel = alarmPlayback === "playing" || alarmPlayback === "starting"
+    ? "Playing"
     : alarmPlayback === "blocked"
-      ? "Sound blocked"
+      ? "Blocked"
       : alarmArmed
-        ? "Sound ready"
-        : "Not armed";
+        ? "Ready"
+        : "Test alarm";
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${mode !== "idle" ? "is-tracking" : ""}`}>
       <audio
         className="alarm-audio"
         ref={alarmAudio}
@@ -450,7 +530,7 @@ export default function ShorelineApp() {
         onEnded={() => setAlarmPlayback("ready")}
         onError={() => {
           setAlarmPlayback("blocked");
-          setAlarmError("The alarm recording could not be loaded. Refresh the app and try again.");
+          setAlarmError("Alarm sound did not load — reopen the app.");
         }}
       />
 
@@ -461,99 +541,84 @@ export default function ShorelineApp() {
         </div>
         <div className="connection" aria-live="polite">
           <span className={`connection-dot ${online ? "" : "offline"}`} />
-          {online ? "Online" : "Offline mode"}
+          {online ? "Online" : "Offline"}
         </div>
       </header>
 
       {mode === "idle" ? (
         <>
           <section className="intro">
-            <div>
-              <p className="eyebrow">Croatian coast · live GPS</p>
-              <h1>Know your margin.</h1>
-            </div>
-            <p className="intro-copy">
-              See your nearest shoreline distance and get an audible alert when you cross the 300 metre mark—even when mobile coverage drops away.
-            </p>
+            <p className="eyebrow">Croatian coast · live GPS</p>
+            <h1>Know your margin.</h1>
+            <p className="intro-copy">Nearest shoreline, one 300 m alarm, fully available offline.</p>
           </section>
 
-          <section className="launch-panel" aria-label="Trip readiness">
-            <div className="data-row">
-              <div>
-                <span className="data-label">Croatia coastline pack</span>
-                <span className="data-detail">HHI source · {pack?.segmentCount.toLocaleString("en-US") ?? "—"} indexed segments</span>
-              </div>
-              <span className="data-state">{packError ? "FAILED" : pack ? "READY" : "LOADING"}</span>
+          <section className="launch-panel" aria-label="Start shoreline tracking">
+            <div className={`readiness ${packError ? "failed" : ""}`}>
+              <span className="readiness-dot" />
+              {packError ? "Coastline data unavailable" : pack ? "Croatia shoreline ready offline" : "Loading Croatia shoreline"}
             </div>
-            <div className="data-row">
-              <div>
-                <span className="data-label">Offline calculation</span>
-                <span className="data-detail">GPS, shoreline view and alarm stay on this device</span>
-              </div>
-              <span className="data-state">LOCAL</span>
-            </div>
-
             <div className="launch-actions">
               <button className="primary-button" disabled={!pack} onClick={startLive}>Start live</button>
-              <button className="secondary-button" disabled={!pack} onClick={startDemo}>Try demo</button>
+              <button className="secondary-button" disabled={!pack} onClick={startDemo}>Demo</button>
             </div>
-            {packError && <div className="error-box">{packError}</div>}
-            <p className="fine-print">
-              Starting live or demo plays a brief ready chirp. Prototype aid only—not a navigation chart. Keep an approved chart and normal lookout.
-            </p>
+            <p className="fine-print">Navigation aid only. Keep an approved chart and normal lookout.</p>
           </section>
         </>
       ) : (
         <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
           <div className="tracker-head">
-            <span className="trip-mode">{mode === "live" ? "Live tracking" : `Murter demo · ${demoIndex + 1}/${DEMO_DISTANCES.length}`}</span>
-            <button className="text-button" onClick={stopTracking}>End trip</button>
+            <span className="trip-mode">{mode === "live" ? "Live" : `Demo ${demoIndex + 1}/${DEMO_DISTANCES.length}`}</span>
+            <button className="text-button" onClick={stopTracking}>End</button>
           </div>
 
-          <div className={`status-band ${status.level === "safe" ? "" : status.level}`} aria-live="assertive">
-            <span>{status.level === "danger" ? "300 m alarm" : "300 m monitor"}</span>
-            <strong>{status.label}</strong>
-          </div>
-
-          <div className="distance-stage">
-            <div>
-              <div className="distance-label">Nearest shoreline</div>
-              <div className={`distance-value ${nearest ? "" : "placeholder"}`}>{formatDistance(nearest?.distance ?? null)}</div>
-              <div className="distance-unit">{nearest ? distanceUnit : "acquiring GPS"}</div>
-              <div className="bearing-arrow" style={{ transform: `rotate(${relativeBearing}deg)` }} aria-label={nearest ? `Shoreline bearing ${Math.round(nearest.bearing)} degrees` : "Bearing unavailable"}>
-                <ArrowIcon />
-              </div>
+          <section className={`instrument ${inside300 ? "inside-limit" : ""} course-${courseRisk.level}`} aria-label="Shoreline distance instrument">
+            <div className={`status-pill ${inside300 ? "danger" : ""} ${!nearest ? "waiting" : ""}`} aria-live="assertive">
+              <span />{statusLabel}
             </div>
-          </div>
-
-          <ShorelineView fix={fix} nearest={nearest} segments={nearbySegments} rangeMetres={viewRangeMetres} />
-
-          <div className="metrics">
-            <div className="metric"><span className="metric-value">{speedKnots === null ? "—" : speedKnots.toFixed(1)}</span><span className="metric-label">Speed · kn</span></div>
-            <div className="metric"><span className="metric-value">{fix ? `±${Math.round(fix.accuracy)} m` : "—"}</span><span className="metric-label">GPS accuracy</span></div>
-            <div className="metric"><span className="metric-value">{nearest ? `${Math.round(nearest.bearing)}°` : "—"}</span><span className="metric-label">Shore bearing</span></div>
-          </div>
-
-          <div className="control-panel">
-            <div className="alarm-panel">
-              <div className="alarm-panel-head">
-                <div><span className="alarm-kicker">Audible warning</span><strong>300 m shoreline alarm</strong></div>
-                <span className={`alarm-state ${alarmArmed ? "armed" : ""}`}>{playbackLabel}</span>
-              </div>
-              <button className="alarm-test-button" onClick={testAlarm}>
-                <span>▶</span> Test 300 m alarm
-              </button>
-              <div className="alarm-receipt" aria-live="polite">
-                <span>{lastAlarmReason}</span>
-                <strong>{alarmPlayCount} full {alarmPlayCount === 1 ? "play" : "plays"} this trip</strong>
-              </div>
+            <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""}`}>
+              <span />{alarmLabel}
             </div>
-            {mode === "demo" && <div className="demo-control"><button className="secondary-button" onClick={advanceDemo}>Advance demo position</button></div>}
-            {trackingError && <div className="error-box">{trackingError}</div>}
-            {alarmError && <div className="error-box">{alarmError}</div>}
-            <p className="fine-print">
-              Coastline pack: HHI · {generatedDate ?? "loading"}. The 300 m crossing uses measured distance minus reported GPS accuracy. Keep media volume up and the app visible.
-            </p>
+
+            <div className="distance-readout">
+              <span>Nearest shoreline</span>
+              <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null)}</strong>
+              <small>{nearest ? distanceUnit : "acquiring"}</small>
+            </div>
+
+            <ProximityPlot
+              fix={fix}
+              nearest={nearest}
+              segments={nearbySegments}
+              courseToShore={courseToShore}
+              courseRisk={courseRisk}
+              rangeMetres={viewRangeMetres}
+            />
+
+            <div className="instrument-footer">
+              {courseRisk.level !== "none" ? (
+                <div className={`course-alert ${courseRisk.level}`} aria-live="assertive">
+                  <span className="course-symbol">↗</span>
+                  <span><strong>{courseRisk.label}</strong><small>{courseRisk.detail}</small></span>
+                </div>
+              ) : (
+                <div className="instrument-meta">
+                  <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn</span>
+                  <span><strong>{fix ? `±${Math.round(fix.accuracy)}` : "—"}</strong> m GPS</span>
+                  <span><strong>{nearest ? `${Math.round(nearest.bearing)}°` : "—"}</strong> shore</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
+
+          <div className={`tracker-actions ${mode === "demo" ? "with-demo" : ""}`}>
+            <button className="sound-button" onClick={() => void soundAlarm()}>
+              <SoundIcon />
+              <span><strong>Test alarm</strong><small>{alarmLabel}</small></span>
+            </button>
+            {mode === "demo" && <button className="next-button" onClick={advanceDemo}>Next position</button>}
           </div>
         </section>
       )}

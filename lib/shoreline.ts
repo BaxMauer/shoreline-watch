@@ -21,6 +21,12 @@ export type NearestShore = {
 
 export type ShorelineSegment = readonly [number, number, number, number];
 
+export type CourseToShore = {
+  distance: number;
+  longitude: number;
+  latitude: number;
+};
+
 const METRES_PER_LATITUDE_DEGREE = 110_540;
 
 export function distanceToSegment(
@@ -129,6 +135,42 @@ export function getNearbyShorelineSegments(
   if (segments.length <= maximumSegments) return segments;
   const step = segments.length / maximumSegments;
   return Array.from({ length: maximumSegments }, (_, index) => segments[Math.floor(index * step)]);
+}
+
+export function findCourseToShore(
+  segments: ShorelineSegment[],
+  longitude: number,
+  latitude: number,
+  heading: number,
+): CourseToShore | null {
+  const metresPerLongitudeDegree = 111_320 * Math.cos((latitude * Math.PI) / 180);
+  const headingRadians = (heading * Math.PI) / 180;
+  const directionX = Math.sin(headingRadians);
+  const directionY = Math.cos(headingRadians);
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const [longitude1, latitude1, longitude2, latitude2] of segments) {
+    const startX = (longitude1 - longitude) * metresPerLongitudeDegree;
+    const startY = (latitude1 - latitude) * METRES_PER_LATITUDE_DEGREE;
+    const segmentX = (longitude2 - longitude1) * metresPerLongitudeDegree;
+    const segmentY = (latitude2 - latitude1) * METRES_PER_LATITUDE_DEGREE;
+    const denominator = directionX * segmentY - directionY * segmentX;
+    if (Math.abs(denominator) < 0.000001) continue;
+
+    const distanceAlongCourse = (startX * segmentY - startY * segmentX) / denominator;
+    const positionOnSegment = (startX * directionY - startY * directionX) / denominator;
+    if (distanceAlongCourse < 0 || positionOnSegment < 0 || positionOnSegment > 1) continue;
+    if (distanceAlongCourse < nearestDistance) nearestDistance = distanceAlongCourse;
+  }
+
+  if (!Number.isFinite(nearestDistance)) return null;
+  const east = directionX * nearestDistance;
+  const north = directionY * nearestDistance;
+  return {
+    distance: nearestDistance,
+    longitude: longitude + east / metresPerLongitudeDegree,
+    latitude: latitude + north / METRES_PER_LATITUDE_DEGREE,
+  };
 }
 
 export function offsetFromShore(shore: NearestShore, bearingFromShore: number, distance: number) {
