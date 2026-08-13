@@ -12,12 +12,18 @@ import {
   getNearbyShorelineSegments,
   offsetFromShore,
 } from "../lib/shoreline";
+import { getWarningTransition } from "../lib/warning-state";
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
 type RiskLevel = "none" | "warning" | "danger";
 type Language = "de" | "en";
 type Theme = "ocean" | "xp" | "dark" | "nautical";
+type WarningConfig = {
+  distanceMetres: number;
+  speedWarningEnabled: boolean;
+  maxSpeedKnots: number;
+};
 type Fix = {
   longitude: number;
   latitude: number;
@@ -33,8 +39,13 @@ type CourseRisk = {
   detail: string;
 };
 
-const SHORELINE_ALARM_METRES = 300;
-const DEMO_DISTANCES = [420, 315, 285, 245, 320, 285];
+const CROATIA_WARNING_CONFIG: WarningConfig = {
+  distanceMetres: 300,
+  speedWarningEnabled: true,
+  maxSpeedKnots: 8,
+};
+const WARNING_CONFIG_STORAGE_KEY = "shoreline-warning-config-v1";
+const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
 
@@ -44,7 +55,7 @@ const COPY = {
     offline: "Offline",
     eyebrow: "Kroatische Küste · Live-GPS",
     heroTitle: "Abstand im Blick.",
-    intro: "Nächste Küste, ein 300-m-Alarm, vollständig offline verfügbar.",
+    intro: (distance: number) => `Nächste Küste, ein ${distance}-m-Alarm, vollständig offline verfügbar.`,
     startAria: "Küstenüberwachung starten",
     coastError: "Küstendaten nicht verfügbar",
     coastReady: "Kroatische Küste offline bereit",
@@ -58,12 +69,23 @@ const COPY = {
     themeXp: "Windows XP",
     themeDark: "Dark Mode",
     themeNautical: "Klassisch nautisch",
+    settings: "Warnungen",
+    settingsSummary: (distance: number, speedEnabled: boolean, speed: number) =>
+      speedEnabled ? `${distance} m · ${speed} kn` : `${distance} m · Tempo aus`,
+    distanceWarning: "Warnabstand",
+    speedWarning: "Tempo im Küstenbereich prüfen",
+    speedLimit: "Maximaltempo",
+    speedWarningHint: (distance: number) => `Warnt über dem Limit innerhalb von ${distance} m.`,
+    croatiaPreset: "Kroatienwerte",
+    croatiaRule: "Kroatien: maximal 8 kn bis 300 m zur Küste; Glisierfahrt erst außerhalb von 300 m.",
     live: "Live",
     end: "Beenden",
     waitingGps: "Warte auf GPS",
     weakGps: "GPS ungenau",
-    inside300: "Unter 300 m",
-    clear300: "300 m frei",
+    insideLimit: (distance: number) => `Unter ${distance} m`,
+    clearLimit: (distance: number) => `${distance} m frei`,
+    speedDanger: "Zu schnell nahe der Küste",
+    speedDangerDetail: (speed: string, limit: string, distance: number) => `${speed} kn · Limit ${limit} kn innerhalb ${distance} m`,
     playing: "Wiedergabe",
     blocked: "Blockiert",
     ready: "Bereit",
@@ -76,7 +98,7 @@ const COPY = {
     plotDistance: (distance: number) => `Nächste Küste ${distance} Meter entfernt`,
     courseDanger: "Küste auf aktuellem Kurs",
     courseDangerDetail: (eta: string) => `${eta} bis zur Küste · Kurs prüfen`,
-    courseWarning: "300-m-Grenze auf aktuellem Kurs",
+    courseWarning: (distance: number) => `${distance}-m-Grenze auf aktuellem Kurs`,
     courseWarningDetail: (eta: string) => `${eta} bei aktueller Geschwindigkeit`,
     seconds: "Sek.",
     minutes: "Min.",
@@ -95,7 +117,7 @@ const COPY = {
     offline: "Offline",
     eyebrow: "Croatian coast · live GPS",
     heroTitle: "Know your margin.",
-    intro: "Nearest shoreline, one 300 m alarm, fully available offline.",
+    intro: (distance: number) => `Nearest shoreline, one ${distance} m alarm, fully available offline.`,
     startAria: "Start shoreline tracking",
     coastError: "Coastline data unavailable",
     coastReady: "Croatia shoreline ready offline",
@@ -109,12 +131,23 @@ const COPY = {
     themeXp: "Windows XP",
     themeDark: "Dark mode",
     themeNautical: "Old-school nautical",
+    settings: "Warnings",
+    settingsSummary: (distance: number, speedEnabled: boolean, speed: number) =>
+      speedEnabled ? `${distance} m · ${speed} kn` : `${distance} m · speed off`,
+    distanceWarning: "Warning distance",
+    speedWarning: "Check speed near shore",
+    speedLimit: "Maximum speed",
+    speedWarningHint: (distance: number) => `Warn above the limit while within ${distance} m.`,
+    croatiaPreset: "Croatia preset",
+    croatiaRule: "Croatia: maximum 8 kn within 300 m of shore; planing only beyond 300 m.",
     live: "Live",
     end: "End",
     waitingGps: "Waiting for GPS",
     weakGps: "Low GPS accuracy",
-    inside300: "Inside 300 m",
-    clear300: "300 m clear",
+    insideLimit: (distance: number) => `Inside ${distance} m`,
+    clearLimit: (distance: number) => `${distance} m clear`,
+    speedDanger: "Too fast near shoreline",
+    speedDangerDetail: (speed: string, limit: string, distance: number) => `${speed} kn · ${limit} kn limit within ${distance} m`,
     playing: "Playing",
     blocked: "Blocked",
     ready: "Ready",
@@ -127,7 +160,7 @@ const COPY = {
     plotDistance: (distance: number) => `Nearest shoreline ${distance} metres away`,
     courseDanger: "Shoreline on current course",
     courseDangerDetail: (eta: string) => `${eta} to shore · check course`,
-    courseWarning: "300 m mark on current course",
+    courseWarning: (distance: number) => `${distance} m mark on current course`,
     courseWarningDetail: (eta: string) => `${eta} at current speed`,
     seconds: "sec",
     minutes: "min",
@@ -185,6 +218,38 @@ function scheduleTone(context: AudioContext, start: number, frequency: number) {
   oscillator.stop(start + 0.35);
 }
 
+function scheduleChimeTone(context: AudioContext, start: number, frequency: number, duration = 0.36) {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(0.2, start + 0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.03);
+}
+
+function sanitizeWarningConfig(value: unknown): WarningConfig {
+  if (!value || typeof value !== "object") return CROATIA_WARNING_CONFIG;
+  const candidate = value as Partial<WarningConfig>;
+  const distanceMetres = typeof candidate.distanceMetres === "number" && Number.isFinite(candidate.distanceMetres)
+    ? Math.min(2_000, Math.max(50, Math.round(candidate.distanceMetres / 10) * 10))
+    : CROATIA_WARNING_CONFIG.distanceMetres;
+  const maxSpeedKnots = typeof candidate.maxSpeedKnots === "number" && Number.isFinite(candidate.maxSpeedKnots)
+    ? Math.min(40, Math.max(1, Math.round(candidate.maxSpeedKnots * 10) / 10))
+    : CROATIA_WARNING_CONFIG.maxSpeedKnots;
+  return {
+    distanceMetres,
+    maxSpeedKnots,
+    speedWarningEnabled: typeof candidate.speedWarningEnabled === "boolean"
+      ? candidate.speedWarningEnabled
+      : CROATIA_WARNING_CONFIG.speedWarningEnabled,
+  };
+}
+
 function formatDistance(distance: number | null, language: Language) {
   if (distance === null) return "—";
   if (distance < 1_000) return Math.round(distance).toLocaleString(language === "de" ? "de-DE" : "en-US");
@@ -217,6 +282,7 @@ function ProximityPlot({
   courseToShore,
   courseRisk,
   rangeMetres,
+  warningDistanceMetres,
   language,
 }: {
   fix: Fix | null;
@@ -225,6 +291,7 @@ function ProximityPlot({
   courseToShore: CourseToShore | null;
   courseRisk: CourseRisk;
   rangeMetres: number;
+  warningDistanceMetres: number;
   language: Language;
 }) {
   const copy = COPY[language];
@@ -237,7 +304,7 @@ function ProximityPlot({
     x: centre + (longitude - (fix?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (latitude - (fix?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
   });
-  const ringRadius = SHORELINE_ALARM_METRES * pixelsPerMetre;
+  const ringRadius = warningDistanceMetres * pixelsPerMetre;
   const nearestPoint = nearest ? point(nearest.longitude, nearest.latitude) : null;
   const coursePoint = courseToShore ? point(courseToShore.longitude, courseToShore.latitude) : null;
 
@@ -258,7 +325,7 @@ function ProximityPlot({
         const position = index / steps;
         const east = startX + (endX - startX) * position;
         const north = startY + (endY - startY) * position;
-        if (Math.hypot(east, north) > SHORELINE_ALARM_METRES) continue;
+        if (Math.hypot(east, north) > warningDistanceMetres) continue;
         const bearing = (Math.atan2(east, north) * 180) / Math.PI;
         const sector = Math.floor((((bearing + 360) % 360) / 5));
         sectors.add(sector);
@@ -268,7 +335,7 @@ function ProximityPlot({
     }
 
     return Array.from(sectors).sort((left, right) => left - right);
-  }, [fix, metresPerLatitudeDegree, segments]);
+  }, [fix, metresPerLatitudeDegree, segments, warningDistanceMetres]);
 
   return (
     <svg
@@ -294,7 +361,7 @@ function ProximityPlot({
         {fix && segments.map((segment, index) => {
           const start = point(segment[0], segment[1]);
           const end = point(segment[2], segment[3]);
-          const close = distanceToSegment(fix.longitude, fix.latitude, segment).distance < SHORELINE_ALARM_METRES;
+          const close = distanceToSegment(fix.longitude, fix.latitude, segment).distance < warningDistanceMetres;
           return (
             <line
               className={`shore-segment ${close ? "close" : ""}`}
@@ -341,6 +408,7 @@ function ProximityPlot({
 export default function ShorelineApp() {
   const [language, setLanguage] = useState<Language>("de");
   const [theme, setTheme] = useState<Theme>("ocean");
+  const [warningConfig, setWarningConfig] = useState<WarningConfig>(CROATIA_WARNING_CONFIG);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [pack, setPack] = useState<CoastlinePack | null>(null);
   const [packError, setPackError] = useState<string | null>(null);
@@ -357,15 +425,24 @@ export default function ShorelineApp() {
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
-  const previousInside300 = useRef<boolean | null>(null);
+  const previousInsideLimit = useRef<boolean | null>(null);
+  const previousSpeedViolation = useRef<boolean | null>(null);
   const copy = COPY[language];
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const savedLanguage = window.localStorage.getItem("shoreline-language");
       const savedTheme = window.localStorage.getItem("shoreline-theme");
+      const savedWarningConfig = window.localStorage.getItem(WARNING_CONFIG_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
+      if (savedWarningConfig) {
+        try {
+          setWarningConfig(sanitizeWarningConfig(JSON.parse(savedWarningConfig)));
+        } catch {
+          setWarningConfig(CROATIA_WARNING_CONFIG);
+        }
+      }
       setPreferencesLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -375,9 +452,10 @@ export default function ShorelineApp() {
     if (!preferencesLoaded) return;
     window.localStorage.setItem("shoreline-language", language);
     window.localStorage.setItem("shoreline-theme", theme);
+    window.localStorage.setItem(WARNING_CONFIG_STORAGE_KEY, JSON.stringify(warningConfig));
     document.documentElement.lang = language;
     document.documentElement.dataset.theme = theme;
-  }, [language, preferencesLoaded, theme]);
+  }, [language, preferencesLoaded, theme, warningConfig]);
 
   useEffect(() => {
     let refreshing = false;
@@ -407,7 +485,9 @@ export default function ShorelineApp() {
     return findNearestShore(pack, fix.longitude, fix.latitude);
   }, [pack, fix]);
 
-  const viewRangeMetres = nearest ? Math.min(6_000, Math.max(420, nearest.distance * 1.15 + 35)) : 420;
+  const viewRangeMetres = nearest
+    ? Math.min(6_000, Math.max(warningConfig.distanceMetres * 1.35, nearest.distance * 1.15 + 35))
+    : warningConfig.distanceMetres * 1.35;
   const nearbySegments = useMemo(() => {
     if (!pack || !fix) return [];
     return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.15);
@@ -421,30 +501,34 @@ export default function ShorelineApp() {
   const speedMetresPerSecond = fix?.speed ?? 0;
   const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
   const conservativeDistance = nearest && fix ? Math.max(0, nearest.distance - fix.accuracy) : null;
-  const inside300 = conservativeDistance !== null && conservativeDistance < SHORELINE_ALARM_METRES;
+  const insideLimit = conservativeDistance !== null && conservativeDistance < warningConfig.distanceMetres;
+  const speedViolation = warningConfig.speedWarningEnabled
+    && insideLimit
+    && speedKnots !== null
+    && speedKnots > warningConfig.maxSpeedKnots;
   const isUnderway = speedMetresPerSecond >= 0.77;
 
   const courseRisk = useMemo<CourseRisk>(() => {
     if (!courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
     const secondsToShore = courseToShore.distance / speedMetresPerSecond;
-    const secondsToMark = Math.max(0, (courseToShore.distance - SHORELINE_ALARM_METRES) / speedMetresPerSecond);
+    const secondsToMark = Math.max(0, (courseToShore.distance - warningConfig.distanceMetres) / speedMetresPerSecond);
 
-    if (inside300 && secondsToShore <= 300) {
+    if (insideLimit && secondsToShore <= 300) {
       return {
         level: "danger",
         label: copy.courseDanger,
         detail: copy.courseDangerDetail(formatEta(secondsToShore, language)),
       };
     }
-    if (!inside300 && secondsToMark <= 180) {
+    if (!insideLimit && secondsToMark <= 180) {
       return {
         level: "warning",
-        label: copy.courseWarning,
+        label: copy.courseWarning(warningConfig.distanceMetres),
         detail: copy.courseWarningDetail(formatEta(secondsToMark, language)),
       };
     }
     return { level: "none", label: "", detail: "" };
-  }, [copy, courseToShore, inside300, isUnderway, language, speedMetresPerSecond]);
+  }, [copy, courseToShore, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
 
   const getAudioContext = useCallback(() => {
     if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
@@ -475,6 +559,17 @@ export default function ShorelineApp() {
     const audio = alarmAudio.current;
     if (!audio) return false;
     try {
+      const context = getAudioContext();
+      if (context?.state === "suspended") await context.resume();
+      if (context?.state === "running") {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        gain.gain.setValueAtTime(0.0001, context.currentTime);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.02);
+      }
       audio.muted = false;
       audio.volume = 1;
       audio.currentTime = 0;
@@ -494,7 +589,7 @@ export default function ShorelineApp() {
       setAlarmError(copy.soundBlocked);
       return false;
     }
-  }, [copy.soundBlocked]);
+  }, [copy.soundBlocked, getAudioContext]);
 
   const soundAlarm = useCallback(async () => {
     const audio = alarmAudio.current;
@@ -531,12 +626,40 @@ export default function ShorelineApp() {
     }
   }, [copy.soundBlocked, copy.soundMissing, soundWebAudioFallback]);
 
+  const soundSafeChime = useCallback(async () => {
+    const context = getAudioContext();
+    if (!context) return false;
+    try {
+      if (context.state === "suspended") await context.resume();
+      if (context.state !== "running") return false;
+      const start = context.currentTime + 0.02;
+      scheduleChimeTone(context, start, 523.25, 0.32);
+      scheduleChimeTone(context, start + 0.14, 659.25, 0.34);
+      scheduleChimeTone(context, start + 0.29, 783.99, 0.48);
+      setAlarmError(null);
+      setAlarmPlayback("playing");
+      window.setTimeout(() => setAlarmPlayback("ready"), 820);
+      return true;
+    } catch {
+      setAlarmPlayback("blocked");
+      setAlarmError(copy.soundBlocked);
+      return false;
+    }
+  }, [copy.soundBlocked, getAudioContext]);
+
   useEffect(() => {
     if (mode === "idle" || conservativeDistance === null) return;
-    const wasInside = previousInside300.current;
-    if (inside300 && wasInside !== true) void soundAlarm();
-    previousInside300.current = inside300;
-  }, [conservativeDistance, inside300, mode, soundAlarm]);
+    const wasInside = previousInsideLimit.current;
+    const wasSpeedViolation = previousSpeedViolation.current;
+    const transition = getWarningTransition(wasInside, insideLimit, wasSpeedViolation, speedViolation);
+    if (transition === "enter-distance" || transition === "enter-speed") {
+      void soundAlarm();
+    } else if (transition === "exit-distance") {
+      void soundSafeChime();
+    }
+    previousInsideLimit.current = insideLimit;
+    previousSpeedViolation.current = speedViolation;
+  }, [conservativeDistance, insideLimit, mode, soundAlarm, soundSafeChime, speedViolation]);
 
   const requestWakeLock = useCallback(async () => {
     const wakeNavigator = navigator as Navigator & {
@@ -562,7 +685,8 @@ export default function ShorelineApp() {
     setAlarmPlayback("idle");
     setMode("idle");
     setDemoIndex(0);
-    previousInside300.current = null;
+    previousInsideLimit.current = null;
+    previousSpeedViolation.current = null;
   }, []);
 
   useEffect(() => () => {
@@ -577,7 +701,8 @@ export default function ShorelineApp() {
       return;
     }
     void primeAlarm();
-    previousInside300.current = null;
+    previousInsideLimit.current = null;
+    previousSpeedViolation.current = null;
     setMode("live");
     setTrackingError(null);
     await requestWakeLock();
@@ -611,7 +736,7 @@ export default function ShorelineApp() {
     const anchorShore = findNearestShore(pack, DEMO_ANCHOR.longitude, DEMO_ANCHOR.latitude);
     if (!anchorShore) return;
     const bearingFromShore = (anchorShore.bearing + 180) % 360;
-    const point = offsetFromShore(anchorShore, bearingFromShore, DEMO_DISTANCES[index]);
+    const point = offsetFromShore(anchorShore, bearingFromShore, warningConfig.distanceMetres * DEMO_DISTANCE_FACTORS[index]);
     setFix({
       ...point,
       accuracy: 6,
@@ -619,11 +744,12 @@ export default function ShorelineApp() {
       heading: (anchorShore.bearing + (index === 4 ? 180 : 0)) % 360,
       timestamp: Date.now(),
     });
-  }, [pack]);
+  }, [pack, warningConfig.distanceMetres]);
 
   const startDemo = useCallback(() => {
     void primeAlarm();
-    previousInside300.current = null;
+    previousInsideLimit.current = null;
+    previousSpeedViolation.current = null;
     setMode("demo");
     setTrackingError(null);
     setDemoIndex(0);
@@ -631,7 +757,7 @@ export default function ShorelineApp() {
   }, [primeAlarm, setDemoFix]);
 
   const advanceDemo = useCallback(() => {
-    const next = (demoIndex + 1) % DEMO_DISTANCES.length;
+    const next = (demoIndex + 1) % DEMO_DISTANCE_FACTORS.length;
     setDemoIndex(next);
     setDemoFix(next);
   }, [demoIndex, setDemoFix]);
@@ -641,9 +767,11 @@ export default function ShorelineApp() {
     ? copy.waitingGps
     : (fix?.accuracy ?? 0) > 50
       ? copy.weakGps
-      : inside300
-        ? copy.inside300
-        : copy.clear300;
+      : speedViolation
+        ? copy.speedDanger
+        : insideLimit
+          ? copy.insideLimit(warningConfig.distanceMetres)
+          : copy.clearLimit(warningConfig.distanceMetres);
   const alarmLabel = alarmPlayback === "playing" || alarmPlayback === "starting"
     ? copy.playing
     : alarmPlayback === "blocked"
@@ -684,7 +812,7 @@ export default function ShorelineApp() {
           <section className="intro">
             <p className="eyebrow">{copy.eyebrow}</p>
             <h1>{copy.heroTitle}</h1>
-            <p className="intro-copy">{copy.intro}</p>
+            <p className="intro-copy">{copy.intro(warningConfig.distanceMetres)}</p>
           </section>
 
           <section className="launch-panel" aria-label={copy.startAria}>
@@ -710,6 +838,32 @@ export default function ShorelineApp() {
                 </select>
               </label>
             </div>
+            <details className="warning-settings">
+              <summary>
+                <span>{copy.settings}</span>
+                <strong>{copy.settingsSummary(warningConfig.distanceMetres, warningConfig.speedWarningEnabled, warningConfig.maxSpeedKnots)}</strong>
+              </summary>
+              <div className="settings-content">
+                <label className="setting-row" htmlFor="warning-distance">
+                  <span>{copy.distanceWarning}</span>
+                  <span className="number-field"><input id="warning-distance" type="number" inputMode="numeric" min="50" max="2000" step="10" value={warningConfig.distanceMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, distanceMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.speedWarning}</strong><small>{copy.speedWarningHint(warningConfig.distanceMetres)}</small></span>
+                  <input type="checkbox" checked={warningConfig.speedWarningEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, speedWarningEnabled: event.target.checked }))} />
+                </label>
+                {warningConfig.speedWarningEnabled && (
+                  <label className="setting-row" htmlFor="speed-limit">
+                    <span>{copy.speedLimit}</span>
+                    <span className="number-field"><input id="speed-limit" type="number" inputMode="decimal" min="1" max="40" step="0.5" value={warningConfig.maxSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, maxSpeedKnots: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>kn</b></span>
+                  </label>
+                )}
+                <div className="preset-row">
+                  <p>{copy.croatiaRule}</p>
+                  <button type="button" onClick={() => setWarningConfig(CROATIA_WARNING_CONFIG)}>{copy.croatiaPreset}</button>
+                </div>
+              </div>
+            </details>
             <div className="launch-actions">
               <button className="primary-button" disabled={!pack} onClick={startLive}>{copy.startLive}</button>
               <button className="secondary-button" disabled={!pack} onClick={startDemo}>{copy.demo}</button>
@@ -720,12 +874,12 @@ export default function ShorelineApp() {
       ) : (
         <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
           <div className="tracker-head">
-            <span className="trip-mode">{mode === "live" ? copy.live : `${copy.demo} ${demoIndex + 1}/${DEMO_DISTANCES.length}`}</span>
+            <span className="trip-mode">{mode === "live" ? copy.live : `${copy.demo} ${demoIndex + 1}/${DEMO_DISTANCE_FACTORS.length}`}</span>
             <button className="text-button" onClick={stopTracking}>{copy.end}</button>
           </div>
 
-          <section className={`instrument ${inside300 ? "inside-limit" : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
-            <div className={`status-pill ${inside300 ? "danger" : ""} ${!nearest ? "waiting" : ""}`} aria-live="assertive">
+          <section className={`instrument ${insideLimit ? "inside-limit" : ""} ${speedViolation ? "speed-danger" : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
+            <div className={`status-pill ${insideLimit || speedViolation ? "danger" : ""} ${!nearest ? "waiting" : ""}`} aria-live="assertive">
               <span />{statusLabel}
             </div>
             <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""}`}>
@@ -745,11 +899,17 @@ export default function ShorelineApp() {
               courseToShore={courseToShore}
               courseRisk={courseRisk}
               rangeMetres={viewRangeMetres}
+              warningDistanceMetres={warningConfig.distanceMetres}
               language={language}
             />
 
             <div className="instrument-footer">
-              {courseRisk.level !== "none" ? (
+              {speedViolation ? (
+                <div className="course-alert danger speed-alert" aria-live="assertive">
+                  <span className="course-symbol">↓</span>
+                  <span><strong>{copy.speedDanger}</strong><small>{copy.speedDangerDetail(speedKnots?.toFixed(1) ?? "—", warningConfig.maxSpeedKnots.toFixed(1), warningConfig.distanceMetres)}</small></span>
+                </div>
+              ) : courseRisk.level !== "none" ? (
                 <div className={`course-alert ${courseRisk.level}`} aria-live="assertive">
                   <span className="course-symbol">↗</span>
                   <span><strong>{courseRisk.label}</strong><small>{courseRisk.detail}</small></span>
