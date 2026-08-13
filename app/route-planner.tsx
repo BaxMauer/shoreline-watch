@@ -11,6 +11,15 @@ import {
   type PlannedRoute,
   type RoutePlanningFailure,
 } from "../lib/route-planning";
+import {
+  clampCruiseSpeed,
+  clampRouteViewRange,
+  formatRouteClearance,
+  formatRouteEta,
+  parseRouteCoordinate,
+  routeViewRangeForTarget,
+  shouldRerouteRoute,
+} from "../lib/route-ui";
 import type { WarningConfig } from "../lib/warning-config";
 
 type Language = "de" | "en";
@@ -95,17 +104,6 @@ const COPY = {
   },
 } as const;
 
-function formatEta(seconds: number, language: Language) {
-  if (seconds < 3_600) return `${Math.max(1, Math.round(seconds / 60))} ${COPY[language].minutes}`;
-  const hours = Math.floor(seconds / 3_600);
-  const minutes = Math.round((seconds % 3_600) / 60);
-  return `${hours}:${minutes.toString().padStart(2, "0")} h`;
-}
-
-function formatClearance(distance: number) {
-  return distance >= 1_000 ? `${(distance / 1_000).toFixed(1)} km` : `${Math.round(distance)} m`;
-}
-
 export default function RoutePlanner({
   pack,
   fix,
@@ -157,13 +155,13 @@ export default function RoutePlanner({
     setTarget(destination);
     setCoordinateLatitude(destination.latitude.toFixed(6));
     setCoordinateLongitude(destination.longitude.toFixed(6));
-    if (fix) setViewRangeMetres((current) => Math.min(120_000, Math.max(current, geoDistanceMetres(fix, destination) * 1.15)));
+    if (fix) setViewRangeMetres((current) => routeViewRangeForTarget(current, fix, destination));
     calculate(destination);
   }, [calculate, fix]);
 
   useEffect(() => {
     if (!target || !fix || !plannedFrom.current || planning) return;
-    if (geoDistanceMetres(plannedFrom.current, fix) < Math.max(250, warningConfig.distanceMetres)) return;
+    if (!shouldRerouteRoute(plannedFrom.current, fix, warningConfig.distanceMetres)) return;
     const timer = window.setTimeout(() => calculate(target, fix), 500);
     return () => window.clearTimeout(timer);
   }, [calculate, fix, planning, target, warningConfig.distanceMetres]);
@@ -225,9 +223,9 @@ export default function RoutePlanner({
   };
 
   const useCoordinates = () => {
-    const latitude = Number.parseFloat(coordinateLatitude.replace(",", "."));
-    const longitude = Number.parseFloat(coordinateLongitude.replace(",", "."));
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    const latitude = parseRouteCoordinate(coordinateLatitude);
+    const longitude = parseRouteCoordinate(coordinateLongitude);
+    if (latitude === null || longitude === null) return;
     selectTarget({ latitude, longitude });
   };
 
@@ -270,9 +268,9 @@ export default function RoutePlanner({
           <span className={`route-state ${route?.mode === "restricted" || failure ? "check" : route ? "ready" : ""}`}>{planning ? "…" : failure || route?.mode === "restricted" ? copy.check : route ? copy.ready : copy.waiting}</span>
         </div>
         <div className="route-zoom" aria-label="Zoom">
-          <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => Math.max(2_500, value / 1.7))}>+</button>
+          <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>
           <span>{viewRangeMetres >= 1_000 ? `${Math.round(viewRangeMetres / 1_000)} km` : `${Math.round(viewRangeMetres)} m`}</span>
-          <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => Math.min(120_000, value * 1.7))}>−</button>
+          <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>
         </div>
       </div>
 
@@ -281,8 +279,8 @@ export default function RoutePlanner({
           <>
             <div className="route-metrics">
               <span><small>{copy.distance}</small><strong>{formatRouteDistance(route.distanceMetres).toFixed(route.distanceMetres < 18_520 ? 1 : 0)} {copy.nauticalMiles}</strong></span>
-              <span><small>{copy.eta}</small><strong>{formatEta(route.estimatedSeconds, language)}</strong></span>
-              <span><small>{copy.clearance}</small><strong>{formatClearance(route.minimumShoreDistanceMetres)}</strong></span>
+              <span><small>{copy.eta}</small><strong>{formatRouteEta(route.estimatedSeconds, copy.minutes)}</strong></span>
+              <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
               <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
             </div>
             <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.safeDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
@@ -291,7 +289,7 @@ export default function RoutePlanner({
       </div>
 
       <div className="route-controls">
-        <label className="route-speed"><span><strong>{copy.cruiseSpeed}</strong><small>{copy.cruiseSpeedHint}</small></span><span><input type="number" min="2" max="60" step="1" value={cruiseSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setCruiseSpeedKnots(Math.max(2, Math.min(60, event.target.valueAsNumber)))} /> kn</span></label>
+        <label className="route-speed"><span><strong>{copy.cruiseSpeed}</strong><small>{copy.cruiseSpeedHint}</small></span><span><input type="number" min="2" max="60" step="1" value={cruiseSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setCruiseSpeedKnots(clampCruiseSpeed(event.target.valueAsNumber))} /> kn</span></label>
         <div className="route-rule">{copy.rule(warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled)}</div>
         <details className="route-coordinates">
           <summary>{copy.coordinates}</summary>

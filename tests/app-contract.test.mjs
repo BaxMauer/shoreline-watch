@@ -103,3 +103,44 @@ test("route destination can be selected by map tap or entered coordinates", asyn
   assert.match(planner, /inputMode="decimal"/);
   assert.match(planner, /selectTarget\(\{ latitude, longitude \}\)/);
 });
+
+test("route calculations ignore stale asynchronous results and reset completely", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /const sequence = \+\+calculationSequence\.current/);
+  assert.ok((planner.match(/sequence !== calculationSequence\.current/g) ?? []).length >= 2);
+  assert.match(planner, /const reset = \(\) => \{[\s\S]*calculationSequence\.current \+= 1;[\s\S]*setTarget\(null\)[\s\S]*setRoute\(null\)[\s\S]*plannedFrom\.current = null;/);
+});
+
+test("route planning automatically recalculates after movement and preference changes", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /shouldRerouteRoute\(plannedFrom\.current, fix, warningConfig\.distanceMetres\)/);
+  assert.match(planner, /window\.setTimeout\(\(\) => calculate\(target, fix\), 500\)/);
+  assert.match(planner, /\[cruiseSpeedKnots, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
+});
+
+test("route map controls are bounded and inaccessible without a position", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /disabled=\{!fix \|\| planning\}/);
+  assert.match(planner, /clampRouteViewRange\(value \/ 1\.7\)/);
+  assert.match(planner, /clampRouteViewRange\(value \* 1\.7\)/);
+  assert.match(planner, /routeViewRangeForTarget\(current, fix, destination\)/);
+});
+
+test("route result exposes all navigation metrics and accessible status messages", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  for (const metric of ["route.distanceMetres", "route.estimatedSeconds", "route.minimumShoreDistanceMetres", "nextBearing"]) {
+    assert.match(planner, new RegExp(metric.replace(".", "\\.")));
+  }
+  assert.match(planner, /className="route-summary" aria-live="polite"/);
+  assert.match(planner, /failure \? <p className="route-message error">\{copy\.failures\[failure\]\}<\/p>/);
+  assert.match(planner, /route\.mode === "clearance" \? copy\.safeDetail/);
+});
+
+test("route planning copy covers German and English instructions and every failure", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /de:\s*\{[\s\S]*title: "Routenplanung"/);
+  assert.match(planner, /en:\s*\{[\s\S]*title: "Route planning"/);
+  for (const failure of ["outside-region", "destination-on-land", "too-far", "no-route"]) {
+    assert.equal((planner.match(new RegExp(`"${failure}"`, "g")) ?? []).length, 2, failure);
+  }
+});

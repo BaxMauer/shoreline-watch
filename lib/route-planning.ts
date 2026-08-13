@@ -281,5 +281,10 @@ export function planWaterRoute(
   const strict = search(false);
   const rawPoints = strict ?? search(true);
   if (!rawPoints) return { failure: "no-route" };
-  return { route: buildRoute(pack, rawPoints, options, strict ? "clearance" : "restricted") };
+  const route = buildRoute(pack, rawPoints, options, strict ? "clearance" : "restricted");
+  // Endpoint grace helps with normal GPS drift close to shore, but the result
+  // must still be labelled restricted whenever the measured route enters the
+  // configured clearance zone.
+  if (route.restrictedDistanceMetres > 0) route.mode = "restricted";
+  return { route };
 }
