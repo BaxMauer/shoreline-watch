@@ -99,7 +99,9 @@ test("tracking exposes persistent distance and offline route-planning tabs", asy
   assert.match(app, /type TrackerTab = "distance" \| "route"/);
   assert.match(app, /<nav className="tracker-tabs"/);
   assert.match(app, /<RoutePlanner[\s\S]*warningConfig=\{warningConfig\}/);
-  assert.match(planner, /planWaterRoute\(pack, start, destination/);
+  assert.match(planner, /new Worker\(/);
+  assert.match(planner, /route-planning\.worker\.ts/);
+  assert.doesNotMatch(planner, /planWaterRoute\(/);
   assert.match(planner, /getNearbyShorelineSegments/);
   assert.doesNotMatch(planner, /fetch\(|XMLHttpRequest|WebSocket/);
 });
@@ -122,11 +124,12 @@ test("route destination can be selected by map tap or entered coordinates", asyn
   assert.match(planner, /selectTarget\(\{ latitude, longitude \}\)/);
 });
 
-test("route calculations ignore stale asynchronous results and reset completely", async () => {
+test("route calculations use a cancellable worker and reset completely", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const sequence = \+\+calculationSequence\.current/);
-  assert.ok((planner.match(/sequence !== calculationSequence\.current/g) ?? []).length >= 2);
-  assert.match(planner, /const reset = \(\) => \{[\s\S]*calculationSequence\.current \+= 1;[\s\S]*setTarget\(null\)[\s\S]*setRoute\(null\)[\s\S]*plannedFrom\.current = null;/);
+  assert.match(planner, /RoutePlanningWorkerController/);
+  assert.match(planner, /routeWorker\.current\?\.cancel\(\)/);
+  assert.match(planner, /controller\.dispose\(\)/);
+  assert.match(planner, /const reset = \(\) => \{[\s\S]*routeWorker\.current\?\.cancel\(\);[\s\S]*setTarget\(null\)[\s\S]*setRoute\(null\)[\s\S]*plannedFrom\.current = null;/);
 });
 
 test("route planning automatically recalculates after movement and preference changes", async () => {
