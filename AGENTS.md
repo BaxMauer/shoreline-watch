@@ -45,4 +45,8 @@ Every pull request should state:
 - checks/tests executed and their result;
 - known risks, limitations, or follow-up work.
 
-The user decides when a pull request is merged unless they explicitly ask the agent to merge it. If the user says `merge`, first confirm the expected checks are green and then merge the reviewed pull request.
+For normal development work, automatic merge is the default. Once all required CI checks and tests for the pull request have completed successfully, enable or allow auto-merge so the pull request is merged into `main` without waiting for a separate manual approval. Do not auto-merge when required checks are missing, failing, skipped without justification, or when a known unresolved risk remains.
+
+After a successful merge to `main`, the application should be deployed automatically through the repository's deployment pipeline. Treat deployment as part of completing the change: verify that the deployment workflow succeeds, and surface any deployment failure instead of claiming the change is complete.
+
+If the user explicitly asks to hold a pull request for review, require manual approval, or prevent deployment, follow that instruction instead of the automatic flow.
