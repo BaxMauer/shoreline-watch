@@ -316,6 +316,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .gps-stale .proximity-plot { opacity: .62; }
 .gps-lost .proximity-plot { opacity: .38; filter: grayscale(.45); }
 .gps-lost .distance-readout strong { opacity: .62; }
+.nearest-shore-line { stroke: var(--shore-stroke); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 2.5 7; opacity: .3; vector-effect: non-scaling-stroke; }
 .shore-segment { stroke: var(--shore-stroke); stroke-width: 3; stroke-linecap: round; opacity: .72; transition: stroke 250ms ease, opacity 250ms ease; }
 .shore-segment.close { stroke: var(--shore-close); opacity: .88; }
 .proximity-ring { fill: rgba(115,229,203,.014); stroke: rgba(115,229,203,.29); stroke-width: 2; stroke-dasharray: 2 5; vector-effect: non-scaling-stroke; }

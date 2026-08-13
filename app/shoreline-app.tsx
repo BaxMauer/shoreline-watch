@@ -438,6 +438,17 @@ function ProximityPlot({
       </defs>
       <circle cx={centre} cy={centre} r="166" fill="url(#plotGlow)" />
 
+      {nearestPoint && (
+        <line
+          className="nearest-shore-line"
+          x1={centre}
+          y1={centre}
+          x2={nearestPoint.x}
+          y2={nearestPoint.y}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+
       <g className="coast-layer">
         {fix && segments.map((segment, index) => {
           const start = point(segment[0], segment[1]);

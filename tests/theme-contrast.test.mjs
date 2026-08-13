@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const app = await readFile(new URL("../app/shoreline-app.tsx", import.meta.url), "utf8");
 
 function hexToRgb(hex) {
   const value = hex.replace("#", "");
@@ -49,6 +50,13 @@ test("tracking instrument is borderless and coast uses a readable stroke", () =>
   assert.match(css, /\.instrument\s*\{[^}]*border-radius:\s*0;/s);
   assert.match(css, /\.instrument\s*\{[^}]*box-shadow:\s*none;/s);
   assert.match(css, /\.shore-segment\s*\{[^}]*stroke-width:\s*3;/s);
+});
+
+test("nearest shoreline guide is dashed, subtle, and behind the coast", () => {
+  assert.match(css, /\.nearest-shore-line\s*\{[^}]*stroke-dasharray:\s*2\.5 7/s);
+  assert.match(css, /\.nearest-shore-line\s*\{[^}]*opacity:\s*\.3/s);
+  assert.match(app, /className="nearest-shore-line"[\s\S]*x1=\{centre\}[\s\S]*x2=\{nearestPoint\.x\}/);
+  assert.ok(app.indexOf('className="nearest-shore-line"') < app.indexOf('className="coast-layer"'));
 });
 
 test("visual alerts include distinct danger and safe-water signals", () => {
