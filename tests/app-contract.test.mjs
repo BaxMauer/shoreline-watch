@@ -33,10 +33,15 @@ test("live GPS requests accurate frequent fixes with a bounded timeout", () => {
   assert.match(app, /navigator\.geolocation\.clearWatch/);
 });
 
-test("screen wake lock is acquired for tracking and released when stopped", () => {
+test("screen wake lock recovers while live and releases cleanly when stopped", () => {
   assert.match(app, /wakeLock\?\.request\("screen"\)/);
   assert.match(app, /await requestWakeLock\(\)/);
   assert.match(app, /wakeLock\.current\?\.release\(\)/);
+  assert.match(app, /addEventListener\("release",/);
+  assert.match(app, /addEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.match(app, /document\.visibilityState === "visible" && modeRef\.current === "live"/);
+  assert.match(app, /void acquireWakeLock\(\)/);
+  assert.match(app, /modeRef\.current = "idle";[\s\S]*wakeLockRetryTimer/);
 });
 
 test("distance warning retains visual and vibration paths independently from audio", () => {
