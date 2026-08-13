@@ -46,11 +46,11 @@ Last reviewed: 2026-08-13
 
 ## P1 — Reliable navigation on iPhone
 
-- [ ] Move route computation off the UI thread, preferably into a Web Worker,
+- [x] Move route computation off the UI thread, preferably into a Web Worker,
   and cover cancellation plus stale-result handling.
-- [ ] Replace the first-point-ahead bearing heuristic with progress-aware route
+- [x] Replace the first-point-ahead bearing heuristic with progress-aware route
   projection so guidance cannot point backward after a passed waypoint.
-- [ ] Tighten start snapping: require trustworthy accuracy and remove the
+- [x] Tighten start snapping: require trustworthy accuracy and remove the
   unconditional 120 m correction allowance.
 - [ ] Make auto-rerouting independent of high-frequency GPS effect resets.
 - [x] Reacquire Wake Lock after visibility changes or a system release.
