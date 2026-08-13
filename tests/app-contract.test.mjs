@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { APP_VERSION } from "../lib/app-version.ts";
 
 const app = await readFile(new URL("../app/shoreline-app.tsx", import.meta.url), "utf8");
+
+test("visible app version is semantic and matches the package release", async () => {
+  const packageData = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(APP_VERSION, /^\d+\.\d+\.\d+$/);
+  assert.equal(APP_VERSION, packageData.version);
+  assert.match(app, /className="app-version">v\{APP_VERSION\}<\/span>/);
+});
 
 test("German and all four requested themes remain selectable", () => {
   assert.match(app, /useState<Language>\("de"\)/);
@@ -65,7 +73,7 @@ test("power saver runs only in live mode, wakes on tap, and retains GPS tracking
 });
 
 test("nearest shore, warning ring, collision course, and boat remain separate SVG layers", () => {
-  for (const className of ["nearest-shore-line", "coast-layer", "proximity-ring", "danger-ring-arc", "course-line", "nearest-point", "map-boat"]) {
+  for (const className of ["land-hatch-layer", "nearest-shore-line", "coast-layer", "proximity-ring", "danger-ring-arc", "course-line", "nearest-point", "map-boat"]) {
     assert.match(app, new RegExp(`className=(?:\\{[^}]+\\}|\")${className}`));
   }
 });

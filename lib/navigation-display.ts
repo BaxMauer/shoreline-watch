@@ -11,8 +11,61 @@ export type StationaryState = {
   reference: StationaryPosition | null;
   lastMovementAt: number;
 };
+export type PlotPoint = { x: number; y: number };
 
 const MOVING_SPEED_METRES_PER_SECOND = 0.5;
+
+export function getLandHatchPolygon(
+  start: PlotPoint,
+  end: PlotPoint,
+  boat: PlotPoint,
+  depth = 520,
+  overlap = 2,
+): [PlotPoint, PlotPoint, PlotPoint, PlotPoint] | null {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const length = Math.hypot(deltaX, deltaY);
+  if (!Number.isFinite(length) || length < 0.0001) return null;
+
+  const tangentX = deltaX / length;
+  const tangentY = deltaY / length;
+  let normalX = -tangentY;
+  let normalY = tangentX;
+  const midpointX = (start.x + end.x) / 2;
+  const midpointY = (start.y + end.y) / 2;
+
+  // A boat using this view is assumed to be on the water. The land side of a
+  // visible coastline segment is therefore the normal facing away from it.
+  if (normalX * (midpointX - boat.x) + normalY * (midpointY - boat.y) < 0) {
+    normalX *= -1;
+    normalY *= -1;
+  }
+
+  const safeDepth = Math.max(0, Number.isFinite(depth) ? depth : 0);
+  const safeOverlap = Math.max(0, Number.isFinite(overlap) ? overlap : 0);
+  const coastStart = {
+    x: start.x - tangentX * safeOverlap,
+    y: start.y - tangentY * safeOverlap,
+  };
+  const coastEnd = {
+    x: end.x + tangentX * safeOverlap,
+    y: end.y + tangentY * safeOverlap,
+  };
+
+  const polygon: [PlotPoint, PlotPoint, PlotPoint, PlotPoint] = [
+    coastStart,
+    coastEnd,
+    { x: coastEnd.x + normalX * safeDepth, y: coastEnd.y + normalY * safeDepth },
+    { x: coastStart.x + normalX * safeDepth, y: coastStart.y + normalY * safeDepth },
+  ];
+  const signedArea = polygon.reduce((area, current, index) => {
+    const next = polygon[(index + 1) % polygon.length];
+    return area + current.x * next.y - next.x * current.y;
+  }, 0);
+  return signedArea < 0
+    ? [polygon[0], polygon[3], polygon[2], polygon[1]]
+    : polygon;
+}
 
 function distanceBetweenMetres(left: StationaryPosition, right: StationaryPosition) {
   const earthRadiusMetres = 6_371_000;

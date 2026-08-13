@@ -15,8 +15,10 @@ import {
 import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
 import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
 import { getGeneratedAlertPeak } from "../lib/audio-levels";
+import { APP_VERSION } from "../lib/app-version";
 import {
   getGoNoGoState,
+  getLandHatchPolygon,
   getPlotRangeMetres,
   getPowerSaveReason,
   updateStationaryState,
@@ -418,6 +420,23 @@ function ProximityPlot({
     return Array.from(sectors).sort((left, right) => left - right);
   }, [fix, metresPerLatitudeDegree, segments, warningDistanceMetres]);
 
+  const landHatchPath = useMemo(() => {
+    if (!fix) return "";
+    return segments.map((segment) => {
+      const start = {
+        x: centre + (segment[0] - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
+        y: centre - (segment[1] - fix.latitude) * metresPerLatitudeDegree * pixelsPerMetre,
+      };
+      const end = {
+        x: centre + (segment[2] - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
+        y: centre - (segment[3] - fix.latitude) * metresPerLatitudeDegree * pixelsPerMetre,
+      };
+      const polygon = getLandHatchPolygon(start, end, { x: centre, y: centre });
+      if (!polygon) return "";
+      return `${polygon.map(({ x, y }, index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join("")}Z`;
+    }).join("");
+  }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pixelsPerMetre, segments]);
+
   return (
     <svg
       className="proximity-plot"
@@ -435,8 +454,16 @@ function ProximityPlot({
           <feGaussianBlur stdDeviation="4" result="blur" />
           <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
         </filter>
+        <pattern id="landHatch" width="12" height="12" patternUnits="userSpaceOnUse">
+          <path className="land-hatch-mark" d="M-3 12 12-3M6 15 15 6" />
+        </pattern>
+        <clipPath id="plotClip"><circle cx={centre} cy={centre} r="166" /></clipPath>
       </defs>
       <circle cx={centre} cy={centre} r="166" fill="url(#plotGlow)" />
+
+      <g className="land-hatch-layer" aria-hidden="true" clipPath="url(#plotClip)">
+        {landHatchPath && <path className="land-hatch-area" d={landHatchPath} />}
+      </g>
 
       {nearestPoint && (
         <line
@@ -1094,6 +1121,7 @@ export default function ShorelineApp() {
         <div className="brand">
           <span className="brand-mark"><BoatIcon /></span>
           <span>Shoreline Watch</span>
+          <span className="app-version">v{APP_VERSION}</span>
         </div>
         <div className="connection" aria-live="polite">
           <span className={`connection-dot ${online ? "" : "offline"}`} />

@@ -46,24 +46,37 @@ for (const [theme, selector] of Object.entries(themeSelectors)) {
   });
 }
 
-test("tracking instrument is borderless and coast uses a readable dashed stroke", () => {
+test("tracking instrument is borderless and the coastline is continuous", () => {
   assert.match(css, /\.instrument\s*\{[^}]*border-radius:\s*0;/s);
   assert.match(css, /\.instrument\s*\{[^}]*box-shadow:\s*none;/s);
   assert.match(css, /\.shore-segment\s*\{[^}]*stroke-width:\s*3;/s);
-  assert.match(css, /\.shore-segment\s*\{[^}]*stroke-dasharray:\s*8 5/s);
-  assert.match(css, /\.shore-segment\.close\s*\{[^}]*stroke-dasharray:\s*10 4/s);
+  const regularCoast = css.match(/\.shore-segment\s*\{[^}]*\}/s)?.[0] ?? "";
+  const closeCoast = css.match(/\.shore-segment\.close\s*\{[^}]*\}/s)?.[0] ?? "";
+  assert.doesNotMatch(regularCoast, /stroke-dasharray/);
+  assert.doesNotMatch(closeCoast, /stroke-dasharray/);
+});
+
+test("land is hatched, clipped to the plot, and painted as one background path", () => {
+  assert.match(app, /<pattern id="landHatch"[^>]*>[\s\S]*className="land-hatch-mark"/);
+  assert.match(app, /<clipPath id="plotClip"><circle[^>]*r="166"/);
+  assert.match(app, /className="land-hatch-layer"[^>]*clipPath="url\(#plotClip\)"/);
+  assert.match(app, /landHatchPath && <path className="land-hatch-area" d=\{landHatchPath\}/);
+  assert.match(css, /\.land-hatch-area\s*\{[^}]*fill:\s*url\(#landHatch\)/s);
+  assert.match(css, /\.land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)/s);
+  assert.equal((app.match(/className="land-hatch-area"/g) ?? []).length, 1);
 });
 
 test("nearest shoreline guide is dashed, subtle, and behind the coast", () => {
   assert.match(css, /\.nearest-shore-line\s*\{[^}]*stroke-dasharray:\s*2\.5 7/s);
   assert.match(css, /\.nearest-shore-line\s*\{[^}]*opacity:\s*\.3/s);
   assert.match(app, /className="nearest-shore-line"[\s\S]*x1=\{centre\}[\s\S]*x2=\{nearestPoint\.x\}/);
+  assert.ok(app.indexOf('className="land-hatch-layer"') < app.indexOf('className="nearest-shore-line"'));
   assert.ok(app.indexOf('className="nearest-shore-line"') < app.indexOf('className="coast-layer"'));
-  assert.notEqual(css.match(/\.nearest-shore-line\s*\{[^}]*stroke-dasharray:\s*([^;]+)/s)?.[1], "8 5");
 });
 
-test("SVG layers preserve guide, land, warning, course, target, and boat order", () => {
+test("SVG layers preserve hatch, guide, coast, warning, course, target, and boat order", () => {
   const positions = [
+    'className="land-hatch-layer"',
     'className="nearest-shore-line"',
     'className="coast-layer"',
     'className="proximity-ring"',

@@ -1,6 +1,52 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getGoNoGoState, getPlotRangeMetres, getPowerSaveReason, updateStationaryState } from "../lib/navigation-display.ts";
+import {
+  getGoNoGoState,
+  getLandHatchPolygon,
+  getPlotRangeMetres,
+  getPowerSaveReason,
+  updateStationaryState,
+} from "../lib/navigation-display.ts";
+
+function signedArea(points) {
+  return points.reduce((area, current, index) => {
+    const next = points[(index + 1) % points.length];
+    return area + current.x * next.y - next.x * current.y;
+  }, 0);
+}
+
+test("land hatch extends away from a boat below a horizontal shoreline", () => {
+  const polygon = getLandHatchPolygon({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }, 20, 2);
+  assert.ok(polygon);
+  assert.equal(Math.min(...polygon.map(({ y }) => y)), -20);
+  assert.equal(Math.max(...polygon.map(({ y }) => y)), 0);
+  assert.equal(Math.min(...polygon.map(({ x }) => x)), -2);
+  assert.equal(Math.max(...polygon.map(({ x }) => x)), 12);
+});
+
+test("land hatch extends away from a boat left of a vertical shoreline", () => {
+  const polygon = getLandHatchPolygon({ x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 5 }, 30, 0);
+  assert.ok(polygon);
+  assert.equal(Math.min(...polygon.map(({ x }) => x)), 10);
+  assert.equal(Math.max(...polygon.map(({ x }) => x)), 40);
+});
+
+test("land hatch ignores degenerate coast segments and clamps invalid dimensions", () => {
+  assert.equal(getLandHatchPolygon({ x: 4, y: 4 }, { x: 4, y: 4 }, { x: 0, y: 0 }), null);
+  const polygon = getLandHatchPolygon({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }, Number.NaN, -5);
+  assert.ok(polygon);
+  assert.equal(Math.min(...polygon.map(({ x }) => x)), 0);
+  assert.equal(Math.max(...polygon.map(({ x }) => x)), 10);
+  assert.equal(Math.min(...polygon.map(({ y }) => y)), 0);
+});
+
+test("land hatch polygons use consistent winding so overlapping land paints as one area", () => {
+  const above = getLandHatchPolygon({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 });
+  const right = getLandHatchPolygon({ x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 5 });
+  assert.ok(above && right);
+  assert.ok(signedArea(above) >= 0);
+  assert.ok(signedArea(right) >= 0);
+});
 
 test("GO / NO GO uses the conservative distance and treats the boundary as GO", () => {
   assert.equal(getGoNoGoState(299.9, 300, true), "no-go");
