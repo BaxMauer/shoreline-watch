@@ -76,7 +76,7 @@ const COPY = {
     coastLoading: "Kroatische Küste wird geladen",
     startLive: "Live starten",
     demo: "Demo",
-    finePrint: "Nur als Navigationshilfe. Amtliche Seekarte verwenden und Ausguck halten.",
+    finePrint: "Nur Küstengeometrie und Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften. Amtliche Seekarte verwenden und Ausguck halten.",
     language: "Sprache",
     theme: "Design",
     themeOcean: "Ocean",
@@ -96,16 +96,16 @@ const COPY = {
     speedWarning: "Tempo im Küstenbereich prüfen",
     speedLimit: "Maximaltempo",
     speedWarningHint: (distance: number) => `Warnt über dem Limit innerhalb von ${distance} m.`,
-    quietAtSafeSpeed: "Distanzton nur bei zu hohem Tempo",
-    quietAtSafeSpeedHint: (speed: number) => `Bis ${speed} kn bleibt der Ton beim Einfahren aus. Bildschirmwarnung und Vibration bleiben aktiv.`,
+    quietAtSafeSpeed: "Distanzton nur über eingestelltem Limit",
+    quietAtSafeSpeedHint: (speed: number) => `Bis zum eingestellten Wert von ${speed} kn bleibt der Ton beim Einfahren aus. Bildschirmwarnung und Vibration bleiben aktiv.`,
     croatiaPreset: "Kroatienwerte",
-    croatiaRule: "Kroatien: maximal 8 kn bis 300 m zur Küste; Glisierfahrt erst außerhalb von 300 m.",
+    croatiaRule: "Voreinstellung: 8 kn bis 300 m Küstenabstand. Geltende Vorschriften mit amtlichen Quellen prüfen.",
     alertOutputs: "Alarmausgabe",
     alertVolume: "Lautstärke",
     volumeBoostHint: "Über 100 % wird der Alarm zusätzlich verstärkt.",
     warningSound: "Warnalarm",
     warningSoundHint: "Beim Einfahren oder Überschreiten des Tempolimits.",
-    safeSound: "Freifahrtton",
+    safeSound: "Abstandsfreigabeton",
     safeSoundHint: "Beim Verlassen des Warnbereichs.",
     visualAlerts: "Bildschirmwarnung",
     visualAlertsHint: "Deutlicher Farbblitz zusätzlich zum Ton.",
@@ -121,6 +121,8 @@ const COPY = {
     go: "GO",
     noGo: "NO GO",
     goUnknown: "PRÜFEN",
+    navigationScope: "Nur Küstengeometrie & Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften.",
+    powerNavigationScope: "GO bewertet nur Küstenabstand",
     powerSavingActive: "Energiesparmodus aktiv",
     powerFar: "Küste weit entfernt",
     powerStationary: "Keine Bewegung erkannt",
@@ -144,7 +146,7 @@ const COPY = {
     lastKnown: "Letzte bekannte Position",
     insideLimit: (distance: number) => `Unter ${distance} m`,
     clearLimit: (distance: number) => `${distance} m frei`,
-    speedDanger: "Zu schnell nahe der Küste",
+    speedDanger: "Eingestelltes Tempolimit überschritten",
     speedDangerDetail: (speed: string, limit: string, distance: number) => `${speed} kn · Limit ${limit} kn innerhalb ${distance} m`,
     playing: "Wiedergabe",
     blocked: "Blockiert",
@@ -189,7 +191,7 @@ const COPY = {
     coastLoading: "Loading Croatia shoreline",
     startLive: "Start live",
     demo: "Demo",
-    finePrint: "Navigation aid only. Keep an approved chart and normal lookout.",
+    finePrint: "Shoreline geometry and clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks. Keep an approved chart and normal lookout.",
     language: "Language",
     theme: "Theme",
     themeOcean: "Ocean",
@@ -209,16 +211,16 @@ const COPY = {
     speedWarning: "Check speed near shore",
     speedLimit: "Maximum speed",
     speedWarningHint: (distance: number) => `Warn above the limit while within ${distance} m.`,
-    quietAtSafeSpeed: "Distance sound only above speed limit",
-    quietAtSafeSpeedHint: (speed: number) => `At or below ${speed} kn, entering the zone stays silent. Screen alert and vibration remain active.`,
+    quietAtSafeSpeed: "Distance sound only above configured limit",
+    quietAtSafeSpeedHint: (speed: number) => `At or below the configured ${speed} kn, entering the zone stays silent. Screen alert and vibration remain active.`,
     croatiaPreset: "Croatia preset",
-    croatiaRule: "Croatia: maximum 8 kn within 300 m of shore; planing only beyond 300 m.",
+    croatiaRule: "Preset: 8 kn within 300 m of shore. Verify applicable rules in official sources.",
     alertOutputs: "Alert outputs",
     alertVolume: "Volume",
     volumeBoostHint: "Above 100% adds extra alarm amplification.",
     warningSound: "Warning alarm",
     warningSoundHint: "When entering the zone or exceeding its speed limit.",
-    safeSound: "Safe-water chime",
+    safeSound: "Clearance chime",
     safeSoundHint: "When leaving the warning zone.",
     visualAlerts: "Screen alert",
     visualAlertsHint: "A clear colour flash in addition to sound.",
@@ -234,6 +236,8 @@ const COPY = {
     go: "GO",
     noGo: "NO GO",
     goUnknown: "CHECK",
+    navigationScope: "Shoreline geometry & clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks.",
+    powerNavigationScope: "GO measures shoreline clearance only",
     powerSavingActive: "Power-saving mode active",
     powerFar: "Shoreline is far away",
     powerStationary: "No movement detected",
@@ -257,7 +261,7 @@ const COPY = {
     lastKnown: "Last known position",
     insideLimit: (distance: number) => `Inside ${distance} m`,
     clearLimit: (distance: number) => `${distance} m clear`,
-    speedDanger: "Too fast near shoreline",
+    speedDanger: "Configured speed limit exceeded",
     speedDangerDetail: (speed: string, limit: string, distance: number) => `${speed} kn · ${limit} kn limit within ${distance} m`,
     playing: "Playing",
     blocked: "Blocked",
@@ -1337,6 +1341,7 @@ export default function ShorelineApp() {
                 <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
                 <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
               </div>
+              <p className="navigation-scope">{copy.navigationScope}</p>
             </div>
 
             <ProximityPlot
@@ -1411,6 +1416,7 @@ export default function ShorelineApp() {
         <button className="power-save-screen" type="button" onClick={wakePowerDisplay} aria-label={copy.tapToWake}>
           <span className="power-save-mode">{copy.powerSavingActive}</span>
           <span className="power-save-go"><i aria-hidden="true">✓</i> {copy.go}</span>
+          <span className="power-save-scope">{copy.powerNavigationScope}</span>
           <strong>{formatDistance(nearest?.distance ?? null, language)}</strong>
           <small>{distanceUnit}</small>
           <em>{powerSaveReason === "far-shore" ? copy.powerFar : copy.powerStationary}</em>

@@ -38,7 +38,7 @@ const COPY = {
   de: {
     title: "Routenplanung",
     subtitle: "Ziel auf der Karte antippen",
-    calculating: "Sichere Wasserroute wird berechnet …",
+    calculating: "Route nach Küstengeometrie wird berechnet …",
     noPosition: "Warte auf eine Position, um die Route zu starten.",
     gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m ist zu ungenau. Für Routen sind höchstens ±${maximum} m erforderlich.`,
     gpsStale: "GPS-Position ist veraltet. Route erst nach einem neuen Fix fortsetzen.",
@@ -50,8 +50,9 @@ const COPY = {
     ready: "ROUTE BEREIT",
     check: "ROUTE PRÜFEN",
     waiting: "ZIEL WÄHLEN",
-    safeDetail: (distance: number) => `${distance} m Küstenabstand werden bevorzugt eingehalten.`,
-    restrictedDetail: (distance: number) => `Die Route unterschreitet stellenweise ${distance} m – besonders Start und Ziel prüfen.`,
+    clearanceDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie hält den bevorzugten Abstand von ${distance} m ein.`,
+    restrictedDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie unterschreitet stellenweise ${distance} m – besonders Start und Ziel prüfen.`,
+    navigationScope: "Nur Küstengeometrie & Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m Abstand · ${speed} kn küstennah`
       : `${distance} m Abstand · Tempolimit aus`,
@@ -65,8 +66,8 @@ const COPY = {
     nauticalMiles: "sm",
     minutes: "Min.",
     failures: {
-      "outside-region": "Ziel liegt außerhalb der verfügbaren Kroatien-Karte.",
-      "destination-on-land": "Das gewählte Ziel liegt an Land. Bitte ins Wasser tippen.",
+      "outside-region": "Ziel liegt außerhalb des verfügbaren Kroatien-Küstendatensatzes.",
+      "destination-on-land": "Das gewählte Ziel liegt laut Küstengeometrie an Land. Bitte ins Wasser tippen.",
       "too-far": "Das Ziel ist für eine einzelne Offline-Route zu weit entfernt.",
       "no-route": "Keine durchgehende Wasserroute gefunden. Bitte Zielpunkt oder Küstenabstand ändern.",
     },
@@ -81,7 +82,7 @@ const COPY = {
   en: {
     title: "Route planning",
     subtitle: "Tap a destination on the map",
-    calculating: "Calculating a safe water route …",
+    calculating: "Calculating a shoreline-geometry route …",
     noPosition: "Waiting for a position to start routing.",
     gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m is too inaccurate. Routing requires ±${maximum} m or better.`,
     gpsStale: "GPS position is stale. Continue routing after a new fix.",
@@ -93,8 +94,9 @@ const COPY = {
     ready: "ROUTE READY",
     check: "CHECK ROUTE",
     waiting: "CHOOSE TARGET",
-    safeDetail: (distance: number) => `The preferred ${distance} m shoreline clearance is maintained.`,
-    restrictedDetail: (distance: number) => `Parts of the route are inside ${distance} m – check start and destination carefully.`,
+    clearanceDetail: (distance: number) => `The calculated shoreline geometry maintains the preferred ${distance} m clearance.`,
+    restrictedDetail: (distance: number) => `The calculated shoreline geometry is inside ${distance} m in places – check start and destination carefully.`,
+    navigationScope: "Shoreline geometry & clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m clearance · ${speed} kn near shore`
       : `${distance} m clearance · speed rule off`,
@@ -108,8 +110,8 @@ const COPY = {
     nauticalMiles: "nm",
     minutes: "min",
     failures: {
-      "outside-region": "The destination is outside the available Croatia chart.",
-      "destination-on-land": "The selected destination is on land. Tap in the water.",
+      "outside-region": "The destination is outside the available Croatia shoreline dataset.",
+      "destination-on-land": "The selected destination is on land according to the shoreline geometry. Tap in the water.",
       "too-far": "The destination is too far for one offline route.",
       "no-route": "No continuous water route found. Change the target or shoreline clearance.",
     },
@@ -403,9 +405,10 @@ export default function RoutePlanner({
               <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
               <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
             </div>
-            <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.safeDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
+            <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.clearanceDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
           </>
         ) : <p className="route-message">{copy.subtitle}</p>}
+        <p className="navigation-scope route-scope">{copy.navigationScope}</p>
       </div>
 
       <div className="route-controls">
