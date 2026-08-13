@@ -57,3 +57,9 @@ test("visual alerts include distinct danger and safe-water signals", () => {
   assert.match(css, /@keyframes danger-screen-signal/);
   assert.match(css, /@keyframes safe-screen-signal/);
 });
+
+test("sunlight mode provides a dedicated high-contrast instrument", () => {
+  assert.match(css, /\.sunlight-mode \.instrument[^}]*#fbfdfc/s);
+  assert.match(css, /\.sunlight-mode \.distance-readout strong\s*\{[^}]*#071b22/s);
+  assert.match(css, /\.sunlight-mode\s*\{[^}]*--shore-stroke:\s*#385f64/s);
+});
