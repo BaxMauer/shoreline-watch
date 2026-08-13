@@ -1,5 +1,14 @@
-const CACHE_NAME = "shoreline-watch-v8";
-const CORE = ["/", "/manifest.webmanifest", "/favicon.svg", "/data/croatia-coastline.json", "/audio/shoreline-alarm.wav"];
+const CACHE_NAME = "shoreline-watch-v9";
+const CORE = [
+  "/",
+  "/manifest.webmanifest",
+  "/favicon.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/apple-touch-icon.png",
+  "/data/croatia-coastline.json",
+  "/audio/shoreline-alarm.wav",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE)));
