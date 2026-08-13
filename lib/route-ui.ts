@@ -45,3 +45,33 @@ export function routeRerouteThreshold(clearanceMetres: number) {
 export function shouldRerouteRoute(plannedFrom: GeoPoint | null, current: GeoPoint, clearanceMetres: number) {
   return plannedFrom !== null && geoDistanceMetres(plannedFrom, current) >= routeRerouteThreshold(clearanceMetres);
 }
+
+function mapLongitudeScale(latitude: number) {
+  return 111_320 * Math.cos((latitude * Math.PI) / 180);
+}
+
+export function routeMapPixelToGeo(centre: GeoPoint, rangeMetres: number, size: number, x: number, y: number): GeoPoint {
+  const half = size / 2;
+  const safeRange = clampRouteViewRange(rangeMetres);
+  const pixelsPerMetre = half / safeRange;
+  return {
+    longitude: centre.longitude + (x - half) / (mapLongitudeScale(centre.latitude) * pixelsPerMetre),
+    latitude: centre.latitude + (half - y) / (110_540 * pixelsPerMetre),
+  };
+}
+
+export function panRouteMapCentre(centre: GeoPoint, rangeMetres: number, size: number, deltaX: number, deltaY: number): GeoPoint {
+  const half = size / 2;
+  const pixelsPerMetre = half / clampRouteViewRange(rangeMetres);
+  return {
+    longitude: centre.longitude - deltaX / (mapLongitudeScale(centre.latitude) * pixelsPerMetre),
+    latitude: centre.latitude + deltaY / (110_540 * pixelsPerMetre),
+  };
+}
+
+export function pinchRouteViewRange(startRangeMetres: number, startDistance: number, currentDistance: number) {
+  if (!Number.isFinite(startDistance) || !Number.isFinite(currentDistance) || startDistance <= 0 || currentDistance <= 0) {
+    return clampRouteViewRange(startRangeMetres);
+  }
+  return clampRouteViewRange(startRangeMetres * startDistance / currentDistance);
+}

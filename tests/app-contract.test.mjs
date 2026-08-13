@@ -99,7 +99,8 @@ test("route planning applies warning distance and near-shore speed settings", as
 
 test("route destination can be selected by map tap or entered coordinates", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /onPointerUp=\{handleMapPointer\}/);
+  assert.match(planner, /onPointerUp=\{handlePointerUp\}/);
+  assert.match(planner, /selectTarget\(routeMapPixelToGeo\(mapCentre, viewRangeMetres, size, x, y\)\)/);
   assert.match(planner, /inputMode="decimal"/);
   assert.match(planner, /selectTarget\(\{ latitude, longitude \}\)/);
 });
@@ -118,12 +119,31 @@ test("route planning automatically recalculates after movement and preference ch
   assert.match(planner, /\[cruiseSpeedKnots, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
 });
 
-test("route map controls are bounded and inaccessible without a position", async () => {
+test("route map controls are bounded and target selection requires a position", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /disabled=\{!fix \|\| planning\}/);
+  assert.match(planner, /aria-disabled=\{!fix\}/);
+  assert.match(planner, /wasSinglePointer && !gesture\?\.moved && fix && !planning/);
   assert.match(planner, /clampRouteViewRange\(value \/ 1\.7\)/);
   assert.match(planner, /clampRouteViewRange\(value \* 1\.7\)/);
   assert.match(planner, /routeViewRangeForTarget\(current, fix, destination\)/);
+});
+
+test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  for (const handler of ["handlePointerDown", "handlePointerMove", "handlePointerUp", "handlePointerCancel", "handleWheel", "handleMapKey"]) {
+    assert.match(planner, new RegExp(`on(?:PointerDown|PointerMove|PointerUp|PointerCancel|Wheel|KeyDown)=\\{${handler}\\}`));
+  }
+  assert.match(planner, /pinchRouteViewRange\(gesture\.range, gesture\.distance, metrics\.distance\)/);
+  assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, deltaX, deltaY\)/);
+  assert.match(planner, /className="route-recenter"[\s\S]*onClick=\{recenterMap\}/);
+});
+
+test("warning display uses hysteresis, suppresses the initial alarm, and exposes text scaling", () => {
+  assert.match(app, /classifyWarningZone\(wasInside, conservativeDistance, warningConfig\.distanceMetres\)/);
+  assert.match(app, /const transition = getWarningTransition\(wasInside, nextInside/);
+  assert.match(app, /setWarningZoneInside\(nextInside\)/);
+  assert.match(app, /--distance-scale": warningConfig\.distanceTextScalePercent \/ 100/);
+  assert.match(app, /id="distance-text-size" type="range" min="80" max="150" step="5"/);
 });
 
 test("route result exposes all navigation metrics and accessible status messages", async () => {

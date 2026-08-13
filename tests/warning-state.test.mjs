@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state.ts";
+import { classifyWarningZone, getWarningHysteresisMetres, getWarningOutputPlan, getWarningTransition } from "../lib/warning-state.ts";
 
 const OUTPUTS = {
   alertVolumePercent: 100,
@@ -86,9 +86,35 @@ test("unknown speed remains fail-safe and does not silence the warning", () => {
   assert.equal(plan.sound, "warning");
 });
 
-test("first safe position does not emit an alert, but first close position does", () => {
+test("the first GPS position establishes state without emitting an alert", () => {
   assert.equal(getWarningTransition(null, false, null, false), "none");
-  assert.equal(getWarningTransition(null, true, null, false), "enter-distance");
+  assert.equal(getWarningTransition(null, true, null, true), "none");
+});
+
+test("warning hysteresis scales with distance but remains bounded", () => {
+  assert.equal(getWarningHysteresisMetres(50), 10);
+  assert.equal(getWarningHysteresisMetres(300), 15);
+  assert.equal(getWarningHysteresisMetres(2_000), 50);
+});
+
+test("warning zone uses separate entry and exit thresholds", () => {
+  assert.equal(classifyWarningZone(null, 299, 300), true);
+  assert.equal(classifyWarningZone(null, 301, 300), false);
+  assert.equal(classifyWarningZone(false, 286, 300), false);
+  assert.equal(classifyWarningZone(false, 285, 300), true);
+  assert.equal(classifyWarningZone(true, 314, 300), true);
+  assert.equal(classifyWarningZone(true, 315, 300), false);
+});
+
+test("rapid GPS movement around the threshold does not chatter alarms", () => {
+  let inside = classifyWarningZone(null, 320, 300);
+  const transitions = [];
+  for (const distance of [301, 299, 304, 296, 287, 284, 292, 303, 312, 316]) {
+    const next = classifyWarningZone(inside, distance, 300);
+    transitions.push(getWarningTransition(inside, next, false, false));
+    inside = next;
+  }
+  assert.deepEqual(transitions.filter((value) => value !== "none"), ["enter-distance", "exit-distance"]);
 });
 
 test("leaving the distance zone takes priority over a contradictory speed sample", () => {

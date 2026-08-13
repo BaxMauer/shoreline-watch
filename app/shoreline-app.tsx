@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import {
   type CoastlinePack,
   type CourseToShore,
@@ -14,12 +14,11 @@ import {
   offsetFromShore,
 } from "../lib/shoreline";
 import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
-import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
+import { classifyWarningZone, getWarningHysteresisMetres, getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
 import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
 import {
-  getGoNoGoState,
   getPlotRangeMetres,
   getPowerSaveReason,
   updateStationaryState,
@@ -88,6 +87,9 @@ const COPY = {
     settingsSummary: (distance: number, speedEnabled: boolean, speed: number, volume: number) =>
       speedEnabled ? `${distance} m · ${speed} kn · ${volume} %` : `${distance} m · ${volume} %`,
     distanceWarning: "Warnabstand",
+    distanceTextSize: "Entfernungsanzeige",
+    distanceTextSizeHint: "Größe der Meterzahl für gute Ablesbarkeit aus der Entfernung.",
+    hysteresisHint: (metres: number) => `Schaltpuffer ±${metres} m verhindert wiederholte Alarme durch GPS-Schwankungen.`,
     speedWarning: "Tempo im Küstenbereich prüfen",
     speedLimit: "Maximaltempo",
     speedWarningHint: (distance: number) => `Warnt über dem Limit innerhalb von ${distance} m.`,
@@ -197,6 +199,9 @@ const COPY = {
     settingsSummary: (distance: number, speedEnabled: boolean, speed: number, volume: number) =>
       speedEnabled ? `${distance} m · ${speed} kn · ${volume}%` : `${distance} m · ${volume}%`,
     distanceWarning: "Warning distance",
+    distanceTextSize: "Distance display",
+    distanceTextSizeHint: "Size of the distance digits for long-range readability.",
+    hysteresisHint: (metres: number) => `A ±${metres} m switching buffer prevents repeated alerts from GPS fluctuations.`,
     speedWarning: "Check speed near shore",
     speedLimit: "Maximum speed",
     speedWarningHint: (distance: number) => `Warn above the limit while within ${distance} m.`,
@@ -562,6 +567,7 @@ export default function ShorelineApp() {
   const [powerSaveWakeUntil, setPowerSaveWakeUntil] = useState(0);
   const [stationaryState, setStationaryState] = useState<StationaryState>({ reference: null, lastMovementAt: 0 });
   const [trackerTab, setTrackerTab] = useState<TrackerTab>("distance");
+  const [warningZoneInside, setWarningZoneInside] = useState<boolean | null>(null);
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
@@ -683,7 +689,8 @@ export default function ShorelineApp() {
   const speedMetresPerSecond = fix?.speed ?? 0;
   const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
   const conservativeDistance = nearest && fix ? Math.max(0, nearest.distance - fix.accuracy) : null;
-  const insideLimit = conservativeDistance !== null && conservativeDistance < warningConfig.distanceMetres;
+  const rawInsideLimit = conservativeDistance !== null && conservativeDistance < warningConfig.distanceMetres;
+  const insideLimit = warningZoneInside ?? rawInsideLimit;
   const speedViolation = warningConfig.speedWarningEnabled
     && insideLimit
     && speedKnots !== null
@@ -717,7 +724,9 @@ export default function ShorelineApp() {
     return { level: "none", label: "", detail: "" };
   }, [copy, courseToShore, gpsSignalState, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
 
-  const goNoGoState = getGoNoGoState(conservativeDistance, warningConfig.distanceMetres, gpsSignalState === "fresh");
+  const goNoGoState = gpsSignalState !== "fresh" || conservativeDistance === null
+    ? "unknown"
+    : insideLimit ? "no-go" : "go";
   const powerSaveReason = getPowerSaveReason({
     enabled: warningConfig.powerSaveEnabled,
     tracking: mode === "live",
@@ -925,19 +934,25 @@ export default function ShorelineApp() {
     if (mode === "idle" || conservativeDistance === null || gpsSignalState !== "fresh") return;
     const wasInside = previousInsideLimit.current;
     const wasSpeedViolation = previousSpeedViolation.current;
-    const transition = getWarningTransition(wasInside, insideLimit, wasSpeedViolation, activeSpeedViolation);
+    const nextInside = classifyWarningZone(wasInside, conservativeDistance, warningConfig.distanceMetres);
+    const nextSpeedViolation = warningConfig.speedWarningEnabled
+      && nextInside
+      && speedKnots !== null
+      && speedKnots > warningConfig.maxSpeedKnots;
+    const transition = getWarningTransition(wasInside, nextInside, wasSpeedViolation, nextSpeedViolation);
     const outputPlan = getWarningOutputPlan(transition, {
       ...warningConfig,
       speedKnown: speedKnots !== null,
-      speedViolation: activeSpeedViolation,
+      speedViolation: nextSpeedViolation,
     });
     if (outputPlan.visual) triggerVisualSignal(outputPlan.visual);
     if (outputPlan.vibration) triggerVibration(outputPlan.vibration);
     if (outputPlan.sound === "warning") void soundAlarm();
     if (outputPlan.sound === "safe") void soundSafeChime();
-    previousInsideLimit.current = insideLimit;
-    previousSpeedViolation.current = activeSpeedViolation;
-  }, [activeSpeedViolation, conservativeDistance, gpsSignalState, insideLimit, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
+    previousInsideLimit.current = nextInside;
+    previousSpeedViolation.current = nextSpeedViolation;
+    setWarningZoneInside(nextInside);
+  }, [conservativeDistance, gpsSignalState, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
 
   const requestWakeLock = useCallback(async () => {
     const wakeNavigator = navigator as Navigator & {
@@ -971,6 +986,7 @@ export default function ShorelineApp() {
     distanceSamples.current = [];
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    setWarningZoneInside(null);
     setPowerSaveWakeUntil(0);
     setStationaryState({ reference: null, lastMovementAt: 0 });
     setTrackerTab("distance");
@@ -997,6 +1013,7 @@ export default function ShorelineApp() {
     }
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    setWarningZoneInside(null);
     const startedAt = Date.now();
     setStationaryState({ reference: null, lastMovementAt: startedAt });
     setPowerSaveWakeUntil(0);
@@ -1060,6 +1077,7 @@ export default function ShorelineApp() {
     }
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    setWarningZoneInside(null);
     demoTimestamp.current = Date.now();
     setClockNow(demoTimestamp.current);
     setTrackingStartedAt(demoTimestamp.current);
@@ -1192,6 +1210,12 @@ export default function ShorelineApp() {
                   <span>{copy.distanceWarning}</span>
                   <span className="number-field"><input id="warning-distance" type="number" inputMode="numeric" min="50" max="2000" step="10" value={warningConfig.distanceMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, distanceMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
                 </label>
+                <p className="setting-note">{copy.hysteresisHint(getWarningHysteresisMetres(warningConfig.distanceMetres))}</p>
+                <label className="volume-setting display-size-setting" htmlFor="distance-text-size">
+                  <span><strong>{copy.distanceTextSize}</strong><small>{copy.distanceTextSizeHint}</small></span>
+                  <output htmlFor="distance-text-size">{warningConfig.distanceTextScalePercent}%</output>
+                  <input id="distance-text-size" type="range" min="80" max="150" step="5" value={warningConfig.distanceTextScalePercent} onChange={(event) => setWarningConfig((current) => sanitizeWarningConfig({ ...current, distanceTextScalePercent: event.target.valueAsNumber }))} />
+                </label>
                 <label className="toggle-row">
                   <span><strong>{copy.speedWarning}</strong><small>{copy.speedWarningHint(warningConfig.distanceMetres)}</small></span>
                   <input type="checkbox" checked={warningConfig.speedWarningEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, speedWarningEnabled: event.target.checked }))} />
@@ -1275,7 +1299,7 @@ export default function ShorelineApp() {
           </div>
 
           <div className="tracker-content">
-          <section hidden={trackerTab !== "distance"} className={`instrument ${insideLimit && gpsSignalState === "fresh" ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsSignalProblem ? `gps-${gpsSignalState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
+          <section hidden={trackerTab !== "distance"} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties} className={`instrument ${insideLimit && gpsSignalState === "fresh" ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsSignalProblem ? `gps-${gpsSignalState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
             <div className={`status-pill ${gpsSignalState === "lost" || (gpsSignalState === "fresh" && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsSignalState === "stale" ? "stale" : ""} ${gpsSignalState === "waiting" || (!nearest && gpsSignalState === "fresh") ? "waiting" : ""}`} aria-live="assertive">
               <span />{statusLabel}
             </div>

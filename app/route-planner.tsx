@@ -17,6 +17,9 @@ import {
   formatRouteClearance,
   formatRouteEta,
   parseRouteCoordinate,
+  panRouteMapCentre,
+  pinchRouteViewRange,
+  routeMapPixelToGeo,
   routeViewRangeForTarget,
   shouldRerouteRoute,
 } from "../lib/route-ui";
@@ -59,8 +62,10 @@ const COPY = {
       "no-route": "Keine durchgehende Wasserroute gefunden. Ziel oder Zoom ändern.",
     },
     mapLabel: "Offline-Karte zur Auswahl des Routenziels",
+    mapHint: "Ziehen zum Verschieben · zwei Finger zum Zoomen · tippen setzt das Ziel",
     zoomIn: "Karte vergrößern",
     zoomOut: "Karte verkleinern",
+    recenter: "Boot zentrieren",
     current: "Boot",
     target: "Ziel",
   },
@@ -97,8 +102,10 @@ const COPY = {
       "no-route": "No continuous water route found. Change the target or zoom.",
     },
     mapLabel: "Offline map for choosing a route destination",
+    mapHint: "Drag to pan · pinch to zoom · tap to set target",
     zoomIn: "Zoom map in",
     zoomOut: "Zoom map out",
+    recenter: "Centre on boat",
     current: "Boat",
     target: "Target",
   },
@@ -123,11 +130,20 @@ export default function RoutePlanner({
   const [failure, setFailure] = useState<RoutePlanningFailure | null>(null);
   const [planning, setPlanning] = useState(false);
   const [viewRangeMetres, setViewRangeMetres] = useState(20_000);
+  const [viewCentre, setViewCentre] = useState<GeoPoint | null>(null);
   const [cruiseSpeedKnots, setCruiseSpeedKnots] = useState(16);
   const [coordinateLatitude, setCoordinateLatitude] = useState("");
   const [coordinateLongitude, setCoordinateLongitude] = useState("");
   const plannedFrom = useRef<GeoPoint | null>(null);
   const calculationSequence = useRef(0);
+  const activePointers = useRef(new Map<number, { x: number; y: number }>());
+  const mapGesture = useRef<{
+    centre: GeoPoint;
+    range: number;
+    centroid: { x: number; y: number };
+    distance: number;
+    moved: boolean;
+  } | null>(null);
 
   const calculate = useCallback((destination: GeoPoint, startOverride?: GeoPoint) => {
     const start = startOverride ?? fix;
@@ -176,18 +192,18 @@ export default function RoutePlanner({
 
   const size = 360;
   const centre = size / 2;
-  const mapCentre = fix ?? target ?? { longitude: 15.55, latitude: 43.8 };
+  const mapCentre = viewCentre ?? fix ?? target ?? { longitude: 15.55, latitude: 43.8 };
   const metresPerLongitudeDegree = 111_320 * Math.cos((mapCentre.latitude * Math.PI) / 180);
   const pixelsPerMetre = centre / viewRangeMetres;
   const point = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (value.latitude - mapCentre.latitude) * 110_540 * pixelsPerMetre,
   }), [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
-  const segments = useMemo(() => pack && fix
+  const segments = useMemo(() => pack
     ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, 5_000)
-    : [], [fix, mapCentre.latitude, mapCentre.longitude, pack, viewRangeMetres]);
+    : [], [mapCentre.latitude, mapCentre.longitude, pack, viewRangeMetres]);
   const hatchPath = useMemo(() => {
-    if (!pack || !fix) return "";
+    if (!pack) return "";
     const bandHeight = 6;
     const minimumLongitude = mapCentre.longitude - viewRangeMetres / metresPerLongitudeDegree;
     const maximumLongitude = mapCentre.longitude + viewRangeMetres / metresPerLongitudeDegree;
@@ -202,7 +218,7 @@ export default function RoutePlanner({
       }
     }
     return path;
-  }, [centre, fix, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, viewRangeMetres]);
+  }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, viewRangeMetres]);
   const routePoints = route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "";
   const boatPoint = fix ? point(fix) : null;
   const targetPoint = target ? point(target) : null;
@@ -211,15 +227,69 @@ export default function RoutePlanner({
     : null;
   const nextBearing = fix && nextRoutePoint ? geoBearing(fix, nextRoutePoint) : null;
 
-  const handleMapPointer = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (!fix || planning) return;
+  const pointerMetrics = (element: HTMLDivElement) => {
+    const bounds = element.getBoundingClientRect();
+    const points = Array.from(activePointers.current.values()).map((value) => ({
+      x: (value.x - bounds.left) / bounds.width * size,
+      y: (value.y - bounds.top) / bounds.height * size,
+    }));
+    const centroid = points.reduce((total, value) => ({ x: total.x + value.x / points.length, y: total.y + value.y / points.length }), { x: 0, y: 0 });
+    const distance = points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    return { centroid, distance };
+  };
+
+  const beginGesture = (element: HTMLDivElement) => {
+    const metrics = pointerMetrics(element);
+    mapGesture.current = { centre: mapCentre, range: viewRangeMetres, ...metrics, moved: false };
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    beginGesture(event.currentTarget);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!activePointers.current.has(event.pointerId) || !mapGesture.current) return;
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const metrics = pointerMetrics(event.currentTarget);
+    const gesture = mapGesture.current;
+    const deltaX = metrics.centroid.x - gesture.centroid.x;
+    const deltaY = metrics.centroid.y - gesture.centroid.y;
+    if (Math.hypot(deltaX, deltaY) > 4 || Math.abs(metrics.distance - gesture.distance) > 4) gesture.moved = true;
+    setViewCentre(panRouteMapCentre(gesture.centre, gesture.range, size, deltaX, deltaY));
+    if (activePointers.current.size >= 2) setViewRangeMetres(pinchRouteViewRange(gesture.range, gesture.distance, metrics.distance));
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const gesture = mapGesture.current;
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / bounds.width * size;
     const y = (event.clientY - bounds.top) / bounds.height * size;
-    selectTarget({
-      longitude: mapCentre.longitude + (x - centre) / (metresPerLongitudeDegree * pixelsPerMetre),
-      latitude: mapCentre.latitude + (centre - y) / (110_540 * pixelsPerMetre),
-    });
+    const wasSinglePointer = activePointers.current.size === 1;
+    activePointers.current.delete(event.pointerId);
+    if (wasSinglePointer && !gesture?.moved && fix && !planning) selectTarget(routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y));
+    if (activePointers.current.size > 0) beginGesture(event.currentTarget);
+    else mapGesture.current = null;
+  };
+
+  const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
+    activePointers.current.delete(event.pointerId);
+    if (activePointers.current.size > 0) beginGesture(event.currentTarget);
+    else mapGesture.current = null;
+  };
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setViewRangeMetres((value) => clampRouteViewRange(value * (event.deltaY > 0 ? 1.18 : 1 / 1.18)));
+  };
+
+  const handleMapKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "+" || event.key === "=") setViewRangeMetres((value) => clampRouteViewRange(value / 1.7));
+    else if (event.key === "-") setViewRangeMetres((value) => clampRouteViewRange(value * 1.7));
+    else if ((event.key === "Enter" || event.key === " ") && fix && !planning) selectTarget(mapCentre);
+    else return;
+    event.preventDefault();
   };
 
   const useCoordinates = () => {
@@ -240,10 +310,15 @@ export default function RoutePlanner({
     plannedFrom.current = null;
   };
 
+  const recenterMap = () => {
+    setViewCentre(null);
+    if (fix && target) setViewRangeMetres(routeViewRangeForTarget(20_000, fix, target));
+  };
+
   return (
     <section className="route-planner" aria-label={copy.title}>
       <div className="route-map-wrap">
-        <button className="route-map" type="button" onPointerUp={handleMapPointer} aria-label={copy.mapLabel} disabled={!fix || planning}>
+        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={!fix} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
           <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-hidden="true">
             <defs>
               <pattern id="routeLandHatch" width="10" height="10" patternUnits="userSpaceOnUse">
@@ -262,15 +337,16 @@ export default function RoutePlanner({
             {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="10" /><path d="M0-14 8 0 0 14-8 0Z" /><circle r="3" /></g>}
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
-        </button>
+        </div>
         <div className="route-map-heading">
-          <span><strong>{copy.title}</strong><small>{copy.subtitle}</small></span>
+          <span><strong>{copy.title}</strong><small>{copy.mapHint}</small></span>
           <span className={`route-state ${route?.mode === "restricted" || failure ? "check" : route ? "ready" : ""}`}>{planning ? "…" : failure || route?.mode === "restricted" ? copy.check : route ? copy.ready : copy.waiting}</span>
         </div>
         <div className="route-zoom" aria-label="Zoom">
           <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>
           <span>{viewRangeMetres >= 1_000 ? `${Math.round(viewRangeMetres / 1_000)} km` : `${Math.round(viewRangeMetres)} m`}</span>
           <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>
+          <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
       </div>
 

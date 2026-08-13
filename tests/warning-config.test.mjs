@@ -15,6 +15,7 @@ test("older saved settings receive safe alert-output defaults", () => {
   assert.equal(config.powerSaveDistanceMetres, 2_000);
   assert.equal(config.powerSaveStationaryMinutes, 5);
   assert.equal(config.powerSaveAnchorRadiusMetres, 30);
+  assert.equal(config.distanceTextScalePercent, 110);
 });
 
 test("power-saving thresholds are sanitized to practical ranges", () => {
@@ -32,6 +33,12 @@ test("alert volume is configurable from muted to 200 percent", () => {
   assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, alertVolumePercent: -20 }).alertVolumePercent, 0);
   assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, alertVolumePercent: 175 }).alertVolumePercent, 175);
   assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, alertVolumePercent: 280 }).alertVolumePercent, 200);
+});
+
+test("distance digit size is configurable from 80 to 150 percent", () => {
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, distanceTextScalePercent: 20 }).distanceTextScalePercent, 80);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, distanceTextScalePercent: 127 }).distanceTextScalePercent, 125);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, distanceTextScalePercent: 220 }).distanceTextScalePercent, 150);
 });
 
 test("all output switches preserve an explicit muted state", () => {
@@ -62,6 +69,7 @@ test("numeric settings clamp and round to supported control steps", () => {
     powerSaveDistanceMetres: 2_049,
     powerSaveStationaryMinutes: 4.6,
     powerSaveAnchorRadiusMetres: 32,
+    distanceTextScalePercent: 117,
   });
   assert.equal(config.distanceMetres, 350);
   assert.equal(config.maxSpeedKnots, 8.3);
@@ -69,6 +77,7 @@ test("numeric settings clamp and round to supported control steps", () => {
   assert.equal(config.powerSaveDistanceMetres, 2_000);
   assert.equal(config.powerSaveStationaryMinutes, 5);
   assert.equal(config.powerSaveAnchorRadiusMetres, 30);
+  assert.equal(config.distanceTextScalePercent, 115);
 });
 
 test("distance and speed settings enforce their minimum and maximum", () => {

@@ -47,6 +47,19 @@ export function formatRouteDistance(distanceMetres: number) {
   return distanceMetres / 1_852;
 }
 
+export function getRouteGridResolutions(widthMetres: number, heightMetres: number, clearanceMetres: number) {
+  const width = Math.max(1, widthMetres);
+  const height = Math.max(1, heightMetres);
+  const span = Math.max(width, height);
+  const clearance = Math.max(0, clearanceMetres);
+  const coarse = Math.max(180, clearance * 0.7, span / 58);
+  const preferredFine = Math.max(45, Math.min(90, clearance > 0 ? clearance * 0.25 : 45));
+  // Keep the refinement bounded on very long routes while allowing roughly
+  // 50–90 m cells around islands, marinas, and narrow passages.
+  const boundedFine = Math.max(preferredFine, Math.sqrt(width * height / 260_000));
+  return boundedFine < coarse * 0.82 ? [coarse, boundedFine] : [coarse];
+}
+
 type HeapEntry = { key: number; score: number };
 
 class MinHeap {
@@ -178,36 +191,41 @@ export function planWaterRoute(
   const maximumX = Math.max(startLocal.x, destinationLocal.x) + margin;
   const minimumY = Math.min(startLocal.y, destinationLocal.y) - margin;
   const maximumY = Math.max(startLocal.y, destinationLocal.y) + margin;
-  const span = Math.max(maximumX - minimumX, maximumY - minimumY);
-  const cellSize = Math.max(180, options.clearanceMetres * 0.7, span / 58);
-  const columns = Math.max(3, Math.ceil((maximumX - minimumX) / cellSize) + 1);
-  const rows = Math.max(3, Math.ceil((maximumY - minimumY) / cellSize) + 1);
-  const pointFor = (column: number, row: number) => toGeo({ x: minimumX + column * cellSize, y: minimumY + row * cellSize });
-  const nearestIndex = (point: LocalPoint) => ({
-    column: Math.max(0, Math.min(columns - 1, Math.round((point.x - minimumX) / cellSize))),
-    row: Math.max(0, Math.min(rows - 1, Math.round((point.y - minimumY) / cellSize))),
-  });
-  const startIndex = nearestIndex(startLocal);
-  const destinationIndex = nearestIndex(destinationLocal);
-  const startKey = startIndex.row * columns + startIndex.column;
-  const destinationKey = destinationIndex.row * columns + destinationIndex.column;
-  const endpointGrace = Math.max(options.clearanceMetres * 2.2, cellSize * 2.2);
-  const routedClearance = options.clearanceMetres + cellSize * 0.72;
-  const nodeCache = new Map<number, NodeInfo>();
-  const node = (key: number) => {
-    const cached = nodeCache.get(key);
-    if (cached) return cached;
-    const row = Math.floor(key / columns);
-    const column = key % columns;
-    const point = pointFor(column, row);
-    const shore = findNearestShore(pack, point.longitude, point.latitude);
-    const value = { point, land: isPointOnLand(pack, point.longitude, point.latitude), shoreDistance: shore?.distance ?? 0 };
-    nodeCache.set(key, value);
-    return value;
-  };
-  const nearEndpoint = (point: GeoPoint) => geoDistanceMetres(point, start) <= endpointGrace || geoDistanceMetres(point, destination) <= endpointGrace;
+  const width = maximumX - minimumX;
+  const height = maximumY - minimumY;
+  const resolutions = getRouteGridResolutions(width, height, options.clearanceMetres);
 
-  const search = (allowRestricted: boolean) => {
+  const search = (cellSize: number, allowRestricted: boolean) => {
+    const columns = Math.max(3, Math.ceil(width / cellSize) + 1);
+    const rows = Math.max(3, Math.ceil(height / cellSize) + 1);
+    const pointFor = (column: number, row: number) => toGeo({ x: minimumX + column * cellSize, y: minimumY + row * cellSize });
+    const nearestIndex = (point: LocalPoint) => ({
+      column: Math.max(0, Math.min(columns - 1, Math.round((point.x - minimumX) / cellSize))),
+      row: Math.max(0, Math.min(rows - 1, Math.round((point.y - minimumY) / cellSize))),
+    });
+    const startIndex = nearestIndex(startLocal);
+    const destinationIndex = nearestIndex(destinationLocal);
+    const startKey = startIndex.row * columns + startIndex.column;
+    const destinationKey = destinationIndex.row * columns + destinationIndex.column;
+    const endpointGrace = Math.max(options.clearanceMetres * 1.2, cellSize * 1.8);
+    const routedClearance = options.clearanceMetres + cellSize * 0.5;
+    const nodeCache = new Map<number, NodeInfo>();
+    const node = (key: number) => {
+      const cached = nodeCache.get(key);
+      if (cached) return cached;
+      const row = Math.floor(key / columns);
+      const column = key % columns;
+      const point = key === startKey ? start : key === destinationKey ? destination : pointFor(column, row);
+      const shore = findNearestShore(pack, point.longitude, point.latitude);
+      const value = {
+        point,
+        land: key === startKey || key === destinationKey ? false : isPointOnLand(pack, point.longitude, point.latitude),
+        shoreDistance: shore?.distance ?? 0,
+      };
+      nodeCache.set(key, value);
+      return value;
+    };
+    const nearEndpoint = (point: GeoPoint) => geoDistanceMetres(point, start) <= endpointGrace || geoDistanceMetres(point, destination) <= endpointGrace;
     const open = new MinHeap();
     const costs = new Float64Array(columns * rows);
     costs.fill(Number.POSITIVE_INFINITY);
@@ -240,7 +258,7 @@ export function planWaterRoute(
         const restricted = next.shoreDistance < routedClearance;
         if (restricted && !allowRestricted && !nearEndpoint(next.point)) continue;
         const current = node(currentEntry.key);
-        const edgeSamples = Math.max(1, Math.ceil(geoDistanceMetres(current.point, next.point) / 100));
+        const edgeSamples = Math.max(1, Math.ceil(geoDistanceMetres(current.point, next.point) / Math.min(35, cellSize / 2)));
         let edgeBlocked = false;
         for (let sample = 1; sample < edgeSamples; sample += 1) {
           const samplePoint = interpolate(current.point, next.point, sample / edgeSamples);
@@ -278,13 +296,26 @@ export function planWaterRoute(
     return reversed.reverse();
   };
 
-  const strict = search(false);
-  const rawPoints = strict ?? search(true);
+  let rawPoints: GeoPoint[] | null = null;
+  let strict = false;
+  for (const cellSize of resolutions) {
+    rawPoints = search(cellSize, false);
+    if (rawPoints) {
+      strict = true;
+      break;
+    }
+  }
+  if (!rawPoints) {
+    for (const cellSize of resolutions.toReversed()) {
+      rawPoints = search(cellSize, true);
+      if (rawPoints) break;
+    }
+  }
   if (!rawPoints) return { failure: "no-route" };
   const route = buildRoute(pack, rawPoints, options, strict ? "clearance" : "restricted");
   // Endpoint grace helps with normal GPS drift close to shore, but the result
   // must still be labelled restricted whenever the measured route enters the
   // configured clearance zone.
-  if (route.restrictedDistanceMetres > 0) route.mode = "restricted";
+  route.mode = route.restrictedDistanceMetres > 0 ? "restricted" : "clearance";
   return { route };
 }

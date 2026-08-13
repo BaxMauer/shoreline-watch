@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { isPointOnLand } from "../lib/shoreline.ts";
 import {
   formatRouteDistance,
+  getRouteGridResolutions,
   geoBearing,
   geoDistanceMetres,
   planWaterRoute,
@@ -51,6 +52,24 @@ const BLOCKED_CHANNEL_PACK = {
   },
 };
 
+const NARROW_PASSAGE_PACK = {
+  ...ISLAND_PACK,
+  region: "Narrow passage",
+  segmentCount: 8,
+  cells: {
+    "0:0": [
+      0.045, 0, 0.055, 0,
+      0.055, 0, 0.055, 0.04955,
+      0.055, 0.04955, 0.045, 0.04955,
+      0.045, 0.04955, 0.045, 0,
+      0.045, 0.05045, 0.055, 0.05045,
+      0.055, 0.05045, 0.055, 0.1,
+      0.055, 0.1, 0.045, 0.1,
+      0.045, 0.1, 0.045, 0.05045,
+    ],
+  },
+};
+
 test("land classification distinguishes island, mainland, and open water", () => {
   assert.equal(isPointOnLand(ISLAND_PACK, 0.05, 0.05), true);
   assert.equal(isPointOnLand(ISLAND_PACK, 0.095, 0.05), true);
@@ -87,6 +106,41 @@ test("a completely blocked waterway returns no route instead of crossing land", 
     planWaterRoute(BLOCKED_CHANNEL_PACK, { longitude: 0.03, latitude: 0.05 }, { longitude: 0.07, latitude: 0.05 }, OPTIONS),
     { failure: "no-route" },
   );
+});
+
+test("adaptive refinement finds a roughly 100-metre narrow passage", () => {
+  const result = planWaterRoute(
+    NARROW_PASSAGE_PACK,
+    { longitude: 0.03, latitude: 0.05 },
+    { longitude: 0.07, latitude: 0.05 },
+    { ...OPTIONS, clearanceMetres: 30 },
+  );
+  assert.ok(result.route, result.failure);
+  assert.ok(result.route.points.length > 2);
+  assert.equal(result.route.mode, "clearance");
+  assert.ok(result.route.minimumShoreDistanceMetres >= 30);
+  for (let index = 1; index < result.route.points.length; index += 1) {
+    const start = result.route.points[index - 1];
+    const end = result.route.points[index];
+    const samples = Math.max(2, Math.ceil(geoDistanceMetres(start, end) / 20));
+    for (let sample = 0; sample <= samples; sample += 1) {
+      const position = sample / samples;
+      assert.equal(isPointOnLand(NARROW_PASSAGE_PACK,
+        start.longitude + (end.longitude - start.longitude) * position,
+        start.latitude + (end.latitude - start.latitude) * position,
+      ), false);
+    }
+  }
+});
+
+test("route grid adds fine resolution while bounding long-route node counts", () => {
+  const local = getRouteGridResolutions(10_000, 10_000, 300);
+  assert.equal(local.length, 2);
+  assert.ok(local[1] <= 90);
+  const long = getRouteGridResolutions(140_000, 80_000, 300);
+  assert.equal(long.length, 2);
+  const estimatedFineNodes = 140_000 * 80_000 / (long[1] ** 2);
+  assert.ok(estimatedFineNodes <= 260_001);
 });
 
 test("out-of-region and overly distant destinations return explicit failures", () => {

@@ -1,5 +1,6 @@
 export type WarningConfig = {
   distanceMetres: number;
+  distanceTextScalePercent: number;
   speedWarningEnabled: boolean;
   maxSpeedKnots: number;
   suppressDistanceSoundAtSafeSpeed: boolean;
@@ -16,6 +17,7 @@ export type WarningConfig = {
 
 export const CROATIA_WARNING_CONFIG: WarningConfig = {
   distanceMetres: 300,
+  distanceTextScalePercent: 110,
   speedWarningEnabled: true,
   maxSpeedKnots: 8,
   suppressDistanceSoundAtSafeSpeed: true,
@@ -42,6 +44,9 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
   const alertVolumePercent = typeof candidate.alertVolumePercent === "number" && Number.isFinite(candidate.alertVolumePercent)
     ? Math.min(200, Math.max(0, Math.round(candidate.alertVolumePercent / 5) * 5))
     : CROATIA_WARNING_CONFIG.alertVolumePercent;
+  const distanceTextScalePercent = typeof candidate.distanceTextScalePercent === "number" && Number.isFinite(candidate.distanceTextScalePercent)
+    ? Math.min(150, Math.max(80, Math.round(candidate.distanceTextScalePercent / 5) * 5))
+    : CROATIA_WARNING_CONFIG.distanceTextScalePercent;
   const powerSaveDistanceMetres = typeof candidate.powerSaveDistanceMetres === "number" && Number.isFinite(candidate.powerSaveDistanceMetres)
     ? Math.min(20_000, Math.max(500, Math.round(candidate.powerSaveDistanceMetres / 100) * 100))
     : CROATIA_WARNING_CONFIG.powerSaveDistanceMetres;
@@ -56,6 +61,7 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
     distanceMetres,
     maxSpeedKnots,
     alertVolumePercent,
+    distanceTextScalePercent,
     powerSaveDistanceMetres,
     powerSaveStationaryMinutes,
     powerSaveAnchorRadiusMetres,

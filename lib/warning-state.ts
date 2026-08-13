@@ -2,6 +2,24 @@ export type WarningTransition = "none" | "enter-distance" | "exit-distance" | "e
 export type WarningSound = "warning" | "safe" | null;
 export type WarningVisual = "distance" | "speed" | "safe" | null;
 
+export function getWarningHysteresisMetres(distanceMetres: number) {
+  return Math.min(50, Math.max(10, Math.round(Math.max(0, distanceMetres) * 0.05)));
+}
+
+export function classifyWarningZone(
+  previousInside: boolean | null,
+  distanceMetres: number,
+  warningDistanceMetres: number,
+  hysteresisMetres = getWarningHysteresisMetres(warningDistanceMetres),
+) {
+  const distance = Math.max(0, distanceMetres);
+  const threshold = Math.max(0, warningDistanceMetres);
+  const hysteresis = Math.max(0, hysteresisMetres);
+  if (previousInside === null) return distance < threshold;
+  if (previousInside) return distance < threshold + hysteresis;
+  return distance <= Math.max(0, threshold - hysteresis);
+}
+
 export type WarningOutputOptions = {
   alertVolumePercent: number;
   warningSoundEnabled: boolean;
@@ -20,6 +38,8 @@ export function getWarningTransition(
   previousSpeedViolation: boolean | null,
   speedViolation: boolean,
 ): WarningTransition {
+  // The first reliable GPS fix establishes state without sounding an alarm.
+  if (previousInside === null) return "none";
   if (inside && previousInside !== true) return "enter-distance";
   if (!inside && previousInside === true) return "exit-distance";
   if (speedViolation && previousSpeedViolation !== true) return "enter-speed";

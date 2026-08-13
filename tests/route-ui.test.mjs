@@ -10,6 +10,9 @@ import {
   formatRouteClearance,
   formatRouteEta,
   parseRouteCoordinate,
+  panRouteMapCentre,
+  pinchRouteViewRange,
+  routeMapPixelToGeo,
   routeRerouteThreshold,
   routeViewRangeForTarget,
   shouldRerouteRoute,
@@ -70,4 +73,27 @@ test("automatic rerouting uses at least 250 metres or the configured clearance",
   assert.equal(shouldRerouteRoute(null, plannedFrom, 300), false);
   assert.equal(shouldRerouteRoute(plannedFrom, { longitude: 15.001, latitude: 43 }, 300), false);
   assert.equal(shouldRerouteRoute(plannedFrom, { longitude: 15.005, latitude: 43 }, 300), true);
+});
+
+test("map pixel conversion keeps centre exact and cardinal directions correct", () => {
+  const centre = { longitude: 15.5, latitude: 43.8 };
+  assert.deepEqual(routeMapPixelToGeo(centre, 10_000, 360, 180, 180), centre);
+  assert.ok(routeMapPixelToGeo(centre, 10_000, 360, 300, 180).longitude > centre.longitude);
+  assert.ok(routeMapPixelToGeo(centre, 10_000, 360, 180, 60).latitude > centre.latitude);
+});
+
+test("dragging the map pans content with the finger", () => {
+  const centre = { longitude: 15.5, latitude: 43.8 };
+  const right = panRouteMapCentre(centre, 10_000, 360, 60, 0);
+  const down = panRouteMapCentre(centre, 10_000, 360, 0, 60);
+  assert.ok(right.longitude < centre.longitude);
+  assert.ok(down.latitude > centre.latitude);
+});
+
+test("pinch zoom is proportional and respects both zoom limits", () => {
+  assert.equal(pinchRouteViewRange(20_000, 100, 200), 10_000);
+  assert.equal(pinchRouteViewRange(20_000, 100, 50), 40_000);
+  assert.equal(pinchRouteViewRange(3_000, 100, 1_000), MINIMUM_ROUTE_VIEW_METRES);
+  assert.equal(pinchRouteViewRange(100_000, 100, 1), MAXIMUM_ROUTE_VIEW_METRES);
+  assert.equal(pinchRouteViewRange(20_000, 0, 100), 20_000);
 });
