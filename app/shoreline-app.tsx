@@ -15,7 +15,13 @@ import {
 import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
 import { getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
 import { getGeneratedAlertPeak } from "../lib/audio-levels";
-import { getGoNoGoState, getPlotRangeMetres, getPowerSaveReason } from "../lib/navigation-display";
+import {
+  getGoNoGoState,
+  getPlotRangeMetres,
+  getPowerSaveReason,
+  updateStationaryState,
+  type StationaryState,
+} from "../lib/navigation-display";
 import {
   calculateClosingRate,
   classifyClosingRate,
@@ -100,6 +106,8 @@ const COPY = {
     energySavingHint: "OLED-schwarze Anzeige weit vor der Küste oder nach längerem Stillstand. GPS und Warnungen bleiben aktiv.",
     energyDistance: "Aktiv ab Küstenabstand",
     energyStationary: "Aktiv nach Stillstand",
+    energyAnchorRadius: "Ankerkreis",
+    energyAnchorRadiusHint: "Schwojen innerhalb dieses Radius gilt weiterhin als Stillstand.",
     energySection: "Energiesparen",
     go: "GO",
     noGo: "NO GO",
@@ -205,6 +213,8 @@ const COPY = {
     energySavingHint: "OLED-black display far from shore or after no movement. GPS and warnings stay active.",
     energyDistance: "Activate beyond shoreline distance",
     energyStationary: "Activate after stationary",
+    energyAnchorRadius: "Anchor circle",
+    energyAnchorRadiusHint: "Swinging within this radius still counts as stationary.",
     energySection: "Power saving",
     go: "GO",
     noGo: "NO GO",
@@ -498,7 +508,7 @@ export default function ShorelineApp() {
   const [alarmPlayCount, setAlarmPlayCount] = useState(0);
   const [visualSignal, setVisualSignal] = useState<{ kind: VisualSignalKind; sequence: number } | null>(null);
   const [powerSaveWakeUntil, setPowerSaveWakeUntil] = useState(0);
-  const [lastMovementAt, setLastMovementAt] = useState(0);
+  const [stationaryState, setStationaryState] = useState<StationaryState>({ reference: null, lastMovementAt: 0 });
   const watchId = useRef<number | null>(null);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
@@ -661,8 +671,7 @@ export default function ShorelineApp() {
     gpsIsFresh: gpsSignalState === "fresh",
     distanceMetres: nearest?.distance ?? null,
     farDistanceMetres: warningConfig.powerSaveDistanceMetres,
-    speedMetresPerSecond: fix?.speed ?? null,
-    lastMovementAt,
+    lastMovementAt: stationaryState.lastMovementAt,
     stationaryAfterMinutes: warningConfig.powerSaveStationaryMinutes,
     alertActive: insideLimit || activeSpeedViolation || courseRisk.level !== "none" || visualSignal !== null,
     wakeUntil: powerSaveWakeUntil,
@@ -910,7 +919,7 @@ export default function ShorelineApp() {
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
     setPowerSaveWakeUntil(0);
-    setLastMovementAt(0);
+    setStationaryState({ reference: null, lastMovementAt: 0 });
   }, []);
 
   useEffect(() => () => {
@@ -935,7 +944,7 @@ export default function ShorelineApp() {
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
     const startedAt = Date.now();
-    setLastMovementAt(startedAt);
+    setStationaryState({ reference: null, lastMovementAt: startedAt });
     setPowerSaveWakeUntil(0);
     setClockNow(startedAt);
     setTrackingStartedAt(startedAt);
@@ -947,15 +956,16 @@ export default function ShorelineApp() {
     navigator.storage?.persist?.().catch(() => false);
     watchId.current = navigator.geolocation.watchPosition(
       (position) => {
-        if (position.coords.speed !== null && position.coords.speed >= 0.5) setLastMovementAt(position.timestamp);
-        setFix({
+        const nextFix: Fix = {
           longitude: position.coords.longitude,
           latitude: position.coords.latitude,
           accuracy: position.coords.accuracy,
           speed: position.coords.speed,
           heading: position.coords.heading,
           timestamp: position.timestamp,
-        });
+        };
+        setStationaryState((current) => updateStationaryState(current, nextFix, warningConfig.powerSaveAnchorRadiusMetres));
+        setFix(nextFix);
         setTrackingError(null);
       },
       (error) => {
@@ -968,7 +978,7 @@ export default function ShorelineApp() {
       },
       { enableHighAccuracy: true, maximumAge: 1_000, timeout: 15_000 },
     );
-  }, [copy, pack, primeAlarm, requestWakeLock, warningConfig.alertVolumePercent, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
+  }, [copy, pack, primeAlarm, requestWakeLock, warningConfig.alertVolumePercent, warningConfig.powerSaveAnchorRadiusMetres, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
 
   const setDemoFix = useCallback((index: number, timestamp = Date.now()) => {
     if (!pack) return;
@@ -1177,6 +1187,10 @@ export default function ShorelineApp() {
                     <label className="setting-row" htmlFor="power-stationary">
                       <span>{copy.energyStationary}</span>
                       <span className="number-field"><input id="power-stationary" type="number" inputMode="numeric" min="1" max="30" step="1" value={warningConfig.powerSaveStationaryMinutes} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveStationaryMinutes: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>min</b></span>
+                    </label>
+                    <label className="setting-row setting-row-with-hint" htmlFor="power-anchor-radius">
+                      <span><strong>{copy.energyAnchorRadius}</strong><small>{copy.energyAnchorRadiusHint}</small></span>
+                      <span className="number-field"><input id="power-anchor-radius" type="number" inputMode="numeric" min="10" max="200" step="5" value={warningConfig.powerSaveAnchorRadiusMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveAnchorRadiusMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
                     </label>
                   </>
                 )}

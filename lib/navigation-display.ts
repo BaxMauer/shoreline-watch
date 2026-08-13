@@ -1,5 +1,47 @@
 export type GoNoGoState = "go" | "no-go" | "unknown";
 export type PowerSaveReason = "far-shore" | "stationary" | null;
+export type StationaryPosition = {
+  longitude: number;
+  latitude: number;
+  accuracy: number;
+  speed: number | null;
+  timestamp: number;
+};
+export type StationaryState = {
+  reference: StationaryPosition | null;
+  lastMovementAt: number;
+};
+
+const MOVING_SPEED_METRES_PER_SECOND = 0.5;
+
+function distanceBetweenMetres(left: StationaryPosition, right: StationaryPosition) {
+  const earthRadiusMetres = 6_371_000;
+  const latitudeDelta = ((right.latitude - left.latitude) * Math.PI) / 180;
+  const longitudeDelta = ((right.longitude - left.longitude) * Math.PI) / 180;
+  const leftLatitude = (left.latitude * Math.PI) / 180;
+  const rightLatitude = (right.latitude * Math.PI) / 180;
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(leftLatitude) * Math.cos(rightLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+  return earthRadiusMetres * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function updateStationaryState(
+  state: StationaryState,
+  position: StationaryPosition,
+  anchorRadiusMetres: number,
+): StationaryState {
+  if (!state.reference) return { reference: position, lastMovementAt: position.timestamp };
+  if (position.timestamp <= state.reference.timestamp) return state;
+
+  const accuracyAllowance = Math.max(0, state.reference.accuracy, position.accuracy);
+  const outsideAnchorCircle = distanceBetweenMetres(state.reference, position)
+    > Math.max(0, anchorRadiusMetres) + accuracyAllowance;
+  const movingBySpeed = position.speed !== null && position.speed >= MOVING_SPEED_METRES_PER_SECOND;
+
+  return outsideAnchorCircle || movingBySpeed
+    ? { reference: position, lastMovementAt: position.timestamp }
+    : state;
+}
 
 export function getGoNoGoState(
   conservativeDistanceMetres: number | null,
@@ -22,7 +64,6 @@ export function getPowerSaveReason({
   gpsIsFresh,
   distanceMetres,
   farDistanceMetres,
-  speedMetresPerSecond,
   lastMovementAt,
   stationaryAfterMinutes,
   alertActive,
@@ -34,7 +75,6 @@ export function getPowerSaveReason({
   gpsIsFresh: boolean;
   distanceMetres: number | null;
   farDistanceMetres: number;
-  speedMetresPerSecond: number | null;
   lastMovementAt: number;
   stationaryAfterMinutes: number;
   alertActive: boolean;
@@ -43,8 +83,6 @@ export function getPowerSaveReason({
 }): PowerSaveReason {
   if (!enabled || !tracking || !gpsIsFresh || distanceMetres === null || alertActive || wakeUntil > now) return null;
   if (distanceMetres >= farDistanceMetres) return "far-shore";
-  const stationaryLongEnough = speedMetresPerSecond !== null
-    && speedMetresPerSecond < 0.5
-    && now - lastMovementAt >= stationaryAfterMinutes * 60_000;
+  const stationaryLongEnough = now - lastMovementAt >= stationaryAfterMinutes * 60_000;
   return stationaryLongEnough ? "stationary" : null;
 }

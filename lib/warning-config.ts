@@ -11,6 +11,7 @@ export type WarningConfig = {
   powerSaveEnabled: boolean;
   powerSaveDistanceMetres: number;
   powerSaveStationaryMinutes: number;
+  powerSaveAnchorRadiusMetres: number;
 };
 
 export const CROATIA_WARNING_CONFIG: WarningConfig = {
@@ -26,6 +27,7 @@ export const CROATIA_WARNING_CONFIG: WarningConfig = {
   powerSaveEnabled: true,
   powerSaveDistanceMetres: 2_000,
   powerSaveStationaryMinutes: 5,
+  powerSaveAnchorRadiusMetres: 30,
 };
 
 export function sanitizeWarningConfig(value: unknown): WarningConfig {
@@ -46,6 +48,9 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
   const powerSaveStationaryMinutes = typeof candidate.powerSaveStationaryMinutes === "number" && Number.isFinite(candidate.powerSaveStationaryMinutes)
     ? Math.min(30, Math.max(1, Math.round(candidate.powerSaveStationaryMinutes)))
     : CROATIA_WARNING_CONFIG.powerSaveStationaryMinutes;
+  const powerSaveAnchorRadiusMetres = typeof candidate.powerSaveAnchorRadiusMetres === "number" && Number.isFinite(candidate.powerSaveAnchorRadiusMetres)
+    ? Math.min(200, Math.max(10, Math.round(candidate.powerSaveAnchorRadiusMetres / 5) * 5))
+    : CROATIA_WARNING_CONFIG.powerSaveAnchorRadiusMetres;
 
   return {
     distanceMetres,
@@ -53,6 +58,7 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
     alertVolumePercent,
     powerSaveDistanceMetres,
     powerSaveStationaryMinutes,
+    powerSaveAnchorRadiusMetres,
     speedWarningEnabled: typeof candidate.speedWarningEnabled === "boolean" ? candidate.speedWarningEnabled : CROATIA_WARNING_CONFIG.speedWarningEnabled,
     suppressDistanceSoundAtSafeSpeed: typeof candidate.suppressDistanceSoundAtSafeSpeed === "boolean" ? candidate.suppressDistanceSoundAtSafeSpeed : CROATIA_WARNING_CONFIG.suppressDistanceSoundAtSafeSpeed,
     warningSoundEnabled: typeof candidate.warningSoundEnabled === "boolean" ? candidate.warningSoundEnabled : CROATIA_WARNING_CONFIG.warningSoundEnabled,
