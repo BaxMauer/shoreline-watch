@@ -48,3 +48,43 @@ test("offline solar position enables sunlight mode by day, not by night", () => 
   assert.equal(shouldUseSunlightMode(true, summerMidnight, latitude, longitude), false);
   assert.equal(shouldUseSunlightMode(false, summerNoon, latitude, longitude), false);
 });
+
+test("GPS state treats future timestamps as fresh and waits indefinitely before tracking starts", () => {
+  const now = 1_000_000;
+  assert.equal(getGpsSignalState(true, now + 10_000, now, now), "fresh");
+  assert.equal(getGpsSignalState(true, null, null, now + 1_000_000), "waiting");
+});
+
+test("closing-rate calculation filters invalid samples and requires four seconds", () => {
+  assert.equal(calculateClosingRate([
+    { timestamp: 0, distanceMetres: 100 },
+    { timestamp: 1_000, distanceMetres: Number.NaN },
+    { timestamp: 2_000, distanceMetres: 98 },
+  ]), null);
+  assert.equal(calculateClosingRate([
+    { timestamp: 0, distanceMetres: 100 },
+    { timestamp: 1_500, distanceMetres: 99 },
+    { timestamp: 3_999, distanceMetres: 98 },
+  ]), null);
+});
+
+test("closing-rate calculation rejects impossible jumps above 30 metres per second", () => {
+  assert.equal(calculateClosingRate([
+    { timestamp: 0, distanceMetres: 1_000 },
+    { timestamp: 5_000, distanceMetres: 800 },
+    { timestamp: 10_000, distanceMetres: 600 },
+  ]), null);
+});
+
+test("closing classification uses exact quarter-metre-per-second boundaries", () => {
+  assert.equal(classifyClosingRate(0.25), "approaching");
+  assert.equal(classifyClosingRate(0.249), "steady");
+  assert.equal(classifyClosingRate(-0.25), "receding");
+  assert.equal(classifyClosingRate(-0.249), "steady");
+});
+
+test("sunlight mode requires both coordinates", () => {
+  const noon = Date.UTC(2026, 5, 21, 11);
+  assert.equal(shouldUseSunlightMode(true, noon, null, 15.6), false);
+  assert.equal(shouldUseSunlightMode(true, noon, 43.8, null), false);
+});

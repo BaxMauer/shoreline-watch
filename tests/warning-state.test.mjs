@@ -85,3 +85,44 @@ test("unknown speed remains fail-safe and does not silence the warning", () => {
   });
   assert.equal(plan.sound, "warning");
 });
+
+test("first safe position does not emit an alert, but first close position does", () => {
+  assert.equal(getWarningTransition(null, false, null, false), "none");
+  assert.equal(getWarningTransition(null, true, null, false), "enter-distance");
+});
+
+test("leaving the distance zone takes priority over a contradictory speed sample", () => {
+  assert.equal(getWarningTransition(true, false, false, true), "exit-distance");
+});
+
+test("safe-speed suppression is ignored when speed warnings are disabled", () => {
+  const plan = getWarningOutputPlan("enter-distance", {
+    ...OUTPUTS,
+    speedWarningEnabled: false,
+    speedViolation: false,
+    suppressDistanceSoundAtSafeSpeed: true,
+  });
+  assert.equal(plan.sound, "warning");
+});
+
+test("screen and vibration can be disabled without muting warning audio", () => {
+  const plan = getWarningOutputPlan("enter-speed", {
+    ...OUTPUTS,
+    visualAlertsEnabled: false,
+    vibrationEnabled: false,
+  });
+  assert.deepEqual(plan, { sound: "warning", visual: null, vibration: null });
+});
+
+test("safe-water sound does not depend on the warning-alarm switch", () => {
+  const plan = getWarningOutputPlan("exit-distance", {
+    ...OUTPUTS,
+    warningSoundEnabled: false,
+    safeSoundEnabled: true,
+  });
+  assert.equal(plan.sound, "safe");
+});
+
+test("no transition never emits any output", () => {
+  assert.deepEqual(getWarningOutputPlan("none", OUTPUTS), { sound: null, visual: null, vibration: null });
+});

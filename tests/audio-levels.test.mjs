@@ -29,4 +29,23 @@ test("audio gain supports mute through 200 percent without an unbounded value", 
 
 test("invalid audio preference falls back to the reference level", () => {
   assert.equal(getAlertVolumeMultiplier(Number.NaN), 1);
+  assert.equal(getAlertVolumeMultiplier(Number.POSITIVE_INFINITY), 1);
+});
+
+test("generated alert gain scales monotonically from mute to boost", () => {
+  const peaks = [0, 25, 50, 100, 150, 200].map(getGeneratedAlertPeak);
+  assert.equal(peaks[0], 0);
+  for (let index = 1; index < peaks.length; index += 1) assert.ok(peaks[index] > peaks[index - 1]);
+});
+
+test("alarm asset is PCM WAV with a useful duration and sample rate", async () => {
+  const wav = await readFile(new URL("../public/audio/shoreline-alarm.wav", import.meta.url));
+  assert.equal(wav.subarray(0, 4).toString(), "RIFF");
+  assert.equal(wav.subarray(8, 12).toString(), "WAVE");
+  assert.equal(wav.readUInt16LE(20), 1);
+  assert.equal(wav.readUInt16LE(22), 1);
+  assert.equal(wav.readUInt32LE(24), 44_100);
+  const dataOffset = wav.indexOf(Buffer.from("data"));
+  const durationSeconds = wav.readUInt32LE(dataOffset + 4) / (44_100 * 2);
+  assert.ok(durationSeconds >= 1.5 && durationSeconds <= 3);
 });

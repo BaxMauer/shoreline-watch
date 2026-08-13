@@ -47,3 +47,42 @@ test("all output switches preserve an explicit muted state", () => {
   assert.equal(config.visualAlertsEnabled, false);
   assert.equal(config.vibrationEnabled, false);
 });
+
+test("invalid settings object falls back to the complete Croatia preset", () => {
+  assert.deepEqual(sanitizeWarningConfig(null), CROATIA_WARNING_CONFIG);
+  assert.deepEqual(sanitizeWarningConfig("invalid"), CROATIA_WARNING_CONFIG);
+});
+
+test("numeric settings clamp and round to supported control steps", () => {
+  const config = sanitizeWarningConfig({
+    ...CROATIA_WARNING_CONFIG,
+    distanceMetres: 347,
+    maxSpeedKnots: 8.26,
+    alertVolumePercent: 102,
+    powerSaveDistanceMetres: 2_049,
+    powerSaveStationaryMinutes: 4.6,
+    powerSaveAnchorRadiusMetres: 32,
+  });
+  assert.equal(config.distanceMetres, 350);
+  assert.equal(config.maxSpeedKnots, 8.3);
+  assert.equal(config.alertVolumePercent, 100);
+  assert.equal(config.powerSaveDistanceMetres, 2_000);
+  assert.equal(config.powerSaveStationaryMinutes, 5);
+  assert.equal(config.powerSaveAnchorRadiusMetres, 30);
+});
+
+test("distance and speed settings enforce their minimum and maximum", () => {
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, distanceMetres: 0 }).distanceMetres, 50);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, distanceMetres: 9_999 }).distanceMetres, 2_000);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, maxSpeedKnots: 0 }).maxSpeedKnots, 1);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, maxSpeedKnots: 100 }).maxSpeedKnots, 40);
+});
+
+test("every boolean setting preserves an explicit false value", () => {
+  const config = sanitizeWarningConfig(Object.fromEntries(
+    Object.entries(CROATIA_WARNING_CONFIG).map(([key, value]) => [key, typeof value === "boolean" ? false : value]),
+  ));
+  for (const [key, value] of Object.entries(config)) {
+    if (typeof CROATIA_WARNING_CONFIG[key] === "boolean") assert.equal(value, false, key);
+  }
+});

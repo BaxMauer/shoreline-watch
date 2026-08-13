@@ -46,10 +46,12 @@ for (const [theme, selector] of Object.entries(themeSelectors)) {
   });
 }
 
-test("tracking instrument is borderless and coast uses a readable stroke", () => {
+test("tracking instrument is borderless and coast uses a readable dashed stroke", () => {
   assert.match(css, /\.instrument\s*\{[^}]*border-radius:\s*0;/s);
   assert.match(css, /\.instrument\s*\{[^}]*box-shadow:\s*none;/s);
   assert.match(css, /\.shore-segment\s*\{[^}]*stroke-width:\s*3;/s);
+  assert.match(css, /\.shore-segment\s*\{[^}]*stroke-dasharray:\s*8 5/s);
+  assert.match(css, /\.shore-segment\.close\s*\{[^}]*stroke-dasharray:\s*10 4/s);
 });
 
 test("nearest shoreline guide is dashed, subtle, and behind the coast", () => {
@@ -57,6 +59,20 @@ test("nearest shoreline guide is dashed, subtle, and behind the coast", () => {
   assert.match(css, /\.nearest-shore-line\s*\{[^}]*opacity:\s*\.3/s);
   assert.match(app, /className="nearest-shore-line"[\s\S]*x1=\{centre\}[\s\S]*x2=\{nearestPoint\.x\}/);
   assert.ok(app.indexOf('className="nearest-shore-line"') < app.indexOf('className="coast-layer"'));
+  assert.notEqual(css.match(/\.nearest-shore-line\s*\{[^}]*stroke-dasharray:\s*([^;]+)/s)?.[1], "8 5");
+});
+
+test("SVG layers preserve guide, land, warning, course, target, and boat order", () => {
+  const positions = [
+    'className="nearest-shore-line"',
+    'className="coast-layer"',
+    'className="proximity-ring"',
+    'className="course-line"',
+    'className="nearest-point"',
+    'className="map-boat"',
+  ].map((needle) => app.indexOf(needle));
+  assert.ok(positions.every((position) => position >= 0));
+  assert.deepEqual(positions, positions.toSorted((left, right) => left - right));
 });
 
 test("visual alerts include distinct danger and safe-water signals", () => {
@@ -83,4 +99,17 @@ test("GO status and OLED power saver have dedicated high-contrast surfaces", () 
   assert.match(css, /\.go-no-go\.no-go\s*\{[^}]*#ff9b8c/s);
   assert.match(css, /\.power-save-screen\s*\{[^}]*background:\s*#000/s);
   assert.match(css, /\.power-save-active \*\s*\{[^}]*animation-play-state:\s*paused/s);
+});
+
+test("danger, course, and speed states retain visible motion with a reduced-motion fallback", () => {
+  assert.match(css, /\.course-danger \.proximity-ring\s*\{[^}]*ring-breathe/s);
+  assert.match(css, /\.course-danger \.course-line\s*\{[^}]*course-flow/s);
+  assert.match(css, /\.speed-danger \.danger-ring-arc\s*\{[^}]*arc-pulse/s);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*\.01ms/s);
+});
+
+test("tracking view is locked to one viewport while launch settings remain scrollable", () => {
+  assert.match(css, /\.is-tracking\s*\{[^}]*height:\s*100svh/s);
+  assert.match(css, /\.is-tracking\s*\{[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.tracker\s*\{[^}]*minmax\(0, 1fr\)/s);
 });
