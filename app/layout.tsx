@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Shoreline Watch",
-  description: "Live, offline distance to the Croatian shoreline.",
+  description: "Live und offline den Abstand zur kroatischen Küste sehen.",
   other: {
     "codex-preview": "development",
   },
@@ -36,7 +36,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="de" className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

@@ -1,7 +1,8 @@
 {
   "name": "Shoreline Watch",
   "short_name": "Shoreline",
-  "description": "Live, offline distance to the Croatian shoreline.",
+  "description": "Live und offline den Abstand zur kroatischen Küste sehen.",
+  "lang": "de",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#06151b",

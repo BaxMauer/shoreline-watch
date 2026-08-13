@@ -16,6 +16,8 @@ import {
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
 type RiskLevel = "none" | "warning" | "danger";
+type Language = "de" | "en";
+type Theme = "ocean" | "xp" | "dark" | "nautical";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -35,6 +37,111 @@ const SHORELINE_ALARM_METRES = 300;
 const DEMO_DISTANCES = [420, 315, 285, 245, 320, 285];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
+
+const COPY = {
+  de: {
+    online: "Online",
+    offline: "Offline",
+    eyebrow: "Kroatische Küste · Live-GPS",
+    heroTitle: "Abstand im Blick.",
+    intro: "Nächste Küste, ein 300-m-Alarm, vollständig offline verfügbar.",
+    startAria: "Küstenüberwachung starten",
+    coastError: "Küstendaten nicht verfügbar",
+    coastReady: "Kroatische Küste offline bereit",
+    coastLoading: "Kroatische Küste wird geladen",
+    startLive: "Live starten",
+    demo: "Demo",
+    finePrint: "Nur als Navigationshilfe. Amtliche Seekarte verwenden und Ausguck halten.",
+    language: "Sprache",
+    theme: "Design",
+    themeOcean: "Ocean",
+    themeXp: "Windows XP",
+    themeDark: "Dark Mode",
+    themeNautical: "Klassisch nautisch",
+    live: "Live",
+    end: "Beenden",
+    waitingGps: "Warte auf GPS",
+    weakGps: "GPS ungenau",
+    inside300: "Unter 300 m",
+    clear300: "300 m frei",
+    playing: "Wiedergabe",
+    blocked: "Blockiert",
+    ready: "Bereit",
+    notReady: "Nicht bereit",
+    nearestShore: "Nächste Küste",
+    metres: "Meter",
+    kilometres: "Kilometer",
+    acquiring: "Position wird ermittelt",
+    plotAcquiring: "Küstenposition wird ermittelt",
+    plotDistance: (distance: number) => `Nächste Küste ${distance} Meter entfernt`,
+    courseDanger: "Küste auf aktuellem Kurs",
+    courseDangerDetail: (eta: string) => `${eta} bis zur Küste · Kurs prüfen`,
+    courseWarning: "300-m-Grenze auf aktuellem Kurs",
+    courseWarningDetail: (eta: string) => `${eta} bei aktueller Geschwindigkeit`,
+    seconds: "Sek.",
+    minutes: "Min.",
+    shore: "Küste",
+    testAlarm: "Alarm testen",
+    nextPosition: "Nächste Position",
+    soundBlocked: "Ton blockiert — Medienlautstärke erhöhen und Tracking neu starten.",
+    soundMissing: "Alarmton konnte nicht geladen werden — App neu öffnen.",
+    locationUnavailable: "Live-Standort ist in diesem Browser nicht verfügbar.",
+    locationDenied: "Genaue Standortfreigabe erlauben und erneut versuchen.",
+    locationUnknown: "Das Smartphone kann den Standort nicht bestimmen.",
+    locationTimeout: "GPS-Zeitüberschreitung — App sichtbar lassen.",
+  },
+  en: {
+    online: "Online",
+    offline: "Offline",
+    eyebrow: "Croatian coast · live GPS",
+    heroTitle: "Know your margin.",
+    intro: "Nearest shoreline, one 300 m alarm, fully available offline.",
+    startAria: "Start shoreline tracking",
+    coastError: "Coastline data unavailable",
+    coastReady: "Croatia shoreline ready offline",
+    coastLoading: "Loading Croatia shoreline",
+    startLive: "Start live",
+    demo: "Demo",
+    finePrint: "Navigation aid only. Keep an approved chart and normal lookout.",
+    language: "Language",
+    theme: "Theme",
+    themeOcean: "Ocean",
+    themeXp: "Windows XP",
+    themeDark: "Dark mode",
+    themeNautical: "Old-school nautical",
+    live: "Live",
+    end: "End",
+    waitingGps: "Waiting for GPS",
+    weakGps: "Low GPS accuracy",
+    inside300: "Inside 300 m",
+    clear300: "300 m clear",
+    playing: "Playing",
+    blocked: "Blocked",
+    ready: "Ready",
+    notReady: "Not ready",
+    nearestShore: "Nearest shoreline",
+    metres: "metres",
+    kilometres: "kilometres",
+    acquiring: "acquiring",
+    plotAcquiring: "Acquiring shoreline position",
+    plotDistance: (distance: number) => `Nearest shoreline ${distance} metres away`,
+    courseDanger: "Shoreline on current course",
+    courseDangerDetail: (eta: string) => `${eta} to shore · check course`,
+    courseWarning: "300 m mark on current course",
+    courseWarningDetail: (eta: string) => `${eta} at current speed`,
+    seconds: "sec",
+    minutes: "min",
+    shore: "shore",
+    testAlarm: "Test alarm",
+    nextPosition: "Next position",
+    soundBlocked: "Sound blocked — raise media volume, then restart tracking.",
+    soundMissing: "Alarm sound did not load — reopen the app.",
+    locationUnavailable: "Live location is not available in this browser.",
+    locationDenied: "Allow precise location and try again.",
+    locationUnknown: "The phone cannot determine its location.",
+    locationTimeout: "GPS timed out — keep the app visible.",
+  },
+} as const;
 
 function subscribeToConnection(callback: () => void) {
   window.addEventListener("online", callback);
@@ -78,17 +185,18 @@ function scheduleTone(context: AudioContext, start: number, frequency: number) {
   oscillator.stop(start + 0.35);
 }
 
-function formatDistance(distance: number | null) {
+function formatDistance(distance: number | null, language: Language) {
   if (distance === null) return "—";
-  if (distance < 1_000) return Math.round(distance).toLocaleString("en-US");
+  if (distance < 1_000) return Math.round(distance).toLocaleString(language === "de" ? "de-DE" : "en-US");
   return (distance / 1_000).toFixed(distance < 10_000 ? 2 : 1);
 }
 
-function formatEta(seconds: number) {
-  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} sec`;
+function formatEta(seconds: number, language: Language) {
+  const copy = COPY[language];
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} ${copy.seconds}`;
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.round(seconds % 60);
-  return remainder === 60 ? `${minutes + 1} min` : `${minutes}m ${remainder}s`;
+  return remainder === 60 ? `${minutes + 1} ${copy.minutes}` : `${minutes}:${remainder.toString().padStart(2, "0")} ${copy.minutes}`;
 }
 
 function polarPoint(centre: number, radius: number, angle: number) {
@@ -109,6 +217,7 @@ function ProximityPlot({
   courseToShore,
   courseRisk,
   rangeMetres,
+  language,
 }: {
   fix: Fix | null;
   nearest: NearestShore | null;
@@ -116,7 +225,9 @@ function ProximityPlot({
   courseToShore: CourseToShore | null;
   courseRisk: CourseRisk;
   rangeMetres: number;
+  language: Language;
 }) {
+  const copy = COPY[language];
   const size = 360;
   const centre = size / 2;
   const pixelsPerMetre = 146 / rangeMetres;
@@ -164,7 +275,7 @@ function ProximityPlot({
       className="proximity-plot"
       viewBox={`0 0 ${size} ${size}`}
       role="img"
-      aria-label={nearest ? `Nearest shoreline ${Math.round(nearest.distance)} metres away` : "Acquiring shoreline position"}
+      aria-label={nearest ? copy.plotDistance(Math.round(nearest.distance)) : copy.plotAcquiring}
     >
       <defs>
         <radialGradient id="plotGlow">
@@ -222,12 +333,15 @@ function ProximityPlot({
           <path d="M0-14 8.5 10 0 6.5-8.5 10Z" />
           <circle className="boat-centre" cx="0" cy="0" r="2.6" />
         </g>
-      ) : <text className="plot-placeholder" x={centre} y={centre}>ACQUIRING GPS</text>}
+      ) : <text className="plot-placeholder" x={centre} y={centre}>{copy.waitingGps.toUpperCase()}</text>}
     </svg>
   );
 }
 
 export default function ShorelineApp() {
+  const [language, setLanguage] = useState<Language>("de");
+  const [theme, setTheme] = useState<Theme>("ocean");
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [pack, setPack] = useState<CoastlinePack | null>(null);
   const [packError, setPackError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
@@ -244,6 +358,26 @@ export default function ShorelineApp() {
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
   const previousInside300 = useRef<boolean | null>(null);
+  const copy = COPY[language];
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const savedLanguage = window.localStorage.getItem("shoreline-language");
+      const savedTheme = window.localStorage.getItem("shoreline-theme");
+      if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
+      if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
+      setPreferencesLoaded(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    window.localStorage.setItem("shoreline-language", language);
+    window.localStorage.setItem("shoreline-theme", theme);
+    document.documentElement.lang = language;
+    document.documentElement.dataset.theme = theme;
+  }, [language, preferencesLoaded, theme]);
 
   useEffect(() => {
     let refreshing = false;
@@ -298,19 +432,19 @@ export default function ShorelineApp() {
     if (inside300 && secondsToShore <= 300) {
       return {
         level: "danger",
-        label: "Shoreline on current course",
-        detail: `${formatEta(secondsToShore)} to shore · check course`,
+        label: copy.courseDanger,
+        detail: copy.courseDangerDetail(formatEta(secondsToShore, language)),
       };
     }
     if (!inside300 && secondsToMark <= 180) {
       return {
         level: "warning",
-        label: "300 m mark on current course",
-        detail: `${formatEta(secondsToMark)} at current speed`,
+        label: copy.courseWarning,
+        detail: copy.courseWarningDetail(formatEta(secondsToMark, language)),
       };
     }
     return { level: "none", label: "", detail: "" };
-  }, [courseToShore, inside300, isUnderway, speedMetresPerSecond]);
+  }, [copy, courseToShore, inside300, isUnderway, language, speedMetresPerSecond]);
 
   const getAudioContext = useCallback(() => {
     if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
@@ -357,15 +491,15 @@ export default function ShorelineApp() {
     } catch {
       setAlarmArmed(false);
       setAlarmPlayback("blocked");
-      setAlarmError("Sound blocked — raise media volume and tap Test alarm.");
+      setAlarmError(copy.soundBlocked);
       return false;
     }
-  }, []);
+  }, [copy.soundBlocked]);
 
   const soundAlarm = useCallback(async () => {
     const audio = alarmAudio.current;
     if (!audio) {
-      setAlarmError("Alarm sound did not load — reopen the app.");
+      setAlarmError(copy.soundMissing);
       return false;
     }
     try {
@@ -392,10 +526,10 @@ export default function ShorelineApp() {
       }
       setAlarmArmed(false);
       setAlarmPlayback("blocked");
-      setAlarmError("Sound blocked — keep the app visible and tap Test alarm.");
+      setAlarmError(copy.soundBlocked);
       return false;
     }
-  }, [soundWebAudioFallback]);
+  }, [copy.soundBlocked, copy.soundMissing, soundWebAudioFallback]);
 
   useEffect(() => {
     if (mode === "idle" || conservativeDistance === null) return;
@@ -439,7 +573,7 @@ export default function ShorelineApp() {
 
   const startLive = useCallback(async () => {
     if (!pack || !navigator.geolocation) {
-      setTrackingError("Live location is not available in this browser.");
+      setTrackingError(copy.locationUnavailable);
       return;
     }
     void primeAlarm();
@@ -462,15 +596,15 @@ export default function ShorelineApp() {
       },
       (error) => {
         const messages: Record<number, string> = {
-          1: "Allow precise location and try again.",
-          2: "The phone cannot determine its location.",
-          3: "GPS timed out — keep the app visible.",
+          1: copy.locationDenied,
+          2: copy.locationUnknown,
+          3: copy.locationTimeout,
         };
-        setTrackingError(messages[error.code] ?? "Live location is unavailable.");
+        setTrackingError(messages[error.code] ?? copy.locationUnavailable);
       },
       { enableHighAccuracy: true, maximumAge: 1_000, timeout: 15_000 },
     );
-  }, [pack, primeAlarm, requestWakeLock]);
+  }, [copy, pack, primeAlarm, requestWakeLock]);
 
   const setDemoFix = useCallback((index: number) => {
     if (!pack) return;
@@ -502,24 +636,24 @@ export default function ShorelineApp() {
     setDemoFix(next);
   }, [demoIndex, setDemoFix]);
 
-  const distanceUnit = nearest && nearest.distance >= 1_000 ? "kilometres" : "metres";
+  const distanceUnit = nearest && nearest.distance >= 1_000 ? copy.kilometres : copy.metres;
   const statusLabel = !nearest
-    ? "Waiting for GPS"
+    ? copy.waitingGps
     : (fix?.accuracy ?? 0) > 50
-      ? "Low GPS accuracy"
+      ? copy.weakGps
       : inside300
-        ? "Inside 300 m"
-        : "300 m clear";
+        ? copy.inside300
+        : copy.clear300;
   const alarmLabel = alarmPlayback === "playing" || alarmPlayback === "starting"
-    ? "Playing"
+    ? copy.playing
     : alarmPlayback === "blocked"
-      ? "Blocked"
+      ? copy.blocked
       : alarmArmed
-        ? "Ready"
-        : "Test alarm";
+        ? copy.ready
+        : copy.notReady;
 
   return (
-    <main className={`app-shell ${mode !== "idle" ? "is-tracking" : ""}`}>
+    <main className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""}`}>
       <audio
         className="alarm-audio"
         ref={alarmAudio}
@@ -530,7 +664,7 @@ export default function ShorelineApp() {
         onEnded={() => setAlarmPlayback("ready")}
         onError={() => {
           setAlarmPlayback("blocked");
-          setAlarmError("Alarm sound did not load — reopen the app.");
+          setAlarmError(copy.soundMissing);
         }}
       />
 
@@ -541,38 +675,56 @@ export default function ShorelineApp() {
         </div>
         <div className="connection" aria-live="polite">
           <span className={`connection-dot ${online ? "" : "offline"}`} />
-          {online ? "Online" : "Offline"}
+          {online ? copy.online : copy.offline}
         </div>
       </header>
 
       {mode === "idle" ? (
         <>
           <section className="intro">
-            <p className="eyebrow">Croatian coast · live GPS</p>
-            <h1>Know your margin.</h1>
-            <p className="intro-copy">Nearest shoreline, one 300 m alarm, fully available offline.</p>
+            <p className="eyebrow">{copy.eyebrow}</p>
+            <h1>{copy.heroTitle}</h1>
+            <p className="intro-copy">{copy.intro}</p>
           </section>
 
-          <section className="launch-panel" aria-label="Start shoreline tracking">
+          <section className="launch-panel" aria-label={copy.startAria}>
             <div className={`readiness ${packError ? "failed" : ""}`}>
               <span className="readiness-dot" />
-              {packError ? "Coastline data unavailable" : pack ? "Croatia shoreline ready offline" : "Loading Croatia shoreline"}
+              {packError ? copy.coastError : pack ? copy.coastReady : copy.coastLoading}
+            </div>
+            <div className="preferences">
+              <label className="preference-field">
+                <span>{copy.language}</span>
+                <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>
+                  <option value="de">Deutsch</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+              <label className="preference-field">
+                <span>{copy.theme}</span>
+                <select value={theme} onChange={(event) => setTheme(event.target.value as Theme)}>
+                  <option value="ocean">{copy.themeOcean}</option>
+                  <option value="xp">{copy.themeXp}</option>
+                  <option value="dark">{copy.themeDark}</option>
+                  <option value="nautical">{copy.themeNautical}</option>
+                </select>
+              </label>
             </div>
             <div className="launch-actions">
-              <button className="primary-button" disabled={!pack} onClick={startLive}>Start live</button>
-              <button className="secondary-button" disabled={!pack} onClick={startDemo}>Demo</button>
+              <button className="primary-button" disabled={!pack} onClick={startLive}>{copy.startLive}</button>
+              <button className="secondary-button" disabled={!pack} onClick={startDemo}>{copy.demo}</button>
             </div>
-            <p className="fine-print">Navigation aid only. Keep an approved chart and normal lookout.</p>
+            <p className="fine-print">{copy.finePrint}</p>
           </section>
         </>
       ) : (
         <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
           <div className="tracker-head">
-            <span className="trip-mode">{mode === "live" ? "Live" : `Demo ${demoIndex + 1}/${DEMO_DISTANCES.length}`}</span>
-            <button className="text-button" onClick={stopTracking}>End</button>
+            <span className="trip-mode">{mode === "live" ? copy.live : `${copy.demo} ${demoIndex + 1}/${DEMO_DISTANCES.length}`}</span>
+            <button className="text-button" onClick={stopTracking}>{copy.end}</button>
           </div>
 
-          <section className={`instrument ${inside300 ? "inside-limit" : ""} course-${courseRisk.level}`} aria-label="Shoreline distance instrument">
+          <section className={`instrument ${inside300 ? "inside-limit" : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
             <div className={`status-pill ${inside300 ? "danger" : ""} ${!nearest ? "waiting" : ""}`} aria-live="assertive">
               <span />{statusLabel}
             </div>
@@ -581,9 +733,9 @@ export default function ShorelineApp() {
             </div>
 
             <div className="distance-readout">
-              <span>Nearest shoreline</span>
-              <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null)}</strong>
-              <small>{nearest ? distanceUnit : "acquiring"}</small>
+              <span>{copy.nearestShore}</span>
+              <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
+              <small>{nearest ? distanceUnit : copy.acquiring}</small>
             </div>
 
             <ProximityPlot
@@ -593,6 +745,7 @@ export default function ShorelineApp() {
               courseToShore={courseToShore}
               courseRisk={courseRisk}
               rangeMetres={viewRangeMetres}
+              language={language}
             />
 
             <div className="instrument-footer">
@@ -605,7 +758,7 @@ export default function ShorelineApp() {
                 <div className="instrument-meta">
                   <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn</span>
                   <span><strong>{fix ? `±${Math.round(fix.accuracy)}` : "—"}</strong> m GPS</span>
-                  <span><strong>{nearest ? `${Math.round(nearest.bearing)}°` : "—"}</strong> shore</span>
+                  <span><strong>{nearest ? `${Math.round(nearest.bearing)}°` : "—"}</strong> {copy.shore}</span>
                 </div>
               )}
             </div>
@@ -613,13 +766,15 @@ export default function ShorelineApp() {
 
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
 
-          <div className={`tracker-actions ${mode === "demo" ? "with-demo" : ""}`}>
-            <button className="sound-button" onClick={() => void soundAlarm()}>
-              <SoundIcon />
-              <span><strong>Test alarm</strong><small>{alarmLabel}</small></span>
-            </button>
-            {mode === "demo" && <button className="next-button" onClick={advanceDemo}>Next position</button>}
-          </div>
+          {mode === "demo" && (
+            <div className="tracker-actions">
+              <button className="sound-button" onClick={() => void soundAlarm()}>
+                <SoundIcon />
+                <span><strong>{copy.testAlarm}</strong><small>{alarmLabel}</small></span>
+              </button>
+              <button className="next-button" onClick={advanceDemo}>{copy.nextPosition}</button>
+            </div>
+          )}
         </section>
       )}
     </main>
