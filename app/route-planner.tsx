@@ -6,11 +6,14 @@ import {
   formatRouteDistance,
   geoBearing,
   geoDistanceMetres,
-  planWaterRoute,
   type GeoPoint,
   type PlannedRoute,
   type RoutePlanningFailure,
 } from "../lib/route-planning";
+import {
+  RoutePlanningWorkerController,
+  type RoutePlanningWorker,
+} from "../lib/route-planning-worker";
 import {
   canPlanRoute,
   clampCruiseSpeed,
@@ -33,6 +36,7 @@ import type { WarningConfig } from "../lib/warning-config";
 
 type Language = "de" | "en";
 type Fix = GeoPoint & { speed: number | null; accuracy?: number };
+type RoutePlannerFailure = RoutePlanningFailure | "calculation-failed";
 
 const COPY = {
   de: {
@@ -70,6 +74,7 @@ const COPY = {
       "destination-on-land": "Das gewählte Ziel liegt laut Küstengeometrie an Land. Bitte ins Wasser tippen.",
       "too-far": "Das Ziel ist für eine einzelne Offline-Route zu weit entfernt.",
       "no-route": "Keine durchgehende Wasserroute gefunden. Bitte Zielpunkt oder Küstenabstand ändern.",
+      "calculation-failed": "Die Routenberechnung ist fehlgeschlagen. Bitte erneut versuchen.",
     },
     mapLabel: "Offline-Karte zur Auswahl des Routenziels",
     mapHint: "Ziehen zum Verschieben · zwei Finger zum Zoomen · tippen setzt das Ziel",
@@ -114,6 +119,7 @@ const COPY = {
       "destination-on-land": "The selected destination is on land according to the shoreline geometry. Tap in the water.",
       "too-far": "The destination is too far for one offline route.",
       "no-route": "No continuous water route found. Change the target or shoreline clearance.",
+      "calculation-failed": "Route calculation failed. Please try again.",
     },
     mapLabel: "Offline map for choosing a route destination",
     mapHint: "Drag to pan · pinch to zoom · tap to set target",
@@ -142,7 +148,7 @@ export default function RoutePlanner({
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
   const [target, setTarget] = useState<GeoPoint | null>(null);
   const [route, setRoute] = useState<PlannedRoute | null>(null);
-  const [failure, setFailure] = useState<RoutePlanningFailure | null>(null);
+  const [failure, setFailure] = useState<RoutePlannerFailure | null>(null);
   const [planning, setPlanning] = useState(false);
   const [viewRangeMetres, setViewRangeMetres] = useState(20_000);
   const [viewCentre, setViewCentre] = useState<GeoPoint | null>(null);
@@ -150,7 +156,7 @@ export default function RoutePlanner({
   const [coordinateLatitude, setCoordinateLatitude] = useState("");
   const [coordinateLongitude, setCoordinateLongitude] = useState("");
   const plannedFrom = useRef<GeoPoint | null>(null);
-  const calculationSequence = useRef(0);
+  const routeWorker = useRef<RoutePlanningWorkerController | null>(null);
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const mapGesture = useRef<{
     centre: GeoPoint;
@@ -160,32 +166,53 @@ export default function RoutePlanner({
     moved: boolean;
   } | null>(null);
 
+  useEffect(() => {
+    const controller = new RoutePlanningWorkerController(() => new Worker(
+      new URL("../workers/route-planning.worker.ts", import.meta.url),
+      { type: "module", name: "shoreline-route-planning" },
+    ) as RoutePlanningWorker);
+    routeWorker.current = controller;
+    return () => {
+      controller.dispose();
+      if (routeWorker.current === controller) routeWorker.current = null;
+    };
+  }, []);
+
   const calculate = useCallback((destination: GeoPoint, startOverride?: Fix) => {
     const start = startOverride ?? fix;
-    if (!pack || !start || !canPlanRoute(gpsNavigationState, start)) return;
-    const sequence = ++calculationSequence.current;
+    const controller = routeWorker.current;
+    if (!controller || !pack || !start || !canPlanRoute(gpsNavigationState, start)) return;
     setPlanning(true);
     setFailure(null);
-    window.setTimeout(() => {
-      if (sequence !== calculationSequence.current) return;
-      const result = planWaterRoute(pack, start, destination, {
+    controller.calculate({
+      pack,
+      start,
+      destination,
+      options: {
         clearanceMetres: warningConfig.distanceMetres,
         cruiseSpeedKnots,
         speedWarningEnabled: warningConfig.speedWarningEnabled,
         nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
         startAccuracyMetres: start.accuracy,
-      });
-      if (sequence !== calculationSequence.current) return;
-      setRoute(result.route ?? null);
-      setFailure(result.failure ?? null);
-      plannedFrom.current = start;
-      setPlanning(false);
-    }, 30);
+      },
+    }, {
+      onResult: (result) => {
+        setRoute(result.route ?? null);
+        setFailure(result.failure ?? null);
+        plannedFrom.current = start;
+        setPlanning(false);
+      },
+      onError: () => {
+        setRoute(null);
+        setFailure("calculation-failed");
+        setPlanning(false);
+      },
+    });
   }, [cruiseSpeedKnots, fix, gpsNavigationState, pack, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   useEffect(() => {
     if (gpsReliable) return;
-    calculationSequence.current += 1;
+    routeWorker.current?.cancel();
   }, [gpsReliable]);
 
   const selectTarget = useCallback((destination: GeoPoint) => {
@@ -346,7 +373,7 @@ export default function RoutePlanner({
   };
 
   const reset = () => {
-    calculationSequence.current += 1;
+    routeWorker.current?.cancel();
     setTarget(null);
     setRoute(null);
     setFailure(null);
