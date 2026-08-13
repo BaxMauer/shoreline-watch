@@ -29,7 +29,7 @@ export const metadata: Metadata = {
       { url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
     ],
   },
-  manifest: "/manifest.webmanifest",
+  manifest: "/manifest.webmanifest?v=11",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
