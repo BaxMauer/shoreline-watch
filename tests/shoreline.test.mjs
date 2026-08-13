@@ -5,6 +5,7 @@ import {
   distanceToSegment,
   findCourseToShore,
   findNearestShore,
+  getLandIntervalsAtLatitude,
   getNearbyShorelineSegments,
   offsetFromShore,
 } from "../lib/shoreline.ts";
@@ -24,6 +25,62 @@ const SYNTHETIC_PACK = {
     "0:0": [0, 0, 0.1, 0, 0, 0, 0.1, 0],
   },
 };
+
+const LAND_PACK = {
+  ...SYNTHETIC_PACK,
+  cellSize: 10,
+  bounds: [0, 0, 3, 4],
+  segmentCount: 5,
+  cells: {
+    "0:0": [
+      1, 1, 2, 1,
+      2, 1, 2, 2,
+      2, 2, 1, 2,
+      1, 2, 1, 1,
+      3, 0, 3, 4,
+    ],
+  },
+};
+
+test("land scanline fills an island interior and mainland while leaving water clear", () => {
+  assert.deepEqual(getLandIntervalsAtLatitude(LAND_PACK, 1.5, 0, 4), [[1, 2], [3, 4]]);
+  assert.deepEqual(getLandIntervalsAtLatitude(LAND_PACK, 0.5, 0, 4), [[3, 4]]);
+});
+
+test("land scanline preserves bays and channels between separate coast crossings", () => {
+  const bayPack = {
+    ...LAND_PACK,
+    segmentCount: 3,
+    cells: { "0:0": [1, 0, 1, 4, 2, 0, 2, 4, 3, 0, 3, 4] },
+  };
+  assert.deepEqual(getLandIntervalsAtLatitude(bayPack, 1.5, 0, 4), [[1, 2], [3, 4]]);
+});
+
+test("land scanline handles a tangent without falsely turning water into land", () => {
+  const tangentPack = {
+    ...LAND_PACK,
+    bounds: [0, 0, 2, 3],
+    segmentCount: 2,
+    cells: { "0:0": [1.5, 1, 1, 2, 1.5, 1, 2, 2] },
+  };
+  assert.deepEqual(getLandIntervalsAtLatitude(tangentPack, 1, 0, 3), []);
+});
+
+test("land scanline de-duplicates repeated and reversed indexed segments", () => {
+  const duplicatePack = {
+    ...LAND_PACK,
+    bounds: [0, 0, 1, 4],
+    segmentCount: 1,
+    cells: { "0:0": [1, 0, 1, 4, 1, 0, 1, 4, 1, 4, 1, 0] },
+  };
+  assert.deepEqual(getLandIntervalsAtLatitude(duplicatePack, 2, 0, 3), [[1, 3]]);
+});
+
+test("land scanline rejects invalid windows and latitudes outside the coastline pack", () => {
+  assert.deepEqual(getLandIntervalsAtLatitude(LAND_PACK, -1, 0, 4), []);
+  assert.deepEqual(getLandIntervalsAtLatitude(LAND_PACK, 1, 4, 0), []);
+  assert.deepEqual(getLandIntervalsAtLatitude(LAND_PACK, Number.NaN, 0, 4), []);
+});
 
 test("point-to-segment distance is measured in metres", () => {
   const result = distanceToSegment(15, 44.001, [14.99, 44, 15.01, 44]);

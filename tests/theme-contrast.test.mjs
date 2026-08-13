@@ -63,6 +63,9 @@ test("land is hatched, clipped to the plot, and painted as one background path",
   assert.match(app, /landHatchPath && <path className="land-hatch-area" d=\{landHatchPath\}/);
   assert.match(css, /\.land-hatch-area\s*\{[^}]*fill:\s*url\(#landHatch\)/s);
   assert.match(css, /\.land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)/s);
+  assert.match(app, /getLandIntervalsAtLatitude\(pack, latitude, minimumLongitude, maximumLongitude\)/);
+  assert.match(app, /const bandHeight = 4/);
+  assert.doesNotMatch(app, /getLandHatchPolygon/);
   assert.equal((app.match(/className="land-hatch-area"/g) ?? []).length, 1);
 });
 

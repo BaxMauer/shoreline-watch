@@ -26,8 +26,97 @@ export type CourseToShore = {
   longitude: number;
   latitude: number;
 };
+export type LongitudeInterval = readonly [number, number];
 
 const METRES_PER_LATITUDE_DEGREE = 110_540;
+const MAX_CACHED_SCANLINE_ROWS = 8;
+const scanlineRowCache = new WeakMap<CoastlinePack, Map<number, ShorelineSegment[]>>();
+
+function getScanlineRowSegments(pack: CoastlinePack, cellY: number) {
+  let rows = scanlineRowCache.get(pack);
+  if (!rows) {
+    rows = new Map();
+    scanlineRowCache.set(pack, rows);
+  }
+  const cached = rows.get(cellY);
+  if (cached) {
+    rows.delete(cellY);
+    rows.set(cellY, cached);
+    return cached;
+  }
+
+  const firstCellX = Math.floor(pack.bounds[0] / pack.cellSize);
+  const lastCellX = Math.floor(pack.bounds[2] / pack.cellSize);
+  const seen = new Set<string>();
+  const segments: ShorelineSegment[] = [];
+
+  for (let cellX = firstCellX; cellX <= lastCellX; cellX += 1) {
+    const values = pack.cells[`${cellX}:${cellY}`];
+    if (!values) continue;
+    for (let index = 0; index < values.length; index += 4) {
+      const segment: ShorelineSegment = [
+        values[index],
+        values[index + 1],
+        values[index + 2],
+        values[index + 3],
+      ];
+      const forward = segment.join(":");
+      const reverse = [segment[2], segment[3], segment[0], segment[1]].join(":");
+      const key = forward < reverse ? forward : reverse;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      segments.push(segment);
+    }
+  }
+
+  rows.set(cellY, segments);
+  if (rows.size > MAX_CACHED_SCANLINE_ROWS) rows.delete(rows.keys().next().value as number);
+  return segments;
+}
+
+export function getLandIntervalsAtLatitude(
+  pack: CoastlinePack,
+  latitude: number,
+  minimumLongitude: number,
+  maximumLongitude: number,
+): LongitudeInterval[] {
+  if (![latitude, minimumLongitude, maximumLongitude, pack.cellSize].every(Number.isFinite)) return [];
+  if (pack.cellSize <= 0 || minimumLongitude >= maximumLongitude) return [];
+  if (latitude < pack.bounds[1] || latitude > pack.bounds[3]) return [];
+
+  const cellY = Math.floor(latitude / pack.cellSize);
+  const intersections: number[] = [];
+
+  for (const [longitude1, latitude1, longitude2, latitude2] of getScanlineRowSegments(pack, cellY)) {
+    // Half-open ray casting counts a shared vertex once and a tangent twice,
+    // preserving the correct water/land parity without assembling rings.
+    if ((latitude1 > latitude) === (latitude2 > latitude)) continue;
+    const position = (latitude - latitude1) / (latitude2 - latitude1);
+    const crossing = longitude1 + (longitude2 - longitude1) * position;
+    if (crossing <= maximumLongitude + 0.000001) intersections.push(crossing);
+  }
+
+  intersections.sort((left, right) => left - right);
+  const intervals: LongitudeInterval[] = [];
+  let land = false;
+  let previousCrossing = pack.bounds[0] - pack.cellSize;
+
+  for (const crossing of intersections) {
+    if (land) {
+      const start = Math.max(previousCrossing, minimumLongitude);
+      const end = Math.min(crossing, maximumLongitude);
+      if (end > start) intervals.push([start, end]);
+    }
+    land = !land;
+    previousCrossing = crossing;
+  }
+
+  if (land) {
+    const start = Math.max(previousCrossing, minimumLongitude);
+    if (maximumLongitude > start) intervals.push([start, maximumLongitude]);
+  }
+  return intervals;
+}
 
 export function distanceToSegment(
   longitude: number,

@@ -9,6 +9,7 @@ import {
   distanceToSegment,
   findCourseToShore,
   findNearestShore,
+  getLandIntervalsAtLatitude,
   getNearbyShorelineSegments,
   offsetFromShore,
 } from "../lib/shoreline";
@@ -18,7 +19,6 @@ import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import {
   getGoNoGoState,
-  getLandHatchPolygon,
   getPlotRangeMetres,
   getPowerSaveReason,
   updateStationaryState,
@@ -359,6 +359,7 @@ function ringArc(centre: number, radius: number, startAngle: number, endAngle: n
 }
 
 function ProximityPlot({
+  pack,
   fix,
   nearest,
   segments,
@@ -368,6 +369,7 @@ function ProximityPlot({
   warningDistanceMetres,
   language,
 }: {
+  pack: CoastlinePack | null;
   fix: Fix | null;
   nearest: NearestShore | null;
   segments: ShorelineSegment[];
@@ -421,21 +423,27 @@ function ProximityPlot({
   }, [fix, metresPerLatitudeDegree, segments, warningDistanceMetres]);
 
   const landHatchPath = useMemo(() => {
-    if (!fix) return "";
-    return segments.map((segment) => {
-      const start = {
-        x: centre + (segment[0] - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
-        y: centre - (segment[1] - fix.latitude) * metresPerLatitudeDegree * pixelsPerMetre,
-      };
-      const end = {
-        x: centre + (segment[2] - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
-        y: centre - (segment[3] - fix.latitude) * metresPerLatitudeDegree * pixelsPerMetre,
-      };
-      const polygon = getLandHatchPolygon(start, end, { x: centre, y: centre });
-      if (!polygon) return "";
-      return `${polygon.map(({ x, y }, index) => `${index === 0 ? "M" : "L"}${x} ${y}`).join("")}Z`;
-    }).join("");
-  }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pixelsPerMetre, segments]);
+    if (!fix || !pack) return "";
+    const bandHeight = 4;
+    const minimumLongitude = fix.longitude - centre / (metresPerLongitudeDegree * pixelsPerMetre);
+    const maximumLongitude = fix.longitude + centre / (metresPerLongitudeDegree * pixelsPerMetre);
+    let path = "";
+
+    for (let y = 0; y < size; y += bandHeight) {
+      const sampleY = y + bandHeight / 2;
+      const latitude = fix.latitude + (centre - sampleY) / (metresPerLatitudeDegree * pixelsPerMetre);
+      const intervals = getLandIntervalsAtLatitude(pack, latitude, minimumLongitude, maximumLongitude);
+      const top = Math.max(0, y - 0.25);
+      const bottom = Math.min(size, y + bandHeight + 0.25);
+
+      for (const [west, east] of intervals) {
+        const left = Math.max(0, centre + (west - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        const right = Math.min(size, centre + (east - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        if (right > left) path += `M${left} ${top}H${right}V${bottom}H${left}Z`;
+      }
+    }
+    return path;
+  }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pack, pixelsPerMetre, size]);
 
   return (
     <svg
@@ -1281,6 +1289,7 @@ export default function ShorelineApp() {
             </div>
 
             <ProximityPlot
+              pack={pack}
               fix={fix}
               nearest={nearest}
               segments={nearbySegments}
