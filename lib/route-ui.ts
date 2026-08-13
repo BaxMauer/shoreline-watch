@@ -7,6 +7,11 @@ export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
 
 export type RouteReadinessState = "waiting" | "calculating" | "check" | "ready";
+export type RouteGuidanceProjection = {
+  progressMetres: number;
+  distanceToRouteMetres: number;
+  target: GeoPoint;
+};
 
 export function canPlanRoute(gpsNavigationState: GpsNavigationState, fix: GeoPoint | null) {
   return gpsNavigationState === "reliable" && fix !== null;
@@ -72,6 +77,85 @@ export function routeRerouteThreshold(clearanceMetres: number) {
 
 export function shouldRerouteRoute(plannedFrom: GeoPoint | null, current: GeoPoint, clearanceMetres: number) {
   return plannedFrom !== null && geoDistanceMetres(plannedFrom, current) >= routeRerouteThreshold(clearanceMetres);
+}
+
+function routeLocalPoint(point: GeoPoint, origin: GeoPoint) {
+  return {
+    x: (point.longitude - origin.longitude) * mapLongitudeScale(origin.latitude),
+    y: (point.latitude - origin.latitude) * 110_540,
+  };
+}
+
+function routePointAtProgress(points: GeoPoint[], segmentLengths: number[], progressMetres: number) {
+  let elapsed = 0;
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const length = segmentLengths[index];
+    if (progressMetres <= elapsed + length || index === segmentLengths.length - 1) {
+      const position = length > 0 ? Math.max(0, Math.min(1, (progressMetres - elapsed) / length)) : 0;
+      return {
+        longitude: points[index].longitude + (points[index + 1].longitude - points[index].longitude) * position,
+        latitude: points[index].latitude + (points[index + 1].latitude - points[index].latitude) * position,
+      };
+    }
+    elapsed += length;
+  }
+  return points.at(-1) as GeoPoint;
+}
+
+/**
+ * Projects the current position onto the untraversed route and returns a
+ * look-ahead point. minimumProgressMetres makes progress monotonic across GPS
+ * updates, so a nearby waypoint that has already been passed cannot pull the
+ * displayed course backward.
+ */
+export function getProgressAwareRouteGuidance(
+  points: GeoPoint[],
+  current: GeoPoint,
+  minimumProgressMetres = 0,
+  lookAheadMetres = 120,
+): RouteGuidanceProjection | null {
+  if (points.length < 2) return null;
+  const segmentLengths = points.slice(0, -1).map((point, index) => geoDistanceMetres(point, points[index + 1]));
+  const totalLength = segmentLengths.reduce((total, length) => total + length, 0);
+  if (!Number.isFinite(totalLength) || totalLength <= 0) return null;
+  const minimumProgress = Math.max(0, Math.min(totalLength, Number.isFinite(minimumProgressMetres) ? minimumProgressMetres : 0));
+  const lookAhead = Math.max(0, Number.isFinite(lookAheadMetres) ? lookAheadMetres : 0);
+  let elapsed = 0;
+  let bestProgress = minimumProgress;
+  let bestDistanceSquared = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const length = segmentLengths[index];
+    const segmentEnd = elapsed + length;
+    if (length <= 0 || segmentEnd < minimumProgress) {
+      elapsed = segmentEnd;
+      continue;
+    }
+    const start = routeLocalPoint(points[index], current);
+    const end = routeLocalPoint(points[index + 1], current);
+    const deltaX = end.x - start.x;
+    const deltaY = end.y - start.y;
+    const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    const projected = lengthSquared > 0 ? -(start.x * deltaX + start.y * deltaY) / lengthSquared : 0;
+    const minimumPosition = Math.max(0, Math.min(1, (minimumProgress - elapsed) / length));
+    const position = Math.max(minimumPosition, Math.min(1, projected));
+    const offsetX = start.x + deltaX * position;
+    const offsetY = start.y + deltaY * position;
+    const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+    const progress = elapsed + length * position;
+    if (distanceSquared < bestDistanceSquared || (distanceSquared === bestDistanceSquared && progress > bestProgress)) {
+      bestDistanceSquared = distanceSquared;
+      bestProgress = progress;
+    }
+    elapsed = segmentEnd;
+  }
+
+  const targetProgress = Math.min(totalLength, Math.max(minimumProgress, bestProgress) + lookAhead);
+  return {
+    progressMetres: Math.max(minimumProgress, bestProgress),
+    distanceToRouteMetres: Math.sqrt(bestDistanceSquared),
+    target: routePointAtProgress(points, segmentLengths, targetProgress),
+  };
 }
 
 function mapLongitudeScale(latitude: number) {

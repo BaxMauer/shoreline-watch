@@ -5,7 +5,6 @@ import { getLandIntervalsAtLatitude, getNearbyShorelineSegments, type CoastlineP
 import {
   formatRouteDistance,
   geoBearing,
-  geoDistanceMetres,
   type GeoPoint,
   type PlannedRoute,
   type RoutePlanningFailure,
@@ -20,6 +19,7 @@ import {
   clampRouteViewRange,
   formatRouteClearance,
   formatRouteEta,
+  getProgressAwareRouteGuidance,
   getRouteReadinessState,
   parseRouteCoordinate,
   panRouteMapCentre,
@@ -270,10 +270,10 @@ export default function RoutePlanner({
   const routePoints = route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "";
   const boatPoint = fix ? point(fix) : null;
   const targetPoint = target ? point(target) : null;
-  const nextRoutePoint = route && fix
-    ? route.points.find((candidate, index) => index > 0 && geoDistanceMetres(fix, candidate) > 120) ?? target
-    : null;
-  const nextBearing = gpsReliable && fix && nextRoutePoint ? geoBearing(fix, nextRoutePoint) : null;
+  const routeGuidance = useMemo(() => route && fix
+    ? getProgressAwareRouteGuidance(route.points, fix)
+    : null, [fix, route]);
+  const nextBearing = gpsReliable && fix && routeGuidance ? geoBearing(fix, routeGuidance.target) : null;
   const routeReadiness = getRouteReadinessState({
     gpsNavigationState,
     planning,
