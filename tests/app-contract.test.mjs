@@ -93,6 +93,7 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /clearanceMetres: warningConfig\.distanceMetres/);
   assert.match(planner, /speedWarningEnabled: warningConfig\.speedWarningEnabled/);
   assert.match(planner, /nearShoreSpeedKnots: warningConfig\.maxSpeedKnots/);
+  assert.match(planner, /startAccuracyMetres: start\.accuracy/);
   assert.match(planner, /route\.mode === "clearance"/);
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
@@ -163,4 +164,6 @@ test("route planning copy covers German and English instructions and every failu
   for (const failure of ["outside-region", "destination-on-land", "too-far", "no-route"]) {
     assert.equal((planner.match(new RegExp(`"${failure}"`, "g")) ?? []).length, 2, failure);
   }
+  assert.doesNotMatch(planner, /Keine durchgehende Wasserroute gefunden\. Ziel oder Zoom ändern/);
+  assert.doesNotMatch(planner, /No continuous water route found\. Change the target or zoom/);
 });

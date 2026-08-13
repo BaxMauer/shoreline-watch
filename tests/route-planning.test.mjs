@@ -8,6 +8,7 @@ import {
   geoBearing,
   geoDistanceMetres,
   planWaterRoute,
+  routeSegmentCrossesShoreline,
 } from "../lib/route-planning.ts";
 
 const ISLAND_PACK = {
@@ -70,6 +71,20 @@ const NARROW_PASSAGE_PACK = {
   },
 };
 
+const LONG_PENINSULA_PACK = {
+  ...ISLAND_PACK,
+  region: "Long peninsula detour",
+  segmentCount: 4,
+  cells: {
+    "0:0": [
+      0.045, 0.015, 0.055, 0.015,
+      0.055, 0.015, 0.055, 0.085,
+      0.055, 0.085, 0.045, 0.085,
+      0.045, 0.085, 0.045, 0.015,
+    ],
+  },
+};
+
 test("land classification distinguishes island, mainland, and open water", () => {
   assert.equal(isPointOnLand(ISLAND_PACK, 0.05, 0.05), true);
   assert.equal(isPointOnLand(ISLAND_PACK, 0.095, 0.05), true);
@@ -104,6 +119,38 @@ test("a destination on land is rejected before a route is advertised", () => {
 test("a completely blocked waterway returns no route instead of crossing land", () => {
   assert.deepEqual(
     planWaterRoute(BLOCKED_CHANNEL_PACK, { longitude: 0.03, latitude: 0.05 }, { longitude: 0.07, latitude: 0.05 }, OPTIONS),
+    { failure: "no-route" },
+  );
+});
+
+test("expanded routing leaves the direct corridor to get around a long peninsula", () => {
+  const start = { longitude: 0.03, latitude: 0.05 };
+  const destination = { longitude: 0.07, latitude: 0.05 };
+  const result = planWaterRoute(LONG_PENINSULA_PACK, start, destination, OPTIONS);
+  assert.ok(result.route, result.failure);
+  assert.ok(result.route.distanceMetres > geoDistanceMetres(start, destination) * 1.7);
+  assert.ok(result.route.points.some((point) => point.latitude < 0.015 || point.latitude > 0.085));
+  for (let index = 1; index < result.route.points.length; index += 1) {
+    assert.equal(routeSegmentCrossesShoreline(LONG_PENINSULA_PACK, result.route.points[index - 1], result.route.points[index]), false);
+  }
+});
+
+test("a coastal GPS fix just inside the chart can make one short outward correction", () => {
+  const start = { longitude: 0.0451, latitude: 0.05 };
+  const destination = { longitude: 0.03, latitude: 0.05 };
+  assert.equal(isPointOnLand(ISLAND_PACK, start.longitude, start.latitude), true);
+  const result = planWaterRoute(ISLAND_PACK, start, destination, { ...OPTIONS, startAccuracyMetres: 12 });
+  assert.ok(result.route, result.failure);
+  assert.equal(result.route.mode, "restricted");
+  assert.ok(geoDistanceMetres(result.route.points[0], result.route.points[1]) <= 120);
+  for (let index = 2; index < result.route.points.length; index += 1) {
+    assert.equal(routeSegmentCrossesShoreline(ISLAND_PACK, result.route.points[index - 1], result.route.points[index]), false);
+  }
+});
+
+test("start-fix recovery cannot tunnel from deep inside land", () => {
+  assert.deepEqual(
+    planWaterRoute(ISLAND_PACK, { longitude: 0.05, latitude: 0.05 }, { longitude: 0.03, latitude: 0.05 }, { ...OPTIONS, startAccuracyMetres: 5 }),
     { failure: "no-route" },
   );
 });
@@ -243,5 +290,25 @@ test("the bundled Croatia chart produces a water-only route with configured clea
         start.latitude + (end.latitude - start.latitude) * position,
       ), false);
     }
+  }
+});
+
+test("the bundled Croatia chart routes around the Murter island chain instead of reporting a false blockage", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const start = { longitude: 15.61, latitude: 43.72 };
+  const destination = { longitude: 15.65, latitude: 43.82 };
+  const startedAt = performance.now();
+  const result = planWaterRoute(croatiaPack, start, destination, {
+    ...OPTIONS,
+    clearanceMetres: 300,
+    startAccuracyMetres: 12,
+  });
+  assert.ok(result.route, result.failure);
+  assert.ok(performance.now() - startedAt < 5_000, "route calculation must remain interactive on a phone");
+  assert.equal(result.route.mode, "restricted");
+  assert.ok(result.route.distanceMetres > geoDistanceMetres(start, destination) * 1.7);
+  assert.ok(result.route.distanceMetres < 30_000);
+  for (let index = 1; index < result.route.points.length; index += 1) {
+    assert.equal(routeSegmentCrossesShoreline(croatiaPack, result.route.points[index - 1], result.route.points[index]), false);
   }
 });

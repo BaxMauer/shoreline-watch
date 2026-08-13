@@ -26,7 +26,7 @@ import {
 import type { WarningConfig } from "../lib/warning-config";
 
 type Language = "de" | "en";
-type Fix = GeoPoint & { speed: number | null };
+type Fix = GeoPoint & { speed: number | null; accuracy?: number };
 
 const COPY = {
   de: {
@@ -59,7 +59,7 @@ const COPY = {
       "outside-region": "Ziel liegt außerhalb der verfügbaren Kroatien-Karte.",
       "destination-on-land": "Das gewählte Ziel liegt an Land. Bitte ins Wasser tippen.",
       "too-far": "Das Ziel ist für eine einzelne Offline-Route zu weit entfernt.",
-      "no-route": "Keine durchgehende Wasserroute gefunden. Ziel oder Zoom ändern.",
+      "no-route": "Keine durchgehende Wasserroute gefunden. Bitte Zielpunkt oder Küstenabstand ändern.",
     },
     mapLabel: "Offline-Karte zur Auswahl des Routenziels",
     mapHint: "Ziehen zum Verschieben · zwei Finger zum Zoomen · tippen setzt das Ziel",
@@ -99,7 +99,7 @@ const COPY = {
       "outside-region": "The destination is outside the available Croatia chart.",
       "destination-on-land": "The selected destination is on land. Tap in the water.",
       "too-far": "The destination is too far for one offline route.",
-      "no-route": "No continuous water route found. Change the target or zoom.",
+      "no-route": "No continuous water route found. Change the target or shoreline clearance.",
     },
     mapLabel: "Offline map for choosing a route destination",
     mapHint: "Drag to pan · pinch to zoom · tap to set target",
@@ -145,7 +145,7 @@ export default function RoutePlanner({
     moved: boolean;
   } | null>(null);
 
-  const calculate = useCallback((destination: GeoPoint, startOverride?: GeoPoint) => {
+  const calculate = useCallback((destination: GeoPoint, startOverride?: Fix) => {
     const start = startOverride ?? fix;
     if (!pack || !start) return;
     const sequence = ++calculationSequence.current;
@@ -158,6 +158,7 @@ export default function RoutePlanner({
         cruiseSpeedKnots,
         speedWarningEnabled: warningConfig.speedWarningEnabled,
         nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
+        startAccuracyMetres: start.accuracy,
       });
       if (sequence !== calculationSequence.current) return;
       setRoute(result.route ?? null);
