@@ -10,17 +10,24 @@ Last reviewed: 2026-08-13
 - [ ] **CI is required before merge.**
   - Acceptance: every pull request runs lint, typecheck, tests, a production
     build, and artifact validation; failed or missing checks prevent merge.
-  - In progress: the CI workflow is part of the CI/deployment setup change.
+  - Workflow complete: pull requests run all required validation plus a
+    production dependency audit.
+  - Blocked: GitHub must enforce the required check through the `main` ruleset;
+    see `.github/REPOSITORY_SETTINGS.md`.
 - [ ] **Successful `main` builds deploy automatically to the existing Site.**
   - Acceptance: a successful CI run on `main` creates an immutable production
     candidate, deploys it to Sites without manual source handling, and verifies
     the resulting production status and URL.
-  - In progress: GitHub packages and marks the candidate. The Sites production
-    handoff still needs a durable, supported trigger because Sites exposes only
-    short-lived source credentials to the current editing session.
+  - In progress: GitHub packages and marks the exact candidate with an immutable
+    provenance manifest. The hourly Sites deployment watch performs the
+    credentialed handoff; acceptance remains open until a newer candidate has
+    completed that path automatically in production.
 - [ ] **Repository merge policy is enforced.**
   - Acceptance: required checks are configured, auto-merge is enabled, direct
     unverified changes to `main` are prevented, and merged branches are deleted.
+  - Blocked: the installed GitHub integration cannot mutate repository settings,
+    and the current private-repository plan rejects ruleset creation. The exact
+    owner settings are recorded in `.github/REPOSITORY_SETTINGS.md`.
 - [ ] **Weak GPS accuracy cannot produce `GO`.**
   - Acceptance: fixes worse than the agreed accuracy threshold produce an
     explicit unknown/check state in both distance and route modes, with boundary
@@ -77,16 +84,20 @@ Last reviewed: 2026-08-13
   assets, and application code.
 - [ ] Replace atomic caching of the full large dataset with a resilient update
   strategy and test partial-download recovery.
-- [ ] Make build/test helpers portable to macOS or clearly separate Linux-only
+- [x] Make build/test helpers portable to macOS or clearly separate Linux-only
   CI wrappers from developer commands.
-- [ ] Add dependency update and security scanning with an explicit policy for
+- [x] Add dependency update and security scanning with an explicit policy for
   blocking vulnerabilities.
 - [ ] Split the largest UI and routing modules after the safety behavior is
   covered by tests.
 - [ ] Remove unused starter/auth/database/example assets and dependencies.
-- [ ] Update the README to describe routing, current safety scope, offline
+- [x] Update the README to describe routing, current safety scope, offline
   behavior, validation commands, CI, and deployment.
-- [ ] Add repository metadata and a deliberate code-license decision.
+- [ ] Add repository metadata and make a deliberate code-license decision.
+  - Metadata values are prepared in `.github/REPOSITORY_SETTINGS.md`, but the
+    installed integration cannot apply them.
+  - The source-code license remains an owner decision and is intentionally not
+    inferred from the coastline data attribution.
 
 ## Working rule
 
