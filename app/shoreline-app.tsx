@@ -57,6 +57,11 @@ type CourseRisk = {
   detail: string;
 };
 
+type ScreenWakeLock = {
+  release: () => Promise<void>;
+  addEventListener: (type: "release", listener: () => void, options?: { once?: boolean }) => void;
+};
+
 const WARNING_CONFIG_STORAGE_KEY = "shoreline-warning-config-v1";
 const AUTO_SUNLIGHT_STORAGE_KEY = "shoreline-auto-sunlight";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
@@ -578,7 +583,10 @@ export default function ShorelineApp() {
   const [trackerTab, setTrackerTab] = useState<TrackerTab>("distance");
   const [warningZoneInside, setWarningZoneInside] = useState<boolean | null>(null);
   const watchId = useRef<number | null>(null);
-  const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
+  const modeRef = useRef<Mode>("idle");
+  const wakeLock = useRef<ScreenWakeLock | null>(null);
+  const wakeLockRequestPending = useRef(false);
+  const wakeLockRetryTimer = useRef<number | null>(null);
   const alarmAudio = useRef<HTMLAudioElement | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
   const alarmMediaSource = useRef<MediaElementAudioSourceNode | null>(null);
@@ -971,20 +979,57 @@ export default function ShorelineApp() {
     setWarningZoneInside(nextInside);
   }, [conservativeDistance, gpsReliable, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
 
-  const requestWakeLock = useCallback(async () => {
+  const requestWakeLock = useCallback(async function acquireWakeLock() {
     const wakeNavigator = navigator as Navigator & {
-      wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+      wakeLock?: { request: (type: "screen") => Promise<ScreenWakeLock> };
     };
+    if (modeRef.current !== "live"
+      || document.visibilityState !== "visible"
+      || wakeLock.current
+      || wakeLockRequestPending.current) return;
+    wakeLockRequestPending.current = true;
     try {
-      wakeLock.current = (await wakeNavigator.wakeLock?.request("screen")) ?? null;
+      const sentinel = (await wakeNavigator.wakeLock?.request("screen")) ?? null;
+      if (!sentinel) return;
+      if (modeRef.current !== "live" || document.visibilityState !== "visible") {
+        await sentinel.release().catch(() => undefined);
+        return;
+      }
+      wakeLock.current = sentinel;
+      sentinel.addEventListener("release", () => {
+        if (wakeLock.current === sentinel) wakeLock.current = null;
+        if (modeRef.current !== "live" || document.visibilityState !== "visible") return;
+        if (wakeLockRetryTimer.current !== null) window.clearTimeout(wakeLockRetryTimer.current);
+        wakeLockRetryTimer.current = window.setTimeout(() => {
+          wakeLockRetryTimer.current = null;
+          void acquireWakeLock();
+        }, 1_000);
+      }, { once: true });
     } catch {
       wakeLock.current = null;
+    } finally {
+      wakeLockRequestPending.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && modeRef.current === "live") void requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [requestWakeLock]);
 
   const stopTracking = useCallback(() => {
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
     watchId.current = null;
+    modeRef.current = "idle";
+    if (wakeLockRetryTimer.current !== null) window.clearTimeout(wakeLockRetryTimer.current);
+    wakeLockRetryTimer.current = null;
     wakeLock.current?.release().catch(() => undefined);
     wakeLock.current = null;
     alarmAudio.current?.pause();
@@ -1011,6 +1056,8 @@ export default function ShorelineApp() {
 
   useEffect(() => () => {
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
+    modeRef.current = "idle";
+    if (wakeLockRetryTimer.current !== null) window.clearTimeout(wakeLockRetryTimer.current);
     wakeLock.current?.release().catch(() => undefined);
     audioContext.current?.close().catch(() => undefined);
     if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
@@ -1038,6 +1085,7 @@ export default function ShorelineApp() {
     setTrackingStartedAt(startedAt);
     setClosingRateMetresPerSecond(null);
     distanceSamples.current = [];
+    modeRef.current = "live";
     setMode("live");
     setTrackerTab("distance");
     setTrackingError(null);
