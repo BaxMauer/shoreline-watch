@@ -68,15 +68,15 @@ test("service worker precaches the complete install shell", async () => {
   }
 });
 
-test("service worker rotates caches and provides offline navigation fallback", async () => {
+test("service worker rotates caches without taking over an active trip", async () => {
   const serviceWorker = await readFile("public/sw.js", "utf8");
-  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v21"/);
+  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v22"/);
   assert.match(serviceWorker, /keys\.filter\(\(key\) => key !== CACHE_NAME\)/);
   assert.match(serviceWorker, /event\.request\.mode === "navigate"/);
   assert.match(serviceWorker, /cached \|\| caches\.match\("\/"\)/);
   assert.match(serviceWorker, /event\.request\.method !== "GET"/);
-  assert.match(serviceWorker, /self\.skipWaiting\(\)/);
-  assert.match(serviceWorker, /self\.clients\.claim\(\)/);
+  assert.doesNotMatch(serviceWorker, /skipWaiting\s*\(/);
+  assert.doesNotMatch(serviceWorker, /clients\.claim\s*\(/);
 });
 
 test("every local precache asset exists and core entries are unique", async () => {
