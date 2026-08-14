@@ -2,6 +2,11 @@ export type WarningTransition = "none" | "enter-distance" | "exit-distance" | "e
 export type WarningSound = "warning" | "safe" | null;
 export type WarningVisual = "distance" | "speed" | "safe" | null;
 
+export type WarningSoundGate = {
+  sound: WarningSound;
+  availableForDangerEpisode: boolean;
+};
+
 export function getWarningHysteresisMetres(distanceMetres: number) {
   return Math.min(50, Math.max(10, Math.round(Math.max(0, distanceMetres) * 0.05)));
 }
@@ -67,4 +72,26 @@ export function getWarningOutputPlan(transition: WarningTransition, options: War
     visual,
     vibration: options.vibrationEnabled ? isSafe ? "safe" : "danger" : null,
   } as const;
+}
+
+export function gateWarningSoundForDangerEpisode(
+  sound: WarningSound,
+  transition: WarningTransition,
+  availableForDangerEpisode: boolean,
+  previousInside: boolean | null,
+  inside: boolean,
+): WarningSoundGate {
+  if (previousInside === null) {
+    return { sound: null, availableForDangerEpisode: !inside };
+  }
+  if (transition === "exit-distance") {
+    return { sound, availableForDangerEpisode: true };
+  }
+  if (sound !== "warning") {
+    return { sound, availableForDangerEpisode };
+  }
+  if (!availableForDangerEpisode) {
+    return { sound: null, availableForDangerEpisode: false };
+  }
+  return { sound, availableForDangerEpisode: false };
 }

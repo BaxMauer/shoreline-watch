@@ -14,6 +14,8 @@ import {
   type RoutePlanningWorker,
 } from "../lib/route-planning-worker";
 import {
+  GEBCO_BATHYMETRY_ATTRIBUTION,
+  buildGebcoBathymetryUrl,
   canPlanRoute,
   clampCruiseSpeed,
   clampRouteViewRange,
@@ -21,10 +23,14 @@ import {
   formatRouteEta,
   getProgressAwareRouteGuidance,
   getRouteReadinessState,
+  hasReachedRouteTarget,
   parseRouteCoordinate,
   panRouteMapCentre,
   pinchRouteViewRange,
+  routeCoordinateIsValid,
   routeMapPixelToGeo,
+  routeProgressPercent,
+  routeRemainingDistance,
   routeViewRangeForTarget,
   shouldRerouteRoute,
 } from "../lib/route-ui";
@@ -37,107 +43,156 @@ import type { WarningConfig } from "../lib/warning-config";
 type Language = "de" | "en";
 type Fix = GeoPoint & { speed: number | null; accuracy?: number };
 type RoutePlannerFailure = RoutePlanningFailure | "calculation-failed";
+type StartMode = "gps" | "manual";
+type MapEditMode = "start" | "target";
+type JourneyState = "planning" | "active" | "arrived";
 
 const COPY = {
   de: {
     title: "Routenplanung",
-    subtitle: "Ziel auf der Karte antippen",
-    calculating: "Route nach Küstengeometrie wird berechnet …",
-    noPosition: "Warte auf eine Position, um die Route zu starten.",
-    gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m ist zu ungenau. Für Routen sind höchstens ±${maximum} m erforderlich.`,
-    gpsStale: "GPS-Position ist veraltet. Route erst nach einem neuen Fix fortsetzen.",
-    gpsLost: "GPS-Signal verloren. Route erst nach einem neuen Fix fortsetzen.",
+    subtitle: "Start und Ziel eingeben oder auf der Karte setzen",
+    calculating: "Wasserroute wird berechnet …",
+    noPosition: "Für die aktive Reise wird ein aktueller GPS-Fix benötigt.",
+    gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m ist zu ungenau. Für die Reise sind höchstens ±${maximum} m erforderlich.`,
+    gpsStale: "GPS-Position ist veraltet. Reise erst nach einem neuen Fix starten oder fortsetzen.",
+    gpsLost: "GPS-Signal verloren. Reise erst nach einem neuen Fix starten oder fortsetzen.",
     distance: "Strecke",
+    remaining: "Verbleibend",
     eta: "Fahrzeit",
+    remainingEta: "Restzeit",
     clearance: "Kleinster Abstand",
     bearing: "Nächster Kurs",
     ready: "ROUTE BEREIT",
     check: "ROUTE PRÜFEN",
-    waiting: "ZIEL WÄHLEN",
+    waiting: "PUNKTE SETZEN",
+    navigating: "REISE AKTIV",
+    arrived: "ZIEL ERREICHT",
     clearanceDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie hält den bevorzugten Abstand von ${distance} m ein.`,
     restrictedDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie unterschreitet stellenweise ${distance} m – besonders Start und Ziel prüfen.`,
     tisnoPassage: "Tisno-Klappbrücke: Nur bei geöffneter Brücke nutzen. Öffnung, Tiefe, Durchfahrtshöhe, Strömung, Verkehr und lokale Signale vor der Fahrt prüfen.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m Abstand · ${speed} kn küstennah`
       : `${distance} m Abstand · Tempolimit aus`,
-    reset: "Ziel löschen",
-    coordinates: "Zielkoordinaten",
+    reset: "Planung löschen",
+    start: "Start",
+    target: "Ziel",
+    currentGps: "Aktuelles GPS",
+    manualPoint: "Manueller Punkt",
     latitude: "Breite",
     longitude: "Länge",
-    useCoordinates: "Route berechnen",
+    useGps: "GPS verwenden",
+    setStartOnMap: "Start auf Karte setzen",
+    setTargetOnMap: "Ziel auf Karte setzen",
+    tapSetsStart: "Tippen setzt den Start",
+    tapSetsTarget: "Tippen setzt das Ziel",
+    swap: "Start und Ziel tauschen",
+    calculateRoute: "Route berechnen",
+    invalidCoordinates: "Bitte gültige Breiten- und Längengrade eingeben.",
     cruiseSpeed: "Planungstempo",
     cruiseSpeedHint: "Außerhalb des Warnbereichs",
     nauticalMiles: "sm",
     minutes: "Min.",
+    depthLayer: "Tiefenrelief",
+    depthLoading: "Tiefen werden geladen",
+    depthUnavailable: "Tiefenebene momentan nicht verfügbar",
+    depthSource: "GEBCO 2026 · Übersicht · nicht routingwirksam",
+    conditionalPassages: "Bedingte Durchfahrten",
+    conditionalPassagesHint: "z. B. Tisno-Klappbrücke",
+    startJourney: "Reise starten",
+    startingJourney: "Route ab GPS wird aktualisiert …",
+    endJourney: "Reise beenden",
+    finishJourney: "Ankunft abschließen",
+    liveGpsNeeded: "Zum Starten der Reise ist ein zuverlässiger Live-GPS-Fix nötig.",
+    progress: "Fortschritt",
     failures: {
-      "outside-region": "Ziel liegt außerhalb des verfügbaren Kroatien-Küstendatensatzes.",
+      "outside-region": "Start oder Ziel liegt außerhalb des verfügbaren Kroatien-Küstendatensatzes.",
       "destination-on-land": "Das gewählte Ziel liegt laut Küstengeometrie an Land. Bitte ins Wasser tippen.",
       "too-far": "Das Ziel ist für eine einzelne Offline-Route zu weit entfernt.",
-      "no-route": "Keine durchgehende Wasserroute gefunden. Bitte Zielpunkt oder Küstenabstand ändern.",
+      "no-route": "Keine durchgehende Wasserroute gefunden. Bitte Start, Ziel oder Küstenabstand ändern.",
       "calculation-failed": "Die Routenberechnung ist fehlgeschlagen. Bitte erneut versuchen.",
     },
-    mapLabel: "Offline-Karte zur Auswahl des Routenziels",
-    mapHint: "Ziehen zum Verschieben · zwei Finger zum Zoomen · tippen setzt das Ziel",
+    mapLabel: "Karte zur Auswahl von Start und Ziel",
     zoomIn: "Karte vergrößern",
     zoomOut: "Karte verkleinern",
     recenter: "Boot zentrieren",
-    current: "Boot",
-    target: "Ziel",
+    fitRoute: "Ganze Route anzeigen",
   },
   en: {
     title: "Route planning",
-    subtitle: "Tap a destination on the map",
-    calculating: "Calculating a shoreline-geometry route …",
-    noPosition: "Waiting for a position to start routing.",
-    gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m is too inaccurate. Routing requires ±${maximum} m or better.`,
-    gpsStale: "GPS position is stale. Continue routing after a new fix.",
-    gpsLost: "GPS signal lost. Continue routing after a new fix.",
+    subtitle: "Enter a start and destination or place them on the map",
+    calculating: "Calculating water route …",
+    noPosition: "A current GPS fix is required for active travel.",
+    gpsInaccurate: (accuracy: string, maximum: number) => `GPS ±${accuracy} m is too inaccurate. Travel requires ±${maximum} m or better.`,
+    gpsStale: "GPS position is stale. Start or continue after a new fix.",
+    gpsLost: "GPS signal lost. Start or continue after a new fix.",
     distance: "Distance",
+    remaining: "Remaining",
     eta: "Travel time",
+    remainingEta: "Time left",
     clearance: "Minimum clearance",
     bearing: "Next course",
     ready: "ROUTE READY",
     check: "CHECK ROUTE",
-    waiting: "CHOOSE TARGET",
+    waiting: "SET POINTS",
+    navigating: "TRIP ACTIVE",
+    arrived: "DESTINATION REACHED",
     clearanceDetail: (distance: number) => `The calculated shoreline geometry maintains the preferred ${distance} m clearance.`,
     restrictedDetail: (distance: number) => `The calculated shoreline geometry is inside ${distance} m in places – check start and destination carefully.`,
     tisnoPassage: "Tisno lift bridge: use only while raised. Verify opening, depth, air draft, current, traffic, and local signals before departure.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m clearance · ${speed} kn near shore`
       : `${distance} m clearance · speed rule off`,
-    reset: "Clear target",
-    coordinates: "Destination coordinates",
+    reset: "Clear plan",
+    start: "Start",
+    target: "Destination",
+    currentGps: "Current GPS",
+    manualPoint: "Manual point",
     latitude: "Latitude",
     longitude: "Longitude",
-    useCoordinates: "Calculate route",
+    useGps: "Use GPS",
+    setStartOnMap: "Place start on map",
+    setTargetOnMap: "Place destination on map",
+    tapSetsStart: "Tap places the start",
+    tapSetsTarget: "Tap places the destination",
+    swap: "Swap start and destination",
+    calculateRoute: "Calculate route",
+    invalidCoordinates: "Enter valid latitude and longitude values.",
     cruiseSpeed: "Planning speed",
     cruiseSpeedHint: "Outside the warning area",
     nauticalMiles: "nm",
     minutes: "min",
+    depthLayer: "Depth relief",
+    depthLoading: "Loading depths",
+    depthUnavailable: "Depth layer is currently unavailable",
+    depthSource: "GEBCO 2026 · overview · not used for routing",
+    conditionalPassages: "Conditional passages",
+    conditionalPassagesHint: "e.g. Tisno lift bridge",
+    startJourney: "Start trip",
+    startingJourney: "Updating route from GPS …",
+    endJourney: "End trip",
+    finishJourney: "Finish arrival",
+    liveGpsNeeded: "A reliable live GPS fix is required to start the trip.",
+    progress: "Progress",
     failures: {
-      "outside-region": "The destination is outside the available Croatia shoreline dataset.",
+      "outside-region": "The start or destination is outside the available Croatia shoreline dataset.",
       "destination-on-land": "The selected destination is on land according to the shoreline geometry. Tap in the water.",
       "too-far": "The destination is too far for one offline route.",
-      "no-route": "No continuous water route found. Change the target or shoreline clearance.",
+      "no-route": "No continuous water route found. Change the start, destination, or shoreline clearance.",
       "calculation-failed": "Route calculation failed. Please try again.",
     },
-    mapLabel: "Offline map for choosing a route destination",
-    mapHint: "Drag to pan · pinch to zoom · tap to set target",
+    mapLabel: "Map for choosing a route start and destination",
     zoomIn: "Zoom map in",
     zoomOut: "Zoom map out",
     recenter: "Centre on boat",
-    current: "Boat",
-    target: "Target",
+    fitRoute: "Show full route",
   },
 } as const;
 
-export default function RoutePlanner({
-  pack,
-  fix,
-  warningConfig,
-  language,
-  gpsNavigationState,
-}: {
+function coordinateText(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : "";
+}
+
+export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNavigationState }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
   warningConfig: WarningConfig;
@@ -146,27 +201,43 @@ export default function RoutePlanner({
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
+  const [startMode, setStartMode] = useState<StartMode>("gps");
+  const [manualStart, setManualStart] = useState<GeoPoint | null>(null);
   const [target, setTarget] = useState<GeoPoint | null>(null);
+  const [mapEditMode, setMapEditMode] = useState<MapEditMode>("target");
+  const [journeyState, setJourneyState] = useState<JourneyState>("planning");
   const [route, setRoute] = useState<PlannedRoute | null>(null);
   const [failure, setFailure] = useState<RoutePlannerFailure | null>(null);
   const [planning, setPlanning] = useState(false);
+  const [startingJourney, setStartingJourney] = useState(false);
   const [viewRangeMetres, setViewRangeMetres] = useState(20_000);
   const [viewCentre, setViewCentre] = useState<GeoPoint | null>(null);
   const [cruiseSpeedKnots, setCruiseSpeedKnots] = useState(16);
-  const [coordinateLatitude, setCoordinateLatitude] = useState("");
-  const [coordinateLongitude, setCoordinateLongitude] = useState("");
+  const [conditionalPassagesEnabled, setConditionalPassagesEnabled] = useState(true);
+  const [showDepths, setShowDepths] = useState(true);
+  const [depthUrl, setDepthUrl] = useState<string | null>(null);
+  const [depthStatus, setDepthStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [startLatitude, setStartLatitude] = useState("");
+  const [startLongitude, setStartLongitude] = useState("");
+  const [targetLatitude, setTargetLatitude] = useState("");
+  const [targetLongitude, setTargetLongitude] = useState("");
+  const [inputError, setInputError] = useState(false);
   const plannedFrom = useRef<GeoPoint | null>(null);
+  const [journeyProgressMetres, setJourneyProgressMetres] = useState(0);
   const rerouteTimer = useRef<number | null>(null);
   const latestRerouteFix = useRef<Fix | null>(fix);
   const routeWorker = useRef<RoutePlanningWorkerController | null>(null);
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
-  const mapGesture = useRef<{
-    centre: GeoPoint;
-    range: number;
-    centroid: { x: number; y: number };
-    distance: number;
-    moved: boolean;
-  } | null>(null);
+  const mapGesture = useRef<{ centre: GeoPoint; range: number; centroid: { x: number; y: number }; distance: number; moved: boolean } | null>(null);
+
+  const effectiveStart = startMode === "manual" ? manualStart : fix;
+  const parsedManualStart = startMode === "manual" ? {
+    latitude: parseRouteCoordinate(startLatitude),
+    longitude: parseRouteCoordinate(startLongitude),
+  } : null;
+  const planningStartAvailable = startMode === "manual"
+    ? manualStart !== null || (parsedManualStart?.latitude !== null && parsedManualStart?.longitude !== null)
+    : gpsReliable;
 
   const clearPendingReroute = useCallback(() => {
     if (rerouteTimer.current === null) return;
@@ -188,10 +259,22 @@ export default function RoutePlanner({
 
   useEffect(() => () => clearPendingReroute(), [clearPendingReroute]);
 
-  const calculate = useCallback((destination: GeoPoint, startOverride?: Fix) => {
-    const start = startOverride ?? fix;
+  useEffect(() => {
+    if ((journeyState !== "active" && startMode !== "gps") || gpsReliable) return;
+    clearPendingReroute();
+    routeWorker.current?.cancel();
+    const timer = window.setTimeout(() => {
+      setPlanning(false);
+      setStartingJourney(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [clearPendingReroute, gpsReliable, journeyState, startMode]);
+
+  const calculate = useCallback((destination: GeoPoint, startOverride?: GeoPoint, activateJourney = false) => {
+    const start = startOverride ?? effectiveStart;
     const controller = routeWorker.current;
-    if (!controller || !pack || !start || !canPlanRoute(gpsNavigationState, start)) return;
+    if (!controller || !pack || !start || !routeCoordinateIsValid(start) || !routeCoordinateIsValid(destination)) return;
+    if (start === fix && !gpsReliable) return;
     setPlanning(true);
     setFailure(null);
     controller.calculate({
@@ -203,75 +286,96 @@ export default function RoutePlanner({
         cruiseSpeedKnots,
         speedWarningEnabled: warningConfig.speedWarningEnabled,
         nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
-        startAccuracyMetres: start.accuracy,
+        startAccuracyMetres: start === fix ? fix?.accuracy : undefined,
+        conditionalPassagesEnabled,
       },
     }, {
       onResult: (result) => {
         setRoute(result.route ?? null);
         setFailure(result.failure ?? null);
         plannedFrom.current = start;
+        setJourneyProgressMetres(0);
         setPlanning(false);
+        setStartingJourney(false);
+        if (activateJourney && result.route) {
+          setJourneyState("active");
+          setStartMode("gps");
+          setViewCentre(null);
+          setViewRangeMetres(clampRouteViewRange(Math.min(8_000, Math.max(2_500, result.route.distanceMetres / 3))));
+        }
       },
       onError: () => {
         setRoute(null);
         setFailure("calculation-failed");
         setPlanning(false);
+        setStartingJourney(false);
       },
     });
-  }, [cruiseSpeedKnots, fix, gpsNavigationState, pack, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, pack, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
-  useEffect(() => {
-    if (gpsReliable) return;
-    clearPendingReroute();
-    routeWorker.current?.cancel();
-  }, [clearPendingReroute, gpsReliable]);
+  const fitRoute = useCallback((start = effectiveStart, destination = target) => {
+    if (!start || !destination) return;
+    setViewCentre({ longitude: (start.longitude + destination.longitude) / 2, latitude: (start.latitude + destination.latitude) / 2 });
+    setViewRangeMetres(clampRouteViewRange(routeViewRangeForTarget(2_500, start, destination) * .62));
+  }, [effectiveStart, target]);
 
-  const selectTarget = useCallback((destination: GeoPoint) => {
+  const selectTarget = useCallback((destination: GeoPoint, start = effectiveStart) => {
     setTarget(destination);
-    setCoordinateLatitude(destination.latitude.toFixed(6));
-    setCoordinateLongitude(destination.longitude.toFixed(6));
-    if (fix) setViewRangeMetres((current) => routeViewRangeForTarget(current, fix, destination));
-    calculate(destination);
-  }, [calculate, fix]);
+    setTargetLatitude(coordinateText(destination.latitude));
+    setTargetLongitude(coordinateText(destination.longitude));
+    setInputError(false);
+    if (start) {
+      fitRoute(start, destination);
+      calculate(destination, start);
+    }
+  }, [calculate, effectiveStart, fitRoute]);
+
+  const selectStart = useCallback((start: GeoPoint) => {
+    setStartMode("manual");
+    setManualStart(start);
+    setStartLatitude(coordinateText(start.latitude));
+    setStartLongitude(coordinateText(start.longitude));
+    setInputError(false);
+    setMapEditMode("target");
+    if (target) {
+      fitRoute(start, target);
+      calculate(target, start);
+    }
+  }, [calculate, fitRoute, target]);
 
   useEffect(() => {
     latestRerouteFix.current = fix;
-    if (!target || !gpsReliable || planning) {
+    if (journeyState !== "active" || !target || !gpsReliable || planning) {
       clearPendingReroute();
       return;
     }
-    if (!fix || !plannedFrom.current) return;
-    if (!shouldRerouteRoute(plannedFrom.current, fix, warningConfig.distanceMetres)) return;
-    if (rerouteTimer.current !== null) return;
+    if (!fix || !plannedFrom.current || !shouldRerouteRoute(plannedFrom.current, fix, warningConfig.distanceMetres) || rerouteTimer.current !== null) return;
     rerouteTimer.current = window.setTimeout(() => {
       rerouteTimer.current = null;
       const rerouteFix = latestRerouteFix.current;
-      if (!rerouteFix || !plannedFrom.current) return;
-      if (!shouldRerouteRoute(plannedFrom.current, rerouteFix, warningConfig.distanceMetres)) return;
-      calculate(target, rerouteFix);
+      if (!rerouteFix || !plannedFrom.current || !shouldRerouteRoute(plannedFrom.current, rerouteFix, warningConfig.distanceMetres)) return;
+      calculate(target, rerouteFix, true);
     }, 500);
-  }, [calculate, clearPendingReroute, fix, gpsReliable, planning, target, warningConfig.distanceMetres]);
+  }, [calculate, clearPendingReroute, fix, gpsReliable, journeyState, planning, target, warningConfig.distanceMetres]);
 
   useEffect(() => {
-    if (!target || !fix || !gpsReliable) return;
-    const timer = window.setTimeout(() => calculate(target, fix), 0);
+    if (journeyState === "active" || !target || !planningStartAvailable || !effectiveStart) return;
+    const timer = window.setTimeout(() => calculate(target, effectiveStart), 0);
     return () => window.clearTimeout(timer);
-  // Reroute when a planning preference changes; live position changes are handled by the distance threshold above.
+  // Re-plan when preferences change; point changes calculate directly.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cruiseSpeedKnots, gpsReliable, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [conditionalPassagesEnabled, cruiseSpeedKnots, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const size = 360;
   const centre = size / 2;
-  const mapCentre = viewCentre ?? fix ?? target ?? { longitude: 15.55, latitude: 43.8 };
+  const mapCentre = useMemo(() => viewCentre ?? fix ?? manualStart ?? target ?? { longitude: 15.55, latitude: 43.8 }, [fix, manualStart, target, viewCentre]);
   const metresPerLongitudeDegree = 111_320 * Math.cos((mapCentre.latitude * Math.PI) / 180);
   const pixelsPerMetre = centre / viewRangeMetres;
   const point = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (value.latitude - mapCentre.latitude) * 110_540 * pixelsPerMetre,
   }), [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
-  const segments = useMemo(() => pack
-    ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, 5_000)
-    : [], [mapCentre.latitude, mapCentre.longitude, pack, viewRangeMetres]);
+  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, 5_000) : [], [mapCentre.latitude, mapCentre.longitude, pack, viewRangeMetres]);
   const hatchPath = useMemo(() => {
     if (!pack) return "";
     const bandHeight = 6;
@@ -289,45 +393,50 @@ export default function RoutePlanner({
     }
     return path;
   }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, viewRangeMetres]);
+
+  useEffect(() => {
+    if (!showDepths) return;
+    const timer = window.setTimeout(() => {
+      setDepthStatus("loading");
+      setDepthUrl(buildGebcoBathymetryUrl(mapCentre, viewRangeMetres));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [mapCentre, showDepths, viewRangeMetres]);
+
   const routePoints = route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "";
   const boatPoint = fix ? point(fix) : null;
+  const startPoint = startMode === "manual" && manualStart ? point(manualStart) : null;
   const targetPoint = target ? point(target) : null;
-  const routeGuidance = useMemo(() => route && fix
-    ? getProgressAwareRouteGuidance(route.points, fix)
-    : null, [fix, route]);
-  const nextBearing = gpsReliable && fix && routeGuidance ? geoBearing(fix, routeGuidance.target) : null;
-  const routeReadiness = getRouteReadinessState({
-    gpsNavigationState,
-    planning,
-    hasRoute: route !== null,
-    routeRestricted: route?.mode === "restricted",
-    hasFailure: failure !== null,
-  });
-  const routeStateClass = routeReadiness === "ready" ? "ready" : routeReadiness === "check" ? "check" : "";
-  const routeStateLabel = routeReadiness === "calculating"
-    ? "…"
-    : routeReadiness === "ready"
-      ? copy.ready
-      : routeReadiness === "check"
-        ? copy.check
-        : copy.waiting;
-  const gpsAccuracyLabel = fix && Number.isFinite(fix.accuracy)
-    ? Math.round(fix.accuracy ?? 0).toString()
-    : "—";
-  const gpsIssueMessage = gpsNavigationState === "inaccurate"
-    ? copy.gpsInaccurate(gpsAccuracyLabel, MAXIMUM_NAVIGATION_ACCURACY_METRES)
-    : gpsNavigationState === "stale"
-      ? copy.gpsStale
-      : gpsNavigationState === "lost"
-        ? copy.gpsLost
-        : copy.noPosition;
+  const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
+  const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
+  const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
+  const progressMetres = journeyState === "active" || journeyState === "arrived" ? routeGuidance?.progressMetres ?? 0 : 0;
+  const remainingMetres = route ? routeRemainingDistance(route.distanceMetres, progressMetres) : 0;
+  const progressPercent = route ? routeProgressPercent(route.distanceMetres, progressMetres) : 0;
+  const remainingSeconds = route && route.distanceMetres > 0 ? route.estimatedSeconds * remainingMetres / route.distanceMetres : 0;
+
+  useEffect(() => {
+    if (journeyState !== "active" || !routeGuidance) return;
+    const timer = window.setTimeout(() => setJourneyProgressMetres((current) => Math.max(current, routeGuidance.progressMetres)), 0);
+    return () => window.clearTimeout(timer);
+  }, [journeyState, routeGuidance]);
+
+  useEffect(() => {
+    if (journeyState !== "active" || !gpsReliable || !fix || !target || !hasReachedRouteTarget(fix, target)) return;
+    const timer = window.setTimeout(() => setJourneyState("arrived"), 0);
+    return () => window.clearTimeout(timer);
+  }, [fix, gpsReliable, journeyState, target]);
+
+  const readinessGpsState = journeyState === "planning" && startMode === "manual" ? "reliable" : gpsNavigationState;
+  const routeReadiness = getRouteReadinessState({ gpsNavigationState: readinessGpsState, planning, hasRoute: route !== null, routeRestricted: route?.mode === "restricted", hasFailure: failure !== null });
+  const routeStateClass = journeyState === "active" ? "active" : journeyState === "arrived" ? "arrived" : routeReadiness === "ready" ? "ready" : routeReadiness === "check" ? "check" : "";
+  const routeStateLabel = journeyState === "active" ? copy.navigating : journeyState === "arrived" ? copy.arrived : routeReadiness === "calculating" ? "…" : routeReadiness === "ready" ? copy.ready : routeReadiness === "check" ? copy.check : copy.waiting;
+  const gpsAccuracyLabel = fix && Number.isFinite(fix.accuracy) ? Math.round(fix.accuracy ?? 0).toString() : "—";
+  const gpsIssueMessage = gpsNavigationState === "inaccurate" ? copy.gpsInaccurate(gpsAccuracyLabel, MAXIMUM_NAVIGATION_ACCURACY_METRES) : gpsNavigationState === "stale" ? copy.gpsStale : gpsNavigationState === "lost" ? copy.gpsLost : copy.noPosition;
 
   const pointerMetrics = (element: HTMLDivElement) => {
     const bounds = element.getBoundingClientRect();
-    const points = Array.from(activePointers.current.values()).map((value) => ({
-      x: (value.x - bounds.left) / bounds.width * size,
-      y: (value.y - bounds.top) / bounds.height * size,
-    }));
+    const points = Array.from(activePointers.current.values()).map((value) => ({ x: (value.x - bounds.left) / bounds.width * size, y: (value.y - bounds.top) / bounds.height * size }));
     const centroid = points.reduce((total, value) => ({ x: total.x + value.x / points.length, y: total.y + value.y / points.length }), { x: 0, y: 0 });
     const distance = points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
     return { centroid, distance };
@@ -339,6 +448,7 @@ export default function RoutePlanner({
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (journeyState !== "planning") return;
     event.currentTarget.setPointerCapture(event.pointerId);
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     beginGesture(event.currentTarget);
@@ -363,7 +473,11 @@ export default function RoutePlanner({
     const y = (event.clientY - bounds.top) / bounds.height * size;
     const wasSinglePointer = activePointers.current.size === 1;
     activePointers.current.delete(event.pointerId);
-    if (wasSinglePointer && !gesture?.moved && gpsReliable && !planning) selectTarget(routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y));
+    if (wasSinglePointer && !gesture?.moved && !planning) {
+      const selected = routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y);
+      if (mapEditMode === "start") selectStart(selected);
+      else selectTarget(selected);
+    }
     if (activePointers.current.size > 0) beginGesture(event.currentTarget);
     else mapGesture.current = null;
   };
@@ -382,47 +496,127 @@ export default function RoutePlanner({
   const handleMapKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "+" || event.key === "=") setViewRangeMetres((value) => clampRouteViewRange(value / 1.7));
     else if (event.key === "-") setViewRangeMetres((value) => clampRouteViewRange(value * 1.7));
-    else if ((event.key === "Enter" || event.key === " ") && gpsReliable && !planning) selectTarget(mapCentre);
-    else return;
+    else if ((event.key === "Enter" || event.key === " ") && journeyState === "planning" && !planning) {
+      if (mapEditMode === "start") selectStart(mapCentre);
+      else selectTarget(mapCentre);
+    } else return;
     event.preventDefault();
   };
 
-  const useCoordinates = () => {
-    const latitude = parseRouteCoordinate(coordinateLatitude);
-    const longitude = parseRouteCoordinate(coordinateLongitude);
-    if (latitude === null || longitude === null) return;
-    selectTarget({ latitude, longitude });
+  const editStartCoordinate = (field: "latitude" | "longitude", value: string) => {
+    if (startMode === "gps") {
+      setStartLatitude(field === "latitude" ? value : coordinateText(fix?.latitude));
+      setStartLongitude(field === "longitude" ? value : coordinateText(fix?.longitude));
+      setStartMode("manual");
+      setManualStart(null);
+    } else if (field === "latitude") setStartLatitude(value);
+    else setStartLongitude(value);
+    setInputError(false);
+  };
+
+  const useGpsStart = () => {
+    setStartMode("gps");
+    setManualStart(null);
+    setStartLatitude("");
+    setStartLongitude("");
+    setInputError(false);
+    if (fix && target && gpsReliable) {
+      fitRoute(fix, target);
+      calculate(target, fix);
+    }
+  };
+
+  const useCoordinateInputs = () => {
+    const parsedTargetLatitude = parseRouteCoordinate(targetLatitude);
+    const parsedTargetLongitude = parseRouteCoordinate(targetLongitude);
+    const parsedStartLatitude = startMode === "gps" ? fix?.latitude ?? null : parseRouteCoordinate(startLatitude);
+    const parsedStartLongitude = startMode === "gps" ? fix?.longitude ?? null : parseRouteCoordinate(startLongitude);
+    if (parsedStartLatitude === null || parsedStartLongitude === null || parsedTargetLatitude === null || parsedTargetLongitude === null) {
+      setInputError(true);
+      return;
+    }
+    const start = startMode === "gps" && fix ? fix : { latitude: parsedStartLatitude, longitude: parsedStartLongitude };
+    const destination = { latitude: parsedTargetLatitude, longitude: parsedTargetLongitude };
+    if (!routeCoordinateIsValid(start) || !routeCoordinateIsValid(destination) || (startMode === "gps" && !gpsReliable)) {
+      setInputError(true);
+      return;
+    }
+    if (startMode === "manual") setManualStart(start);
+    setTarget(destination);
+    setInputError(false);
+    fitRoute(start, destination);
+    calculate(destination, start);
+  };
+
+  const swapPoints = () => {
+    if (!effectiveStart || !target) return;
+    const nextStart = target;
+    const nextTarget = effectiveStart;
+    setStartMode("manual");
+    setManualStart(nextStart);
+    setStartLatitude(coordinateText(nextStart.latitude));
+    setStartLongitude(coordinateText(nextStart.longitude));
+    setTarget(nextTarget);
+    setTargetLatitude(coordinateText(nextTarget.latitude));
+    setTargetLongitude(coordinateText(nextTarget.longitude));
+    setInputError(false);
+    fitRoute(nextStart, nextTarget);
+    calculate(nextTarget, nextStart);
+  };
+
+  const startJourney = () => {
+    if (!fix || !target || !route || !gpsReliable || planning) return;
+    setStartingJourney(true);
+    calculate(target, fix, true);
+  };
+
+  const endJourney = () => {
+    setJourneyState("planning");
+    setJourneyProgressMetres(0);
+    setStartMode("gps");
+    setViewCentre(null);
+    if (fix && target && gpsReliable) calculate(target, fix);
   };
 
   const reset = () => {
     clearPendingReroute();
     routeWorker.current?.cancel();
     setTarget(null);
+    setManualStart(null);
+    setStartMode("gps");
+    setJourneyState("planning");
     setRoute(null);
     setFailure(null);
     setPlanning(false);
-    setCoordinateLatitude("");
-    setCoordinateLongitude("");
+    setStartingJourney(false);
+    setStartLatitude("");
+    setStartLongitude("");
+    setTargetLatitude("");
+    setTargetLongitude("");
+    setInputError(false);
+    setJourneyProgressMetres(0);
     plannedFrom.current = null;
   };
 
   const recenterMap = () => {
     setViewCentre(null);
-    if (fix && target) setViewRangeMetres(routeViewRangeForTarget(20_000, fix, target));
+    if (fix && target && journeyState === "planning") setViewRangeMetres(clampRouteViewRange(routeViewRangeForTarget(2_500, fix, target) * .62));
   };
 
+  const displayedStartLatitude = startMode === "gps" ? coordinateText(fix?.latitude) : startLatitude;
+  const displayedStartLongitude = startMode === "gps" ? coordinateText(fix?.longitude) : startLongitude;
+
   return (
-    <section className="route-planner" aria-label={copy.title}>
+    <section className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <div className="route-map-wrap">
-        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={!gpsReliable} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
+        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={journeyState !== "planning" || planning} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
           <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-hidden="true">
             <defs>
-              <pattern id="routeLandHatch" width="10" height="10" patternUnits="userSpaceOnUse">
-                <path className="route-land-hatch-mark" d="M-2 10 10-2M6 14 14 6" />
-              </pattern>
+              <pattern id="routeLandHatch" width="10" height="10" patternUnits="userSpaceOnUse"><path className="route-land-hatch-mark" d="M-2 10 10-2M6 14 14 6" /></pattern>
               <filter id="routeBoatGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
             </defs>
             <rect className="route-water" width={size} height={size} />
+            {showDepths && depthUrl && <image className="route-depth-image" href={depthUrl} width={size} height={size} preserveAspectRatio="none" onLoad={() => setDepthStatus("ready")} onError={() => setDepthStatus("error")} />}
             {hatchPath && <path className="route-land-area" d={hatchPath} />}
             <g className="route-coast-layer">{segments.map((segment, index) => {
               const start = point({ longitude: segment[0], latitude: segment[1] });
@@ -430,46 +624,91 @@ export default function RoutePlanner({
               return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
             })}</g>
             {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
-            {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="10" /><path d="M0-14 8 0 0 14-8 0Z" /><circle r="3" /></g>}
+            {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><circle r="10" /><text y="3.5">A</text></g>}
+            {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="11" /><text y="3.5">B</text></g>}
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
         <div className="route-map-heading">
-          <span><strong>{copy.title}</strong><small>{copy.mapHint}</small></span>
+          <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.tapSetsStart : copy.tapSetsTarget : copy.navigating}</small></span>
           <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
+        </div>
+        <div className="route-layer-tools">
+          <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}>≋ {copy.depthLayer}</button>
+          {showDepths && <small>{depthStatus === "error" ? copy.depthUnavailable : depthStatus === "loading" ? copy.depthLoading : copy.depthSource}</small>}
         </div>
         <div className="route-zoom" aria-label="Zoom">
           <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>
           <span>{viewRangeMetres >= 1_000 ? `${Math.round(viewRangeMetres / 1_000)} km` : `${Math.round(viewRangeMetres)} m`}</span>
           <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>
+          {route && <button type="button" aria-label={copy.fitRoute} onClick={() => fitRoute()}>↔</button>}
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
       </div>
 
+      {journeyState === "planning" && <div className="route-points-editor">
+        <div className="route-point-row">
+          <span className="route-point-badge start">A</span>
+          <div className="route-point-fields">
+            <span><strong>{copy.start}</strong><small>{startMode === "gps" ? copy.currentGps : copy.manualPoint}</small></span>
+            <label><span>{copy.latitude}</span><input aria-label={`${copy.start} ${copy.latitude}`} inputMode="decimal" value={displayedStartLatitude} onChange={(event) => editStartCoordinate("latitude", event.target.value)} /></label>
+            <label><span>{copy.longitude}</span><input aria-label={`${copy.start} ${copy.longitude}`} inputMode="decimal" value={displayedStartLongitude} onChange={(event) => editStartCoordinate("longitude", event.target.value)} /></label>
+          </div>
+          <div className="route-point-actions">
+            <button type="button" className={startMode === "gps" ? "active" : ""} onClick={useGpsStart} aria-label={copy.useGps}>◎</button>
+            <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")} aria-label={copy.setStartOnMap}>⌖</button>
+          </div>
+        </div>
+        <button className="route-swap" type="button" disabled={!effectiveStart || !target} onClick={swapPoints} aria-label={copy.swap}>⇅</button>
+        <div className="route-point-row">
+          <span className="route-point-badge target">B</span>
+          <div className="route-point-fields">
+            <span><strong>{copy.target}</strong><small>{target ? copy.manualPoint : copy.tapSetsTarget}</small></span>
+            <label><span>{copy.latitude}</span><input aria-label={`${copy.target} ${copy.latitude}`} inputMode="decimal" value={targetLatitude} onChange={(event) => { setTargetLatitude(event.target.value); setInputError(false); }} /></label>
+            <label><span>{copy.longitude}</span><input aria-label={`${copy.target} ${copy.longitude}`} inputMode="decimal" value={targetLongitude} onChange={(event) => { setTargetLongitude(event.target.value); setInputError(false); }} /></label>
+          </div>
+          <div className="route-point-actions"><button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")} aria-label={copy.setTargetOnMap}>⌖</button></div>
+        </div>
+        {inputError && <p className="route-input-error" role="alert">{copy.invalidCoordinates}</p>}
+        <button className="route-calculate" type="button" disabled={planning || !planningStartAvailable} onClick={useCoordinateInputs}>{planning ? copy.calculating : copy.calculateRoute}</button>
+      </div>}
+
       <div className="route-summary" aria-live="polite">
-        {!gpsReliable ? <p className={`route-message ${gpsNavigationState === "waiting" ? "" : "error"}`}>{gpsIssueMessage}</p> : planning ? <p className="route-message">{copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
+        {planning ? <p className="route-message">{startingJourney ? copy.startingJourney : copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
           <>
-            <div className="route-metrics">
+            {(journeyState === "active" || journeyState === "arrived") && <div className={`route-navigation ${journeyState}`}>
+              <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
+              <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
+              <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
+              <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
+            </div>}
+            {journeyState === "planning" && <div className="route-metrics">
               <span><small>{copy.distance}</small><strong>{formatRouteDistance(route.distanceMetres).toFixed(route.distanceMetres < 18_520 ? 1 : 0)} {copy.nauticalMiles}</strong></span>
               <span><small>{copy.eta}</small><strong>{formatRouteEta(route.estimatedSeconds, copy.minutes)}</strong></span>
               <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
               <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
-            </div>
+            </div>}
+            {(journeyState === "active" || journeyState === "arrived") && <div className="route-progress"><span style={{ width: `${progressPercent}%` }} /><small>{copy.progress} {Math.round(progressPercent)}%</small></div>}
             <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.clearanceDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
             {route.passageIds.includes("tisno-murter-bridge") && <p className="route-passage-warning" role="alert">{copy.tisnoPassage}</p>}
           </>
         ) : <p className="route-message">{copy.subtitle}</p>}
       </div>
 
+      {route && <div className="route-trip-actions">
+        {journeyState === "planning" ? <button className="route-start-trip" type="button" disabled={!gpsReliable || planning} onClick={startJourney}>{copy.startJourney}</button> : <button className={journeyState === "arrived" ? "route-finish-trip" : "route-end-trip"} type="button" onClick={endJourney}>{journeyState === "arrived" ? copy.finishJourney : copy.endJourney}</button>}
+        {journeyState === "planning" && !gpsReliable && <small>{copy.liveGpsNeeded}</small>}
+      </div>}
+
       <div className="route-controls">
         <label className="route-speed"><span><strong>{copy.cruiseSpeed}</strong><small>{copy.cruiseSpeedHint}</small></span><span><input type="number" min="2" max="60" step="1" value={cruiseSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setCruiseSpeedKnots(clampCruiseSpeed(event.target.valueAsNumber))} /> kn</span></label>
         <div className="route-rule">{copy.rule(warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled)}</div>
-        <details className="route-coordinates">
-          <summary>{copy.coordinates}</summary>
-          <div><label>{copy.latitude}<input inputMode="decimal" value={coordinateLatitude} onChange={(event) => setCoordinateLatitude(event.target.value)} /></label><label>{copy.longitude}<input inputMode="decimal" value={coordinateLongitude} onChange={(event) => setCoordinateLongitude(event.target.value)} /></label><button type="button" disabled={!gpsReliable} onClick={useCoordinates}>{copy.useCoordinates}</button></div>
-        </details>
-        {target && <button className="route-reset" type="button" onClick={reset}>{copy.reset}</button>}
+        <label className="route-option"><span><strong>{copy.conditionalPassages}</strong><small>{copy.conditionalPassagesHint}</small></span><input type="checkbox" checked={conditionalPassagesEnabled} onChange={(event) => setConditionalPassagesEnabled(event.target.checked)} /></label>
+        <p className="route-depth-credit">{GEBCO_BATHYMETRY_ATTRIBUTION}</p>
+        {(target || manualStart) && <button className="route-reset" type="button" onClick={reset}>{copy.reset}</button>}
       </div>
+
+      {journeyState === "active" && !gpsReliable && <p className="route-live-gps-warning" role="alert">{gpsIssueMessage}</p>}
     </section>
   );
 }
