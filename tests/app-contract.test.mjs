@@ -113,7 +113,7 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /speedWarningEnabled: warningConfig\.speedWarningEnabled/);
   assert.match(planner, /nearShoreSpeedKnots: warningConfig\.maxSpeedKnots/);
   assert.match(planner, /startAccuracyMetres: start === fix \? fix\?\.accuracy : undefined/);
-  assert.match(planner, /route\.mode === "clearance"/);
+  assert.match(planner, /route\.mode === "restricted"/);
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
 
@@ -191,7 +191,8 @@ test("route result exposes all navigation metrics and accessible status messages
   }
   assert.match(planner, /className="route-summary" aria-live="polite"/);
   assert.match(planner, /failure \? <p className="route-message error">\{copy\.failures\[failure\]\}<\/p>/);
-  assert.match(planner, /route\.mode === "clearance" \? copy\.clearanceDetail/);
+  assert.match(planner, /route\.mode === "restricted" && <p className="route-detail restricted">/);
+  assert.match(planner, /className="route-notices"/);
 });
 
 test("route planning exposes editable start and target points", async () => {
@@ -204,13 +205,22 @@ test("route planning exposes editable start and target points", async () => {
   assert.match(planner, /setMapEditMode\("start"\)/);
 });
 
+test("route planning keeps secondary controls in compact disclosure panels", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /<header className="route-screen-header">/);
+  assert.match(planner, /<details ref=\{routeEditor\} className="route-panel route-editor">/);
+  assert.match(planner, /<details className="route-panel route-options">/);
+  assert.match(planner, /<details className="route-notices">/);
+  assert.match(planner, /preserveAspectRatio="none" role="img"/);
+  assert.doesNotMatch(planner, /route-map-heading|route-depth-credit/);
+});
+
 test("depth relief is optional, attributed, and excluded from routing options", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /buildGebcoBathymetryUrl\(mapCentre, viewRangeMetres\)/);
-  assert.match(planner, /className="route-depth-image"/);
-  assert.match(planner, /GEBCO_BATHYMETRY_ATTRIBUTION/);
-  assert.match(planner, /nicht routingwirksam/);
-  assert.match(planner, /not used for routing/);
+  assert.match(planner, /buildEmodnetBathymetryTiles\(mapCentre, viewRangeMetres, 720\)/);
+  assert.match(planner, /className="route-depth-tile"/);
+  assert.match(planner, /EMODNET_BATHYMETRY_ATTRIBUTION/);
+  assert.match(planner, /route-bathymetry-layer/);
   assert.doesNotMatch(planner, /depthMetres:/);
 });
 
@@ -222,7 +232,8 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /hasReachedRouteTarget\(fix, target\)/);
   assert.match(planner, /routeProgressPercent\(route\.distanceMetres, progressMetres\)/);
   assert.match(planner, /className="route-start-trip"/);
-  assert.match(planner, /route-navigation[\s\S]*copy\.remaining[\s\S]*copy\.remainingEta[\s\S]*copy\.clearance/);
+  assert.match(planner, /route-navigation[\s\S]*copy\.remaining[\s\S]*copy\.remainingEta/);
+  assert.match(planner, /route-clearance-chip[\s\S]*copy\.clearance/);
   assert.match(planner, /\{journeyState === "planning" && <div className="route-metrics">/);
   assert.match(planner, /REISE AKTIV/);
   assert.match(planner, /TRIP ACTIVE/);
