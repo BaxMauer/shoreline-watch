@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { isPointOnLand } from "../lib/shoreline.ts";
+import { ROUTE_PASSAGE_HINTS } from "../lib/route-passages.ts";
 import {
   formatRouteDistance,
   getStartFixCorrectionTolerance,
@@ -330,6 +331,7 @@ test("the bundled Croatia chart produces a water-only route with configured clea
   );
   assert.ok(result.route, result.failure);
   assert.equal(result.route.mode, "clearance");
+  assert.deepEqual(result.route.passageIds, []);
   assert.ok(result.route.distanceMetres > 7_500 && result.route.distanceMetres < 10_000);
   assert.ok(result.route.minimumShoreDistanceMetres >= 300);
   for (let index = 1; index < result.route.points.length; index += 1) {
@@ -346,7 +348,7 @@ test("the bundled Croatia chart produces a water-only route with configured clea
   }
 });
 
-test("the bundled Croatia chart routes around the Murter island chain instead of reporting a false blockage", async () => {
+test("the bundled Croatia chart routes through the conditional Tisno bridge passage", async () => {
   const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const start = { longitude: 15.61, latitude: 43.72 };
   const destination = { longitude: 15.65, latitude: 43.82 };
@@ -359,8 +361,45 @@ test("the bundled Croatia chart routes around the Murter island chain instead of
   assert.ok(result.route, result.failure);
   assert.ok(performance.now() - startedAt < 5_000, "route calculation must remain interactive on a phone");
   assert.equal(result.route.mode, "restricted");
-  assert.ok(result.route.distanceMetres > geoDistanceMetres(start, destination) * 1.7);
-  assert.ok(result.route.distanceMetres < 30_000);
+  assert.deepEqual(result.route.passageIds, ["tisno-murter-bridge"]);
+  assert.ok(result.route.distanceMetres < 21_000);
+  for (let index = 1; index < result.route.points.length; index += 1) {
+    assert.equal(routeSegmentCrossesShoreline(croatiaPack, result.route.points[index - 1], result.route.points[index]), false);
+  }
+});
+
+test("the Tisno passage remains water-only and works in the reverse direction", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const passage = ROUTE_PASSAGE_HINTS.find(({ id }) => id === "tisno-murter-bridge");
+  assert.ok(passage);
+  assert.equal(routeGeometryIsWaterOnly(croatiaPack, passage.points), true);
+  for (let index = 1; index < passage.points.length; index += 1) {
+    assert.equal(routeSegmentCrossesShoreline(croatiaPack, passage.points[index - 1], passage.points[index]), false);
+  }
+
+  const result = planWaterRoute(
+    croatiaPack,
+    { longitude: 15.65, latitude: 43.82 },
+    { longitude: 15.61, latitude: 43.72 },
+    { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12 },
+  );
+  assert.ok(result.route, result.failure);
+  assert.equal(result.route.mode, "restricted");
+  assert.deepEqual(result.route.passageIds, ["tisno-murter-bridge"]);
+  assert.ok(result.route.distanceMetres < 22_500);
+});
+
+test("conditional passage routing can be disabled without weakening shoreline checks", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const result = planWaterRoute(
+    croatiaPack,
+    { longitude: 15.61, latitude: 43.72 },
+    { longitude: 15.65, latitude: 43.82 },
+    { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12, conditionalPassagesEnabled: false },
+  );
+  assert.ok(result.route, result.failure);
+  assert.deepEqual(result.route.passageIds, []);
+  assert.ok(result.route.distanceMetres > 23_000);
   for (let index = 1; index < result.route.points.length; index += 1) {
     assert.equal(routeSegmentCrossesShoreline(croatiaPack, result.route.points[index - 1], result.route.points[index]), false);
   }

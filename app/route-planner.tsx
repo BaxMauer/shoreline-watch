@@ -56,6 +56,7 @@ const COPY = {
     waiting: "ZIEL WÄHLEN",
     clearanceDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie hält den bevorzugten Abstand von ${distance} m ein.`,
     restrictedDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie unterschreitet stellenweise ${distance} m – besonders Start und Ziel prüfen.`,
+    tisnoPassage: "Tisno-Klappbrücke: Nur bei geöffneter Brücke nutzen. Öffnung, Tiefe, Durchfahrtshöhe, Strömung, Verkehr und lokale Signale vor der Fahrt prüfen.",
     navigationScope: "Nur Küstengeometrie & Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m Abstand · ${speed} kn küstennah`
@@ -101,6 +102,7 @@ const COPY = {
     waiting: "CHOOSE TARGET",
     clearanceDetail: (distance: number) => `The calculated shoreline geometry maintains the preferred ${distance} m clearance.`,
     restrictedDetail: (distance: number) => `The calculated shoreline geometry is inside ${distance} m in places – check start and destination carefully.`,
+    tisnoPassage: "Tisno lift bridge: use only while raised. Verify opening, depth, air draft, current, traffic, and local signals before departure.",
     navigationScope: "Shoreline geometry & clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m clearance · ${speed} kn near shore`
@@ -456,6 +458,7 @@ export default function RoutePlanner({
               <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
             </div>
             <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.clearanceDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
+            {route.passageIds.includes("tisno-murter-bridge") && <p className="route-passage-warning" role="alert">{copy.tisnoPassage}</p>}
           </>
         ) : <p className="route-message">{copy.subtitle}</p>}
         <p className="navigation-scope route-scope">{copy.navigationScope}</p>

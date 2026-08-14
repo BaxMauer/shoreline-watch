@@ -7,6 +7,7 @@ import {
   type LongitudeInterval,
 } from "./shoreline.ts";
 import { MAXIMUM_NAVIGATION_ACCURACY_METRES } from "./navigation-metrics.ts";
+import { ROUTE_PASSAGE_HINTS } from "./route-passages.ts";
 
 export type GeoPoint = { longitude: number; latitude: number };
 
@@ -18,6 +19,8 @@ export type RoutePlanningOptions = {
   maximumDistanceMetres?: number;
   /** Accuracy of the live fix. Used only to recover a start fix that falls just inside the charted shoreline. */
   startAccuracyMetres?: number;
+  /** Allow conditional, manually verified passages such as the Tisno lift bridge. */
+  conditionalPassagesEnabled?: boolean;
 };
 
 export type PlannedRoute = {
@@ -27,6 +30,7 @@ export type PlannedRoute = {
   minimumShoreDistanceMetres: number;
   restrictedDistanceMetres: number;
   mode: "clearance" | "restricted";
+  passageIds: string[];
 };
 
 export type RoutePlanningFailure = "outside-region" | "destination-on-land" | "too-far" | "no-route";
@@ -262,6 +266,7 @@ function buildRoute(
   points: GeoPoint[],
   options: RoutePlanningOptions,
   mode: PlannedRoute["mode"],
+  passageIds: string[] = [],
 ) {
   let distanceMetres = 0;
   let estimatedSeconds = 0;
@@ -307,6 +312,7 @@ function buildRoute(
     minimumShoreDistanceMetres: Number.isFinite(minimumShoreDistanceMetres) ? minimumShoreDistanceMetres : 0,
     restrictedDistanceMetres,
     mode,
+    passageIds,
   } satisfies PlannedRoute;
 }
 
@@ -322,6 +328,7 @@ export function planWaterRoute(
     cruiseSpeedKnots: Math.max(1, rawOptions.cruiseSpeedKnots),
     nearShoreSpeedKnots: Math.max(1, rawOptions.nearShoreSpeedKnots),
     maximumDistanceMetres: rawOptions.maximumDistanceMetres ?? 120_000,
+    conditionalPassagesEnabled: rawOptions.conditionalPassagesEnabled ?? true,
   };
   const insideBounds = (point: GeoPoint) => point.longitude >= pack.bounds[0] && point.longitude <= pack.bounds[2]
     && point.latitude >= pack.bounds[1] && point.latitude <= pack.bounds[3];
@@ -375,6 +382,7 @@ export function planWaterRoute(
     const height = maximumY - minimumY;
     const columns = Math.max(3, Math.floor(width / cellSize) + 1);
     const rows = Math.max(3, Math.floor(height / cellSize) + 1);
+    const gridNodeCount = columns * rows;
     const pointFor = (column: number, row: number) => toGeo({ x: minimumX + column * cellSize, y: minimumY + row * cellSize });
     const nearestIndex = (point: LocalPoint) => ({
       column: Math.max(0, Math.min(columns - 1, Math.round((point.x - minimumX) / cellSize))),
@@ -386,9 +394,32 @@ export function planWaterRoute(
     const landIntervalsByRow = new Map<number, LongitudeInterval[]>();
     const minimumLongitude = toGeo({ x: minimumX - cellSize, y: 0 }).longitude;
     const maximumLongitude = toGeo({ x: maximumX + cellSize, y: 0 }).longitude;
+    const activePassages = options.conditionalPassagesEnabled && allowRestricted
+      ? ROUTE_PASSAGE_HINTS.filter((passage) => passage.points.every((point) => {
+        const local = toLocal(point);
+        return local.x >= minimumX && local.x <= maximumX && local.y >= minimumY && local.y <= maximumY;
+      }) && routeGeometryIsWaterOnly(pack, passage.points))
+      : [];
+    const passageNodes = activePassages.flatMap((passage) => passage.points.map((point, pointIndex) => ({
+      passageId: passage.id,
+      pointIndex,
+      point,
+    })));
     const node = (key: number) => {
       const cached = nodeCache.get(key);
       if (cached) return cached;
+      if (key >= gridNodeCount) {
+        const passageNode = passageNodes[key - gridNodeCount];
+        if (!passageNode) throw new Error("Invalid passage node");
+        const land = isPointOnLand(pack, passageNode.point.longitude, passageNode.point.latitude);
+        const value = {
+          point: passageNode.point,
+          land,
+          shoreDistance: land ? 0 : shorelineDistanceWithin(pack, passageNode.point, routedClearance * 1.8),
+        };
+        nodeCache.set(key, value);
+        return value;
+      }
       const row = Math.floor(key / columns);
       const column = key % columns;
       const point = pointFor(column, row);
@@ -442,10 +473,36 @@ export function planWaterRoute(
       if (current === undefined || candidate.connectionDistance < current) destinationConnections.set(candidate.key, candidate.connectionDistance);
     }
     const nearEndpoint = (point: GeoPoint) => geoDistanceMetres(point, start) <= endpointGrace || geoDistanceMetres(point, destination) <= endpointGrace;
+    const passageConnections = new Map<number, number[]>();
+    const addPassageConnection = (gridKey: number, passageKey: number) => {
+      passageConnections.set(gridKey, [...(passageConnections.get(gridKey) ?? []), passageKey]);
+      passageConnections.set(passageKey, [...(passageConnections.get(passageKey) ?? []), gridKey]);
+    };
+    let passageOffset = 0;
+    for (const passage of activePassages) {
+      for (const passageIndex of [0, passage.points.length - 1]) {
+        const passageKey = gridNodeCount + passageOffset + passageIndex;
+        const passagePoint = passage.points[passageIndex];
+        const centreIndex = nearestIndex(toLocal(passagePoint));
+        const connectionLimit = Math.max(350, cellSize * 3.25);
+        const radius = Math.max(1, Math.ceil(connectionLimit / cellSize));
+        for (let row = Math.max(0, centreIndex.row - radius); row <= Math.min(rows - 1, centreIndex.row + radius); row += 1) {
+          for (let column = Math.max(0, centreIndex.column - radius); column <= Math.min(columns - 1, centreIndex.column + radius); column += 1) {
+            const gridKey = row * columns + column;
+            const candidate = node(gridKey);
+            if (candidate.land || geoDistanceMetres(candidate.point, passagePoint) > connectionLimit) continue;
+            if (routeSegmentCrossesShoreline(pack, candidate.point, passagePoint)) continue;
+            addPassageConnection(gridKey, passageKey);
+          }
+        }
+      }
+      passageOffset += passage.points.length;
+    }
     const open = new MinHeap();
-    const costs = new Float64Array(columns * rows);
+    const totalNodeCount = gridNodeCount + passageNodes.length;
+    const costs = new Float64Array(totalNodeCount);
     costs.fill(Number.POSITIVE_INFINITY);
-    const previous = new Int32Array(columns * rows);
+    const previous = new Int32Array(totalNodeCount);
     previous.fill(-1);
     for (const candidate of startCandidates) {
       // Starting from a chart-adjusted fix is deliberately more expensive than
@@ -456,7 +513,7 @@ export function planWaterRoute(
       previous[candidate.key] = -2;
       open.push({ key: candidate.key, score: cost + geoDistanceMetres(node(candidate.key).point, destination) });
     }
-    const closed = new Uint8Array(columns * rows);
+    const closed = new Uint8Array(totalNodeCount);
     const directions = [-1, 0, 1];
     const edgeCache = new Map<string, boolean>();
     let reachedKey = -1;
@@ -469,15 +526,28 @@ export function planWaterRoute(
         break;
       }
       closed[currentEntry.key] = 1;
-      const currentRow = Math.floor(currentEntry.key / columns);
-      const currentColumn = currentEntry.key % columns;
+      const neighbourKeys: number[] = [];
+      if (currentEntry.key < gridNodeCount) {
+        const currentRow = Math.floor(currentEntry.key / columns);
+        const currentColumn = currentEntry.key % columns;
+        for (const rowStep of directions) for (const columnStep of directions) {
+          if (rowStep === 0 && columnStep === 0) continue;
+          const nextRow = currentRow + rowStep;
+          const nextColumn = currentColumn + columnStep;
+          if (nextRow < 0 || nextRow >= rows || nextColumn < 0 || nextColumn >= columns) continue;
+          neighbourKeys.push(nextRow * columns + nextColumn);
+        }
+      } else {
+        const passageNodeIndex = currentEntry.key - gridNodeCount;
+        const passageNode = passageNodes[passageNodeIndex];
+        const previousPassageNode = passageNodes[passageNodeIndex - 1];
+        const nextPassageNode = passageNodes[passageNodeIndex + 1];
+        if (previousPassageNode?.passageId === passageNode.passageId) neighbourKeys.push(currentEntry.key - 1);
+        if (nextPassageNode?.passageId === passageNode.passageId) neighbourKeys.push(currentEntry.key + 1);
+      }
+      neighbourKeys.push(...(passageConnections.get(currentEntry.key) ?? []));
 
-      for (const rowStep of directions) for (const columnStep of directions) {
-        if (rowStep === 0 && columnStep === 0) continue;
-        const nextRow = currentRow + rowStep;
-        const nextColumn = currentColumn + columnStep;
-        if (nextRow < 0 || nextRow >= rows || nextColumn < 0 || nextColumn >= columns) continue;
-        const nextKey = nextRow * columns + nextColumn;
+      for (const nextKey of neighbourKeys) {
         if (closed[nextKey]) continue;
         const next = node(nextKey);
         if (next.land) continue;
@@ -496,9 +566,14 @@ export function planWaterRoute(
         // Diagonal movement is valid when the sampled segment itself remains
         // in water. Requiring both neighbouring square cells to be water used
         // to reject real angled channels and Croatian island narrows.
-        const stepDistance = cellSize * (rowStep !== 0 && columnStep !== 0 ? Math.SQRT2 : 1);
+        const stepDistance = geoDistanceMetres(current.point, next.point);
         const proximity = options.clearanceMetres <= 0 ? 0 : Math.max(0, 1 - next.shoreDistance / Math.max(1, options.clearanceMetres));
-        const penalty = restricted ? (allowRestricted ? 9 : 4) : 1 + proximity * 1.5;
+        // Passage hints represent intentionally selected narrow waterways. Do
+        // not apply the generic shoreline-avoidance multiplier to their
+        // validated centreline, or A* will always prefer a many-mile detour.
+        // The resulting route is still measured and labelled restricted.
+        const passageEdge = currentEntry.key >= gridNodeCount || nextKey >= gridNodeCount;
+        const penalty = passageEdge ? 1 : restricted ? (allowRestricted ? 9 : 4) : 1 + proximity * 1.5;
         const nextCost = costs[currentEntry.key] + stepDistance * penalty;
         if (nextCost >= costs[nextKey]) continue;
         costs[nextKey] = nextCost;
@@ -509,9 +584,11 @@ export function planWaterRoute(
 
     if (reachedKey < 0) return null;
     const reversed: GeoPoint[] = [];
+    const usedPassageIds = new Set<string>();
     let key = reachedKey;
     while (key >= 0) {
       reversed.push(node(key).point);
+      if (key >= gridNodeCount) usedPassageIds.add(passageNodes[key - gridNodeCount].passageId);
       key = previous[key];
       if (key === -2) break;
       if (key < 0) return null;
@@ -519,10 +596,10 @@ export function planWaterRoute(
     const points = [start, ...reversed.reverse(), destination]
       .filter((point, index, routePoints) => index === 0 || geoDistanceMetres(routePoints[index - 1], point) > 0.5);
     if (!routeGeometryIsWaterOnly(pack, points, startIsLand ? startSnapTolerance : 0)) return null;
-    return points;
+    return { points, passageIds: [...usedPassageIds] };
   };
 
-  let rawPoints: GeoPoint[] | null = null;
+  let rawResult: { points: GeoPoint[]; passageIds: string[] } | null = null;
   let strict = false;
   const searchAreas = margins.map((margin) => {
     const width = Math.min(packEast, Math.max(startLocal.x, destinationLocal.x) + margin)
@@ -539,27 +616,27 @@ export function planWaterRoute(
   // around long peninsulas: zoom does not define the route corridor, and a
   // coarse expanded path is preferable to proving every cell in a corridor
   // that simply cannot contain the required detour.
-  let restrictedFallback: GeoPoint[] | null = null;
+  let restrictedFallback: { points: GeoPoint[]; passageIds: string[] } | null = null;
   for (const { margin, resolutions } of searchAreas) {
     const coarse = resolutions[0];
-    rawPoints = runAttempt(margin, coarse, false);
-    if (rawPoints) {
+    rawResult = runAttempt(margin, coarse, false);
+    if (rawResult) {
       strict = true;
       break;
     }
     const candidate = runAttempt(margin, coarse, true);
     if (!candidate) continue;
-    const measured = buildRoute(pack, candidate, options, "restricted");
+    const measured = buildRoute(pack, candidate.points, options, "restricted", candidate.passageIds);
     if (measured.restrictedDistanceMetres === 0) {
-      rawPoints = candidate;
+      rawResult = candidate;
       strict = true;
       break;
     }
-    if (!restrictedFallback || measured.distanceMetres < buildRoute(pack, restrictedFallback, options, "restricted").distanceMetres) {
+    if (!restrictedFallback || measured.distanceMetres < buildRoute(pack, restrictedFallback.points, options, "restricted", restrictedFallback.passageIds).distanceMetres) {
       restrictedFallback = candidate;
     }
   }
-  if (!rawPoints) {
+  if (!rawResult) {
     for (const { margin, width, height, resolutions } of searchAreas) {
       const fine = resolutions.at(-1) as number;
       if (fine === resolutions[0]) continue;
@@ -567,40 +644,40 @@ export function planWaterRoute(
       // channels. Bound this refinement so a phone does not exhaustively scan
       // a whole archipelago when a valid restricted route is already known.
       if (width * height / (fine * fine) > 70_000 && restrictedFallback) continue;
-      rawPoints = runAttempt(margin, fine, false);
-      if (rawPoints) {
+      rawResult = runAttempt(margin, fine, false);
+      if (rawResult) {
         strict = true;
         break;
       }
       const refinedCandidate = runAttempt(margin, fine, true);
       if (!refinedCandidate) continue;
-      const refined = buildRoute(pack, refinedCandidate, options, "restricted");
+      const refined = buildRoute(pack, refinedCandidate.points, options, "restricted", refinedCandidate.passageIds);
       if (refined.restrictedDistanceMetres === 0) {
-        rawPoints = refinedCandidate;
+        rawResult = refinedCandidate;
         strict = true;
         break;
       }
       if (!restrictedFallback || refined.restrictedDistanceMetres
-        < buildRoute(pack, restrictedFallback, options, "restricted").restrictedDistanceMetres) {
+        < buildRoute(pack, restrictedFallback.points, options, "restricted", restrictedFallback.passageIds).restrictedDistanceMetres) {
         restrictedFallback = refinedCandidate;
       }
     }
   }
-  if (!rawPoints && restrictedFallback) rawPoints = restrictedFallback;
-  if (!rawPoints) {
+  if (!rawResult && restrictedFallback) rawResult = restrictedFallback;
+  if (!rawResult) {
     for (const { margin, resolutions } of searchAreas) {
       const fine = resolutions.at(-1) as number;
       if (fine === resolutions[0]) continue;
-      rawPoints = runAttempt(margin, fine, true);
-      if (rawPoints) break;
+      rawResult = runAttempt(margin, fine, true);
+      if (rawResult) break;
     }
   }
-  if (!rawPoints) return { failure: "no-route" };
-  if (!routeGeometryIsWaterOnly(pack, rawPoints, startIsLand ? startSnapTolerance : 0)) return { failure: "no-route" };
-  const route = buildRoute(pack, rawPoints, options, strict ? "clearance" : "restricted");
+  if (!rawResult) return { failure: "no-route" };
+  if (!routeGeometryIsWaterOnly(pack, rawResult.points, startIsLand ? startSnapTolerance : 0)) return { failure: "no-route" };
+  const route = buildRoute(pack, rawResult.points, options, strict ? "clearance" : "restricted", rawResult.passageIds);
   // Endpoint grace helps with normal GPS drift close to shore, but the result
   // must still be labelled restricted whenever the measured route enters the
   // configured clearance zone.
-  route.mode = route.restrictedDistanceMetres > 0 ? "restricted" : "clearance";
+  route.mode = route.restrictedDistanceMetres > 0 || route.passageIds.length > 0 ? "restricted" : "clearance";
   return { route };
 }

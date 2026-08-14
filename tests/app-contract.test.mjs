@@ -200,18 +200,24 @@ test("route bearing follows monotonic projected progress instead of a passed way
 test("navigation claims stay within shoreline geometry and clearance data", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   for (const blindSpot of ["Tiefe", "Felsen", "Verkehr", "Bojen", "Fahrwasser", "Wetter", "Vorschriften"]) {
-    assert.match(app, new RegExp(blindSpot));
     assert.match(planner, new RegExp(blindSpot));
   }
   for (const blindSpot of ["depth", "rock", "traffic", "buoy", "channel", "weather", "legal"]) {
-    assert.match(app, new RegExp(blindSpot));
     assert.match(planner, new RegExp(blindSpot));
   }
-  assert.match(app, /<p className="navigation-scope">\{copy\.navigationScope\}<\/p>/);
+  assert.doesNotMatch(app, /className="navigation-scope"/);
   assert.match(app, /<span className="power-save-scope">\{copy\.powerNavigationScope\}<\/span>/);
   assert.match(planner, /<p className="navigation-scope route-scope">\{copy\.navigationScope\}<\/p>/);
   assert.doesNotMatch(app, /Freifahrtton|Safe-water chime/);
   assert.doesNotMatch(planner, /Sichere Wasserroute|safe water route|available Croatia chart/);
+});
+
+test("conditional Tisno routes remain CHECK routes with bilingual bridge warnings", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /Tisno-Klappbrücke:[\s\S]*geöffneter Brücke/);
+  assert.match(planner, /Tisno lift bridge:[\s\S]*only while raised/);
+  assert.match(planner, /route\.passageIds\.includes\("tisno-murter-bridge"\)/);
+  assert.match(planner, /className="route-passage-warning" role="alert"/);
 });
 
 test("route planning copy covers German and English instructions and every failure", async () => {
