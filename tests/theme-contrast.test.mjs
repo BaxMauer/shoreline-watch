@@ -123,11 +123,20 @@ test("distance, status, GO, and warning cards are sized for viewing from afar", 
   assert.match(css, /\.distance-readout strong\s*\{[^}]*--distance-scale/s);
   assert.match(css, /\.status-pill\s*\{[^}]*min-height:\s*42px[^}]*font-size:\s*\.78rem/s);
   assert.match(css, /\.go-no-go\s*\{[^}]*min-height:\s*58px[^}]*font-size:\s*1\.12rem/s);
-  assert.match(css, /\.course-alert\s*\{[^}]*min-height:\s*76px/s);
+  assert.match(css, /\.course-alert\s*\{[^}]*min-height:\s*64px/s);
   assert.match(css, /\.visual-signal-card strong\s*\{[^}]*font-size:\s*1\.28rem/s);
   assert.match(css, /\.theme-xp \.go-no-go\.no-go, \.theme-nautical \.go-no-go\.no-go, \.sunlight-mode \.go-no-go\.no-go\s*\{[^}]*#9f2d23[^}]*#fff/s);
   assert.match(css, /\.theme-xp \.go-no-go\.go, \.theme-nautical \.go-no-go\.go, \.sunlight-mode \.go-no-go\.go\s*\{[^}]*#006b54[^}]*#fff/s);
   assert.match(css, /\.speed-readout, \.current-depth-chip\s*\{[^}]*min-height:\s*38px[^}]*font-variant-numeric:\s*tabular-nums/s);
+});
+
+test("live map uses dedicated rows without persistent overlays", () => {
+  assert.match(css, /\.is-tracking \.topbar\s*\{[^}]*min-height:\s*38px/s);
+  assert.match(css, /\.instrument\s*\{[^}]*display:\s*grid[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto/s);
+  assert.match(css, /\.map-stage\s*\{[^}]*position:\s*relative[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.proximity-plot\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/s);
+  assert.match(css, /\.instrument-footer\s*\{[^}]*position:\s*relative/s);
+  assert.doesNotMatch(css, /\.distance-readout\s*\{[^}]*position:\s*absolute/s);
 });
 
 test("active route view exposes compact live shoreline and depth readouts", () => {
@@ -189,6 +198,7 @@ test("anchor timer and debug panel remain compact and readable", () => {
   assert.match(css, /\.anchor-timer-chip\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
   assert.match(css, /\.anchor-timer-chip\.active\s*\{[^}]*background:/s);
   assert.match(css, /\.debug-panel pre\s*\{[^}]*max-height:\s*42svh[^}]*overflow:\s*auto/s);
-  assert.match(css, /\.debug-panel\s*\{[^}]*position:\s*fixed[^}]*width:\s*42px/s);
+  assert.match(css, /\.debug-panel\s*\{[^}]*position:\s*relative[^}]*width:\s*30px/s);
+  assert.match(css, /\.debug-panel\[open\]\s*\{[^}]*position:\s*fixed/s);
   assert.match(css, /\.power-save-go\.no-go\s*\{[^}]*#a83229/s);
 });
