@@ -156,6 +156,8 @@ export default function RoutePlanner({
   const [coordinateLatitude, setCoordinateLatitude] = useState("");
   const [coordinateLongitude, setCoordinateLongitude] = useState("");
   const plannedFrom = useRef<GeoPoint | null>(null);
+  const rerouteTimer = useRef<number | null>(null);
+  const latestRerouteFix = useRef<Fix | null>(fix);
   const routeWorker = useRef<RoutePlanningWorkerController | null>(null);
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const mapGesture = useRef<{
@@ -165,6 +167,12 @@ export default function RoutePlanner({
     distance: number;
     moved: boolean;
   } | null>(null);
+
+  const clearPendingReroute = useCallback(() => {
+    if (rerouteTimer.current === null) return;
+    window.clearTimeout(rerouteTimer.current);
+    rerouteTimer.current = null;
+  }, []);
 
   useEffect(() => {
     const controller = new RoutePlanningWorkerController(() => new Worker(
@@ -177,6 +185,8 @@ export default function RoutePlanner({
       if (routeWorker.current === controller) routeWorker.current = null;
     };
   }, []);
+
+  useEffect(() => () => clearPendingReroute(), [clearPendingReroute]);
 
   const calculate = useCallback((destination: GeoPoint, startOverride?: Fix) => {
     const start = startOverride ?? fix;
@@ -212,8 +222,9 @@ export default function RoutePlanner({
 
   useEffect(() => {
     if (gpsReliable) return;
+    clearPendingReroute();
     routeWorker.current?.cancel();
-  }, [gpsReliable]);
+  }, [clearPendingReroute, gpsReliable]);
 
   const selectTarget = useCallback((destination: GeoPoint) => {
     setTarget(destination);
@@ -224,11 +235,22 @@ export default function RoutePlanner({
   }, [calculate, fix]);
 
   useEffect(() => {
-    if (!target || !fix || !gpsReliable || !plannedFrom.current || planning) return;
+    latestRerouteFix.current = fix;
+    if (!target || !gpsReliable || planning) {
+      clearPendingReroute();
+      return;
+    }
+    if (!fix || !plannedFrom.current) return;
     if (!shouldRerouteRoute(plannedFrom.current, fix, warningConfig.distanceMetres)) return;
-    const timer = window.setTimeout(() => calculate(target, fix), 500);
-    return () => window.clearTimeout(timer);
-  }, [calculate, fix, gpsReliable, planning, target, warningConfig.distanceMetres]);
+    if (rerouteTimer.current !== null) return;
+    rerouteTimer.current = window.setTimeout(() => {
+      rerouteTimer.current = null;
+      const rerouteFix = latestRerouteFix.current;
+      if (!rerouteFix || !plannedFrom.current) return;
+      if (!shouldRerouteRoute(plannedFrom.current, rerouteFix, warningConfig.distanceMetres)) return;
+      calculate(target, rerouteFix);
+    }, 500);
+  }, [calculate, clearPendingReroute, fix, gpsReliable, planning, target, warningConfig.distanceMetres]);
 
   useEffect(() => {
     if (!target || !fix || !gpsReliable) return;
@@ -373,6 +395,7 @@ export default function RoutePlanner({
   };
 
   const reset = () => {
+    clearPendingReroute();
     routeWorker.current?.cancel();
     setTarget(null);
     setRoute(null);
