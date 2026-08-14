@@ -134,6 +134,9 @@ test("active route view exposes compact live shoreline and depth readouts", () =
   assert.match(css, /\.route-live-readouts\s*\{[^}]*position:\s*absolute[^}]*display:\s*flex/s);
   assert.match(css, /\.route-live-readouts > span\s*\{[^}]*min-height:\s*48px/s);
   assert.match(css, /\.route-live-readouts > span\.ready strong\s*\{[^}]*#9ff5dd/s);
+  assert.match(css, /\.route-warning-ring\s*\{[^}]*stroke-dasharray:[^}]*vector-effect:\s*non-scaling-stroke/s);
+  assert.match(css, /\.route-live-proximity\.danger \.route-warning-ring\s*\{[^}]*var\(--danger\)[^}]*ring-breathe/s);
+  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*aspect-ratio:\s*1 \/ 1/s);
 });
 
 test("route map declares touch panning and strong focus affordances", () => {

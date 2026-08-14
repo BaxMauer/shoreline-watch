@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   EMODNET_DEPTH_GRID_RESOLUTION_METRES,
+  buildCurrentDepthProxyUrl,
   buildCurrentDepthRequestUrl,
+  buildEmodnetDepthSampleUrl,
   depthSampleCellKey,
+  fetchCurrentWaterDepth,
+  fetchEmodnetWaterDepth,
   formatCurrentDepth,
+  parseCurrentDepthProxyPayload,
   parseEmodnetWaterDepth,
 } from "../lib/bathymetry.ts";
 
@@ -34,6 +39,62 @@ test("GPS fixes are sampled once per approximate EMODnet grid cell", () => {
   assert.equal(depthSampleCellKey({ latitude: 43.829022, longitude: 15.607251 }), "43.829:15.607");
   assert.equal(depthSampleCellKey({ latitude: 43.82904, longitude: 15.60729 }), "43.829:15.607");
   assert.equal(depthSampleCellKey({ latitude: Number.NaN, longitude: 15.6 }), null);
+});
+
+test("current depth uses a same-origin proxy while the server queries EMODnet REST", () => {
+  const point = { longitude: 15.8074, latitude: 43.6946 };
+  const proxy = new URL(buildCurrentDepthProxyUrl(point), "https://boot.example");
+  assert.equal(proxy.origin, "https://boot.example");
+  assert.equal(proxy.pathname, "/api/depth");
+  assert.equal(proxy.searchParams.get("latitude"), "43.6946");
+  assert.equal(proxy.searchParams.get("longitude"), "15.8074");
+
+  const upstream = new URL(buildEmodnetDepthSampleUrl(point));
+  assert.equal(upstream.origin, "https://rest.emodnet-bathymetry.eu");
+  assert.equal(upstream.pathname, "/depth_sample");
+  assert.equal(upstream.searchParams.get("geom"), "POINT(15.8074 43.6946)");
+});
+
+test("depth proxy payloads accept only finite non-negative metre values", () => {
+  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: 56.355 }), 56.355);
+  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: null }), null);
+  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: "56.355" }), null);
+  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: -2 }), null);
+  assert.equal(parseCurrentDepthProxyPayload(null), null);
+});
+
+test("server-side depth lookup prefers REST and falls back to WMS", async () => {
+  const point = { longitude: 15.8074, latitude: 43.6946 };
+  const directCalls = [];
+  const direct = await fetchEmodnetWaterDepth(point, async (url) => {
+    directCalls.push(String(url));
+    return Response.json({ avg: -56.355 });
+  });
+  assert.equal(direct, 56.355);
+  assert.equal(directCalls.length, 1);
+  assert.match(directCalls[0], /rest\.emodnet-bathymetry\.eu/);
+
+  const fallbackCalls = [];
+  const fallback = await fetchEmodnetWaterDepth(point, async (url) => {
+    fallbackCalls.push(String(url));
+    if (fallbackCalls.length === 1) return new Response("unavailable", { status: 503 });
+    return Response.json({ features: [{ properties: { Depth: -12.4 } }] });
+  });
+  assert.equal(fallback, 12.4);
+  assert.equal(fallbackCalls.length, 2);
+  assert.match(fallbackCalls[1], /ows\.emodnet-bathymetry\.eu/);
+});
+
+test("browser depth lookup races the same-origin proxy with the CORS WMS fallback", async () => {
+  const point = { longitude: 15.8074, latitude: 43.6946 };
+  const calls = [];
+  const depth = await fetchCurrentWaterDepth(point, async (url) => {
+    calls.push(String(url));
+    if (String(url).startsWith("/api/depth")) return new Response("proxy unavailable", { status: 502 });
+    return Response.json({ features: [{ properties: { Depth: -56.355 } }] });
+  });
+  assert.equal(depth, 56.355);
+  assert.equal(calls.length, 2);
 });
 
 test("current chart depth is formatted compactly for both languages", () => {

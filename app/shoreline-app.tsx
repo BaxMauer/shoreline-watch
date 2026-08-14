@@ -41,10 +41,9 @@ import {
   type DistanceSample,
 } from "../lib/navigation-metrics";
 import {
-  buildCurrentDepthRequestUrl,
   depthSampleCellKey,
+  fetchCurrentWaterDepth,
   formatCurrentDepth,
-  parseEmodnetWaterDepth,
   type CurrentDepthState,
 } from "../lib/bathymetry";
 
@@ -725,24 +724,14 @@ export default function ShorelineApp() {
     const timer = window.setTimeout(() => {
       setCurrentDepthMetres(null);
       setCurrentDepthState("loading");
-      fetch(buildCurrentDepthRequestUrl({ latitude: depthLatitude, longitude: depthLongitude }), {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      })
-        .then((response) => {
-          if (!response.ok) throw new Error(`Depth request returned ${response.status}`);
-          return response.json() as Promise<unknown>;
-        })
-        .then((payload) => {
+      fetchCurrentWaterDepth(
+        { latitude: depthLatitude, longitude: depthLongitude },
+        (input, init) => fetch(input, { ...init, signal: controller.signal }),
+      )
+        .then((depthMetres) => {
           if (controller.signal.aborted) return;
-          const depthMetres = parseEmodnetWaterDepth(payload);
-          if (depthMetres !== null) {
-            setCurrentDepthMetres(depthMetres);
-            setCurrentDepthState("ready");
-          } else {
-            setCurrentDepthMetres(null);
-            setCurrentDepthState("unavailable");
-          }
+          setCurrentDepthMetres(depthMetres);
+          setCurrentDepthState("ready");
         })
         .catch(() => {
           if (controller.signal.aborted) return;

@@ -1,6 +1,7 @@
 import type { GeoPoint } from "./route-planning.ts";
 
 export const EMODNET_DEPTH_SAMPLE_ORIGIN = "https://ows.emodnet-bathymetry.eu";
+export const EMODNET_DEPTH_REST_ORIGIN = "https://rest.emodnet-bathymetry.eu";
 export const EMODNET_DEPTH_GRID_RESOLUTION_METRES = 115;
 
 export type CurrentDepthState = "idle" | "loading" | "ready" | "unavailable" | "error";
@@ -51,6 +52,63 @@ export function buildCurrentDepthRequestUrl(point: GeoPoint) {
     FEATURE_COUNT: "1",
   });
   return `${EMODNET_DEPTH_SAMPLE_ORIGIN}/wms?${parameters.toString()}`;
+}
+
+export function buildEmodnetDepthSampleUrl(point: GeoPoint) {
+  const parameters = new URLSearchParams({
+    geom: `POINT(${point.longitude} ${point.latitude})`,
+  });
+  return `${EMODNET_DEPTH_REST_ORIGIN}/depth_sample?${parameters.toString()}`;
+}
+
+export function buildCurrentDepthProxyUrl(point: GeoPoint) {
+  const parameters = new URLSearchParams({
+    latitude: point.latitude.toString(),
+    longitude: point.longitude.toString(),
+  });
+  return `/api/depth?${parameters.toString()}`;
+}
+
+export function parseCurrentDepthProxyPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const depthMetres = finiteNumber((payload as Record<string, unknown>).depthMetres);
+  return depthMetres !== null && depthMetres >= 0 ? depthMetres : null;
+}
+
+export async function fetchEmodnetWaterDepth(
+  point: GeoPoint,
+  fetcher: typeof fetch = fetch,
+) {
+  let upstreamFailure: unknown = null;
+  for (const url of [buildEmodnetDepthSampleUrl(point), buildCurrentDepthRequestUrl(point)]) {
+    try {
+      const response = await fetcher(url, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`Depth request returned ${response.status}`);
+      const depth = parseEmodnetWaterDepth(await response.json());
+      if (depth !== null) return depth;
+    } catch (error) {
+      upstreamFailure = error;
+    }
+  }
+  if (upstreamFailure) throw upstreamFailure;
+  return null;
+}
+
+export async function fetchCurrentWaterDepth(
+  point: GeoPoint,
+  fetcher: typeof fetch = fetch,
+) {
+  const readDepth = async (url: string, parse: (payload: unknown) => number | null) => {
+    const response = await fetcher(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Depth request returned ${response.status}`);
+    const depth = parse(await response.json());
+    if (depth === null) throw new Error("No water depth in this grid cell");
+    return depth;
+  };
+  return Promise.any([
+    readDepth(buildCurrentDepthProxyUrl(point), parseCurrentDepthProxyPayload),
+    readDepth(buildCurrentDepthRequestUrl(point), parseEmodnetWaterDepth),
+  ]);
 }
 
 export function formatCurrentDepth(depthMetres: number | null, language: "de" | "en") {
