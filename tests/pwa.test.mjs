@@ -61,6 +61,7 @@ test("service worker precaches the complete install shell", async () => {
     "/icons/icon-512.png",
     "/icons/apple-touch-icon.png",
     "/data/croatia-coastline.json",
+    "/data/croatia-map-features.json",
     "/audio/shoreline-alarm.wav",
   ]) {
     const escapedAsset = asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -70,13 +71,14 @@ test("service worker precaches the complete install shell", async () => {
 
 test("service worker rotates caches and provides offline navigation fallback", async () => {
   const serviceWorker = await readFile("public/sw.js", "utf8");
-  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v24"/);
+  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v25"/);
   assert.match(serviceWorker, /keys\.filter\(\(key\) => key !== CACHE_NAME\)/);
   assert.match(serviceWorker, /event\.request\.mode === "navigate"/);
   assert.match(serviceWorker, /cached \|\| caches\.match\("\/"\)/);
   assert.match(serviceWorker, /event\.request\.method !== "GET"/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
   assert.match(serviceWorker, /self\.clients\.claim\(\)/);
+  assert.match(serviceWorker, /requestUrl\.pathname\.startsWith\("\/api\/"\)[\s\S]*event\.respondWith\(fetch\(event\.request\)\)/);
 });
 
 test("every local precache asset exists and core entries are unique", async () => {

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createStationaryState,
+  getAnchorTimerSnapshot,
   getGoNoGoState,
   getPlotRangeMetres,
   getPowerSaveReason,
@@ -78,6 +80,8 @@ test("GO / NO GO honours the stabilized warning-zone state", () => {
 const ANCHOR = {
   reference: { longitude: 15, latitude: 43, accuracy: 5, speed: 0, timestamp: 1_000 },
   lastMovementAt: 1_000,
+  lastFixTimestamp: 1_000,
+  movingCandidateSince: null,
 };
 
 test("normal swinging inside the anchor circle does not reset stationary time", () => {
@@ -115,22 +119,34 @@ test("GPS accuracy is allowed for before classifying anchor movement", () => {
   assert.equal(next.lastMovementAt, 1_000);
 });
 
-test("one-knot movement resets stationary time within the anchor circle", () => {
-  const next = updateStationaryState(ANCHOR, {
+test("one noisy speed sample does not reset, while sustained movement does", () => {
+  const candidate = updateStationaryState(ANCHOR, {
     longitude: 15,
     latitude: 43,
     accuracy: 5,
-    speed: 0.5,
+    speed: 0.9,
     timestamp: 304_000,
-  }, 30);
-  assert.equal(next.lastMovementAt, 304_000);
+  }, 30, 10_000);
+  assert.equal(candidate.lastMovementAt, 1_000);
+  assert.equal(candidate.movingCandidateSince, 10_000);
+  const confirmed = updateStationaryState(candidate, {
+    longitude: 15,
+    latitude: 43,
+    accuracy: 5,
+    speed: 0.9,
+    timestamp: 305_000,
+  }, 30, 13_000);
+  assert.equal(confirmed.lastMovementAt, 13_000);
+  assert.equal(confirmed.movingCandidateSince, null);
 });
 
 test("first GPS position creates the anchor reference and movement timestamp", () => {
   const position = { longitude: 15, latitude: 43, accuracy: 7, speed: null, timestamp: 5_000 };
-  assert.deepEqual(updateStationaryState({ reference: null, lastMovementAt: 0 }, position, 30), {
+  assert.deepEqual(updateStationaryState(createStationaryState(), position, 30, 7_000), {
     reference: position,
-    lastMovementAt: 5_000,
+    lastMovementAt: 7_000,
+    lastFixTimestamp: 5_000,
+    movingCandidateSince: null,
   });
 });
 
@@ -154,8 +170,8 @@ test("missing speed still permits anchor-circle stationary detection", () => {
 
 test("negative GPS accuracy never enlarges the configured anchor circle", () => {
   const next = updateStationaryState({
+    ...ANCHOR,
     reference: { ...ANCHOR.reference, accuracy: -50 },
-    lastMovementAt: 1_000,
   }, {
     longitude: 15.0005,
     latitude: 43,
@@ -164,4 +180,63 @@ test("negative GPS accuracy never enlarges the configured anchor circle", () => 
     timestamp: 306_000,
   }, 30);
   assert.equal(next.lastMovementAt, 306_000);
+});
+
+test("out-of-order GPS samples cannot reset an established anchor timer", () => {
+  const newer = updateStationaryState(ANCHOR, { ...ANCHOR.reference, timestamp: 5_000 }, 30, 8_000);
+  const delayedOutside = updateStationaryState(newer, {
+    ...ANCHOR.reference,
+    longitude: 15.01,
+    timestamp: 3_000,
+  }, 30, 9_000);
+  assert.equal(delayedOutside, newer);
+  assert.equal(delayedOutside.lastFixTimestamp, 5_000);
+});
+
+test("anchor departure requires radius plus both GPS accuracy radii", () => {
+  const withinCombinedAccuracy = updateStationaryState(ANCHOR, {
+    ...ANCHOR.reference,
+    longitude: 15.0005,
+    accuracy: 10,
+    timestamp: 7_000,
+  }, 30, 10_000);
+  assert.equal(withinCombinedAccuracy.lastMovementAt, 1_000);
+  const clearlyOutside = updateStationaryState(withinCombinedAccuracy, {
+    ...ANCHOR.reference,
+    longitude: 15.001,
+    accuracy: 5,
+    timestamp: 8_000,
+  }, 30, 11_000);
+  assert.equal(clearlyOutside.lastMovementAt, 11_000);
+});
+
+test("anchor timer uses observed wall clock and activates exactly at threshold", () => {
+  const input = {
+    enabled: true,
+    tracking: true,
+    gpsIsReliable: true,
+    lastMovementAt: 1_000,
+    stationaryAfterMinutes: 5,
+    alertActive: false,
+    wakeUntil: 0,
+  };
+  assert.deepEqual(getAnchorTimerSnapshot({ ...input, now: 300_999 }), {
+    thresholdMs: 300_000,
+    elapsedMs: 299_999,
+    remainingMs: 1,
+    blocker: null,
+    eligible: true,
+    active: false,
+  });
+  assert.equal(getAnchorTimerSnapshot({ ...input, now: 301_000 }).active, true);
+  assert.equal(getAnchorTimerSnapshot({ ...input, now: 999 }).elapsedMs, 0);
+  assert.equal(getAnchorTimerSnapshot({ ...input, now: 301_000, gpsIsReliable: false }).blocker, "gps");
+});
+
+test("stationary power saving can activate inside the shoreline warning distance", () => {
+  assert.equal(getPowerSaveReason({
+    ...POWER_INPUT,
+    distanceMetres: 100,
+    alertActive: false,
+  }), "stationary");
 });

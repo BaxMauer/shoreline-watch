@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     const response = await fetch(buildPhotonPlaceSearchUrl(query, language), {
       headers: {
         Accept: "application/geo+json, application/json",
-        "User-Agent": "Shoreline-Watch/1.9 place-search",
+        "User-Agent": "Shoreline-Watch place-search (+https://boot.maxi-bauer.de)",
       },
       signal: AbortSignal.timeout(5_500),
     });

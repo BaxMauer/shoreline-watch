@@ -317,6 +317,14 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .current-depth-chip.loading, .current-depth-chip.idle { opacity: .68; }
 .current-depth-chip.unavailable, .current-depth-chip.error { border-color: rgba(255,210,122,.22); }
 .current-depth-chip.unavailable > span, .current-depth-chip.error > span { color: var(--amber); }
+.anchor-timer-chip { display: flex; width: fit-content; min-height: 27px; align-items: center; gap: 6px; margin: 5px auto 0; border-radius: 999px; background: rgba(5,20,26,.56); color: var(--muted); padding: 0 9px; font-family: var(--font-geist-mono), monospace; font-variant-numeric: tabular-nums; }
+.anchor-timer-chip small, .anchor-timer-chip em { font-size: .48rem; font-style: normal; letter-spacing: .03em; text-transform: uppercase; }
+.anchor-timer-chip b { color: var(--foam); font-size: .61rem; }
+.anchor-timer-chip.running { box-shadow: inset 0 0 0 1px rgba(115,229,203,.15); }
+.anchor-timer-chip.active { background: rgba(7,95,80,.88); color: #dffff7; }
+.anchor-timer-chip.blocked { box-shadow: inset 0 0 0 1px rgba(255,210,122,.16); }
+.sunlight-mode .anchor-timer-chip { background: rgba(255,255,255,.88); color: #405f62; }
+.sunlight-mode .anchor-timer-chip b { color: #071b22; }
 .sunlight-mode .current-depth-chip { border-color: rgba(0,99,79,.18); background: rgba(255,255,255,.9); color: #193f42; }
 .sunlight-mode .current-depth-chip b { color: #071b22; }
 .theme-xp .current-depth-chip, .theme-nautical .current-depth-chip { background: rgba(255,255,255,.78); }
@@ -339,8 +347,12 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .gps-lost .proximity-plot { opacity: .38; filter: grayscale(.45); }
 .gps-lost .distance-readout strong { opacity: .62; }
 .land-hatch-layer { pointer-events: none; }
-.land-hatch-area { fill: url(#landHatch); opacity: .56; }
+.land-hatch-area { fill: url(#landHatch); opacity: .94; }
+.land-fill-mark { fill: #415353; }
 .land-hatch-mark { fill: none; stroke: var(--shore-stroke); stroke-width: 1.15; opacity: .28; vector-effect: non-scaling-stroke; }
+.sunlight-mode .land-fill-mark { fill: #cdd8d0; }
+.theme-xp .land-fill-mark { fill: #c9d1c3; }
+.theme-nautical .land-fill-mark { fill: #cbbd94; }
 .nearest-shore-line { stroke: var(--shore-stroke); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 2.5 7; opacity: .3; vector-effect: non-scaling-stroke; }
 .shore-segment { stroke: var(--shore-stroke); stroke-width: 3; stroke-linecap: round; opacity: .78; transition: stroke 250ms ease, opacity 250ms ease; }
 .shore-segment.close { stroke: var(--shore-close); opacity: .92; }
@@ -355,6 +367,16 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .map-boat path { fill: var(--aqua); stroke: #062a29; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .map-boat .boat-centre { fill: #effffb; }
 .plot-placeholder { fill: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-anchor: middle; }
+.map-feature-labels { pointer-events: none; }
+.map-feature-label text { fill: #f4fffc; stroke: rgba(4,22,27,.94); stroke-width: 2.6px; paint-order: stroke; font-family: var(--font-geist-sans), sans-serif; font-size: 6.2px; font-weight: 780; text-anchor: middle; }
+.map-feature-label.island text { fill: #fff6cf; font-size: 7px; font-weight: 900; letter-spacing: .04em; }
+.map-feature-label.settlement text { font-size: 6.4px; }
+.map-feature-label.restaurant text { font-size: 5.4px; font-weight: 700; }
+.map-feature-label.restaurant circle { fill: var(--amber); stroke: rgba(4,22,27,.9); stroke-width: 1.4px; }
+.sunlight-mode .map-feature-label text, .theme-xp .map-feature-label text, .theme-nautical .map-feature-label text { fill: #102e31; stroke: rgba(255,255,255,.94); }
+.sunlight-mode .map-feature-label.island text, .theme-nautical .map-feature-label.island text { fill: #5b470d; }
+.proximity-map-credit { fill: rgba(230,246,241,.72); stroke: rgba(5,20,25,.88); stroke-width: 1.4px; paint-order: stroke; font-size: 4.4px; text-anchor: start; }
+.sunlight-mode .proximity-map-credit, .theme-xp .proximity-map-credit, .theme-nautical .proximity-map-credit { fill: #345658; stroke: rgba(255,255,255,.9); }
 
 .instrument-footer { position: absolute; z-index: 5; right: 14px; bottom: 14px; left: 14px; }
 .instrument-meta { display: flex; min-height: 48px; align-items: center; justify-content: center; gap: 0; border-radius: 12px; background: rgba(5,20,26,.58); backdrop-filter: blur(8px); color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .72rem; }
@@ -435,8 +457,8 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-map { display: block; width: 100%; height: 100%; min-height: 0; background: transparent; padding: 0; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .route-map:focus-visible { outline: 3px solid rgba(115,229,203,.5); outline-offset: -3px; }
 .route-map svg { display: block; width: 100%; height: 100%; }
-.route-water { fill: #b9d6d8; }
-.route-land-area { fill: #d7dcd7; opacity: .96; }
+.route-water { fill: #85bac8; }
+.route-land-area { fill: #c8c4aa; opacity: .96; }
 .route-depth-tile { opacity: .96; filter: saturate(.58) contrast(1.06) brightness(.8); image-rendering: auto; }
 .route-coast-layer line { stroke: var(--shore-stroke); stroke-width: 1.05; stroke-linecap: round; opacity: .62; vector-effect: non-scaling-stroke; }
 .route-warning-ring { fill: rgba(115,229,203,.035); stroke: rgba(115,229,203,.9); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
@@ -579,6 +601,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .journey-active .route-controls, .journey-arrived .route-controls { display: none; }
 
 .sunlight-mode .route-map-wrap, .sunlight-mode .route-water { background: #f7fbfa; fill: #f7fbfa; }
+.sunlight-mode .route-land-area { fill: #d6d1b8; }
 .sunlight-mode .route-screen-header strong, .sunlight-mode .route-panel > summary strong, .sunlight-mode .route-speed strong, .sunlight-mode .route-speed input, .sunlight-mode .route-metrics strong, .sunlight-mode .route-point-fields strong, .sunlight-mode .route-point-fields input, .sunlight-mode .route-option strong { color: #071b22; }
 .sunlight-mode .route-map-wrap { border-color: rgba(13,77,76,.12); box-shadow: 0 10px 25px rgba(18,62,63,.1); }
 .sunlight-mode .route-depth-tile { filter: saturate(.48) contrast(1.03) brightness(1.06); }
@@ -601,7 +624,9 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .sunlight-mode .route-state.arrived { background: #0c715d; color: #fff; box-shadow: 0 0 0 2px rgba(0,74,58,.2); }
 .sunlight-mode .route-point-fields input { background: #edf5f3; }
 .theme-xp .route-map-wrap, .theme-xp .route-water { background: #edf0ed; fill: #edf0ed; }
+.theme-xp .route-land-area { fill: #cbd5c6; }
 .theme-nautical .route-map-wrap, .theme-nautical .route-water { background: #e3d6b6; fill: #e3d6b6; }
+.theme-nautical .route-land-area { fill: #c5af79; }
 .theme-xp .route-screen-header strong, .theme-xp .route-panel > summary strong, .theme-xp .route-speed strong, .theme-xp .route-speed input, .theme-xp .route-metrics strong, .theme-xp .route-point-fields strong, .theme-xp .route-point-fields input, .theme-xp .route-option strong,
 .theme-nautical .route-screen-header strong, .theme-nautical .route-panel > summary strong, .theme-nautical .route-speed strong, .theme-nautical .route-speed input, .theme-nautical .route-metrics strong, .theme-nautical .route-point-fields strong, .theme-nautical .route-point-fields input, .theme-nautical .route-option strong { color: var(--foam); }
 
@@ -619,6 +644,16 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .power-save-mode { position: absolute; top: max(24px, env(safe-area-inset-top)); font-family: var(--font-geist-mono), monospace; font-size: .58rem; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
 .power-save-go { display: inline-flex; align-items: center; gap: 8px; color: #276d5e; font-family: var(--font-geist-mono), monospace; font-size: .9rem; font-weight: 850; letter-spacing: .12em; }
 .power-save-go i { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid #19483f; border-radius: 50%; font-style: normal; }
+.power-save-go.no-go { color: #a83229; }
+.power-save-go.no-go i { border-color: #a83229; }
+.power-save-go.unknown { color: #7a5c13; }
+.power-save-go.unknown i { border-color: #7a5c13; }
+.debug-panel { display: grid; gap: 7px; border: 1px solid rgba(115,229,203,.14); border-radius: 12px; background: rgba(5,20,26,.65); padding: 9px; color: var(--foam); }
+.debug-panel summary { display: flex; min-height: 30px; align-items: center; justify-content: space-between; cursor: pointer; font-size: .67rem; }
+.debug-panel summary b { color: var(--aqua); font-size: .55rem; }
+.debug-panel button { width: fit-content; min-height: 30px; border-radius: 8px; background: rgba(115,229,203,.12); color: var(--aqua); padding: 0 10px; cursor: pointer; font-size: .56rem; font-weight: 800; }
+.debug-panel pre { max-height: 42svh; overflow: auto; border-radius: 8px; background: #031116; color: #b9f5e5; padding: 10px; font-family: var(--font-geist-mono), monospace; font-size: .48rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.sunlight-mode .debug-panel { border-color: rgba(0,99,79,.16); background: rgba(255,255,255,.82); color: #071b22; }
 .power-save-scope { margin-top: 9px; font-family: var(--font-geist-mono), monospace; font-size: .52rem; letter-spacing: .06em; text-transform: uppercase; }
 .power-save-screen strong { margin-top: 16px; color: #24594f; font-size: clamp(5.4rem, 25vw, 8.5rem); font-variant-numeric: tabular-nums; font-weight: 560; letter-spacing: -.055em; line-height: .9; }
 .power-save-screen small { margin-top: 7px; font-family: var(--font-geist-mono), monospace; font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; }

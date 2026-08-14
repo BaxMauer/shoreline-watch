@@ -1,4 +1,4 @@
-const CACHE_NAME = "shoreline-watch-v24";
+const CACHE_NAME = "shoreline-watch-v25";
 const CORE = [
   "/",
   "/manifest.webmanifest",
@@ -8,6 +8,7 @@ const CORE = [
   "/icons/icon-512.png",
   "/icons/apple-touch-icon.png",
   "/data/croatia-coastline.json",
+  "/data/croatia-map-features.json",
   "/audio/shoreline-alarm.wav",
 ];
 
@@ -27,6 +28,12 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   if (event.request.mode === "navigate") {
     event.respondWith(

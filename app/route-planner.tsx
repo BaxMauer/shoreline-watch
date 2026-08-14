@@ -50,6 +50,12 @@ import {
   type PlaceSearchResult,
 } from "../lib/place-search";
 import {
+  getMapFeaturesInView,
+  placeMapFeatureLabels,
+  searchCroatianMapFeatures,
+  type MapFeaturePack,
+} from "../lib/map-features";
+import {
   MAXIMUM_NAVIGATION_ACCURACY_METRES,
   type GpsNavigationState,
 } from "../lib/navigation-metrics";
@@ -251,6 +257,7 @@ export default function RoutePlanner({
   proximityRangeMetres,
   currentDepthMetres,
   currentDepthState,
+  mapFeaturePack,
 }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
@@ -261,6 +268,7 @@ export default function RoutePlanner({
   proximityRangeMetres: number;
   currentDepthMetres: number | null;
   currentDepthState: CurrentDepthState;
+  mapFeaturePack: MapFeaturePack | null;
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
@@ -312,7 +320,11 @@ export default function RoutePlanner({
     ? manualStart !== null || (parsedManualStart?.latitude !== null && parsedManualStart?.longitude !== null)
     : gpsReliable;
   const localPlaceResults = useMemo(() => searchLocalCroatianPlaces(placeQuery), [placeQuery]);
-  const visiblePlaceResults = placeResults.length > 0 ? placeResults : localPlaceResults;
+  const catalogPlaceResults = useMemo(() => searchCroatianMapFeatures(mapFeaturePack, placeQuery), [mapFeaturePack, placeQuery]);
+  const visiblePlaceResults = useMemo(
+    () => mergePlaceSearchResults(placeQuery, localPlaceResults, catalogPlaceResults, placeResults),
+    [catalogPlaceResults, localPlaceResults, placeQuery, placeResults],
+  );
 
   const clearPendingReroute = useCallback(() => {
     if (rerouteTimer.current === null) return;
@@ -437,6 +449,7 @@ export default function RoutePlanner({
   const runPlaceSearch = async () => {
     const query = placeQuery.trim();
     const localResults = searchLocalCroatianPlaces(query);
+    const catalogResults = searchCroatianMapFeatures(mapFeaturePack, query);
     if (normalizePlaceSearchText(query).length < 2) {
       setPlaceResults([]);
       setPlaceSearchOpen(true);
@@ -453,11 +466,11 @@ export default function RoutePlanner({
       const payload = await response.json() as { results?: PlaceSearchResult[] };
       if (controller.signal.aborted) return;
       const remoteResults = Array.isArray(payload.results) ? payload.results : [];
-      setPlaceResults(mergePlaceSearchResults(query, localResults, remoteResults));
+      setPlaceResults(mergePlaceSearchResults(query, localResults, catalogResults, remoteResults));
       setPlaceSearchState("ready");
     } catch {
       if (controller.signal.aborted) return;
-      setPlaceResults(localResults);
+      setPlaceResults(mergePlaceSearchResults(query, localResults, catalogResults));
       setPlaceSearchState("offline");
     }
   };
@@ -514,6 +527,12 @@ export default function RoutePlanner({
     }
     return path;
   }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, viewRangeMetres]);
+  const mapLabels = useMemo(() => placeMapFeatureLabels(
+    getMapFeaturesInView(mapFeaturePack, mapCentre, viewRangeMetres),
+    point,
+    size,
+    26,
+  ), [mapCentre, mapFeaturePack, point, size, viewRangeMetres]);
 
   useEffect(() => {
     depthLoadState.current = { key: bathymetryKey, loaded: 0, failed: 0 };
@@ -835,17 +854,21 @@ export default function RoutePlanner({
               <filter id="routeBoatGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
             </defs>
             <rect className="route-water" width={size} height={size} />
-            {hatchPath && <path className="route-land-area" d={hatchPath} />}
             {showDepths && <g className="route-bathymetry-layer">{bathymetryTiles.map((tile) => {
               const northWest = point({ longitude: tile.west, latitude: tile.north });
               const southEast = point({ longitude: tile.east, latitude: tile.south });
               return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
             })}</g>}
+            {hatchPath && <path className="route-land-area" d={hatchPath} />}
             <g className="route-coast-layer">{segments.map((segment, index) => {
               const start = point({ longitude: segment[0], latitude: segment[1] });
               const end = point({ longitude: segment[2], latitude: segment[3] });
               return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
             })}</g>
+            <g className="map-feature-labels" aria-hidden="true">{mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
+              {label.kind === "restaurant" && <circle r="2.2" />}
+              <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+            </g>)}</g>
             {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
               <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
               {liveNearestPoint && <>
@@ -883,7 +906,7 @@ export default function RoutePlanner({
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
-        {showDepths && <div className="route-map-credit">{EMODNET_BATHYMETRY_ATTRIBUTION}</div>}
+        <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}</div>
       </div>
 
       {journeyState === "planning" && <details ref={routeEditor} className="route-panel route-editor">

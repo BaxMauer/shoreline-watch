@@ -178,4 +178,16 @@ test("route map keeps land smooth, coastline solid, and route visually separate"
   assert.doesNotMatch(routeCoast, /stroke-dasharray/);
   assert.match(css, /\.planned-route\s*\{[^}]*stroke:\s*var\(--aqua\)/s);
   assert.match(css, /\.planned-route\.restricted\s*\{[^}]*stroke:\s*var\(--danger\)/s);
+  assert.match(css, /\.route-water\s*\{[^}]*fill:\s*#85bac8/s);
+  assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*#c8c4aa/s);
+  assert.match(css, /\.land-fill-mark\s*\{[^}]*fill:\s*#415353/s);
+  assert.match(css, /\.map-feature-label text\s*\{[^}]*paint-order:\s*stroke/s);
+  assert.match(css, /\.map-feature-label\.restaurant circle\s*\{[^}]*var\(--amber\)/s);
+});
+
+test("anchor timer and debug panel remain compact and readable", () => {
+  assert.match(css, /\.anchor-timer-chip\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(css, /\.anchor-timer-chip\.active\s*\{[^}]*background:/s);
+  assert.match(css, /\.debug-panel pre\s*\{[^}]*max-height:\s*42svh[^}]*overflow:\s*auto/s);
+  assert.match(css, /\.power-save-go\.no-go\s*\{[^}]*#a83229/s);
 });

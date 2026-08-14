@@ -25,12 +25,20 @@ import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
 import {
+  createStationaryState,
+  distanceFromStationaryReference,
+  getAnchorTimerSnapshot,
   getGoNoGoState,
   getPlotRangeMetres,
   getPowerSaveReason,
   updateStationaryState,
   type StationaryState,
 } from "../lib/navigation-display";
+import {
+  getMapFeaturesInView,
+  placeMapFeatureLabels,
+  type MapFeaturePack,
+} from "../lib/map-features";
 import {
   calculateClosingRate,
   classifyClosingRate,
@@ -76,6 +84,7 @@ type ScreenWakeLock = {
 
 const WARNING_CONFIG_STORAGE_KEY = "shoreline-warning-config-v1";
 const AUTO_SUNLIGHT_STORAGE_KEY = "shoreline-auto-sunlight";
+const DEBUG_STORAGE_KEY = "shoreline-debug-enabled";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
@@ -135,10 +144,18 @@ const COPY = {
     energyAnchorRadius: "Ankerkreis",
     energyAnchorRadiusHint: "Schwojen innerhalb dieses Radius gilt weiterhin als Stillstand.",
     energySection: "Energiesparen",
+    anchorTimer: "Anker-Timer",
+    anchorRunning: "läuft",
+    anchorReady: "aktiv",
+    anchorBlocked: "pausiert",
+    diagnosticsSection: "Diagnose",
+    debugMode: "Debug-Daten anzeigen",
+    debugModeHint: "Zeigt lokale Live-, GPS-, Tiefen-, Alarm- und Ankerdaten. Es werden keine Daten übertragen.",
+    debugCopy: "Daten kopieren",
     go: "GO",
     noGo: "NO GO",
     goUnknown: "PRÜFEN",
-    powerNavigationScope: "GO bewertet nur Küstenabstand",
+    powerNavigationScope: "Bewertung berücksichtigt nur den Küstenabstand",
     powerSavingActive: "Energiesparmodus aktiv",
     powerFar: "Küste weit entfernt",
     powerStationary: "Keine Bewegung erkannt",
@@ -255,10 +272,18 @@ const COPY = {
     energyAnchorRadius: "Anchor circle",
     energyAnchorRadiusHint: "Swinging within this radius still counts as stationary.",
     energySection: "Power saving",
+    anchorTimer: "Anchor timer",
+    anchorRunning: "running",
+    anchorReady: "active",
+    anchorBlocked: "paused",
+    diagnosticsSection: "Diagnostics",
+    debugMode: "Show debug data",
+    debugModeHint: "Shows local live, GPS, depth, alarm and anchor data. No data is transmitted.",
+    debugCopy: "Copy data",
     go: "GO",
     noGo: "NO GO",
     goUnknown: "CHECK",
-    powerNavigationScope: "GO measures shoreline clearance only",
+    powerNavigationScope: "Assessment measures shoreline clearance only",
     powerSavingActive: "Power-saving mode active",
     powerFar: "Shoreline is far away",
     powerStationary: "No movement detected",
@@ -394,6 +419,12 @@ function formatEta(seconds: number, language: Language) {
   return remainder === 60 ? `${minutes + 1} ${copy.minutes}` : `${minutes}:${remainder.toString().padStart(2, "0")} ${copy.minutes}`;
 }
 
+function formatTimer(milliseconds: number) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes.toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+}
+
 function polarPoint(centre: number, radius: number, angle: number) {
   const radians = (angle * Math.PI) / 180;
   return { x: centre + Math.sin(radians) * radius, y: centre - Math.cos(radians) * radius };
@@ -407,6 +438,7 @@ function ringArc(centre: number, radius: number, startAngle: number, endAngle: n
 
 function ProximityPlot({
   pack,
+  mapFeaturePack,
   fix,
   nearest,
   segments,
@@ -417,6 +449,7 @@ function ProximityPlot({
   language,
 }: {
   pack: CoastlinePack | null;
+  mapFeaturePack: MapFeaturePack | null;
   fix: Fix | null;
   nearest: NearestShore | null;
   segments: ShorelineSegment[];
@@ -432,13 +465,23 @@ function ProximityPlot({
   const pixelsPerMetre = 146 / rangeMetres;
   const metresPerLongitudeDegree = fix ? 111_320 * Math.cos((fix.latitude * Math.PI) / 180) : 1;
   const metresPerLatitudeDegree = 110_540;
-  const point = (longitude: number, latitude: number) => ({
+  const point = useCallback((longitude: number, latitude: number) => ({
     x: centre + (longitude - (fix?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (latitude - (fix?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
-  });
+  }), [centre, fix?.latitude, fix?.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
   const ringRadius = warningDistanceMetres * pixelsPerMetre;
   const nearestPoint = nearest ? point(nearest.longitude, nearest.latitude) : null;
   const coursePoint = courseToShore ? point(courseToShore.longitude, courseToShore.latitude) : null;
+  const mapLabels = useMemo(() => {
+    if (!fix) return [];
+    const halfRangeMetres = centre / pixelsPerMetre;
+    return placeMapFeatureLabels(
+      getMapFeaturesInView(mapFeaturePack, fix, halfRangeMetres),
+      (value) => point(value.longitude, value.latitude),
+      size,
+      10,
+    );
+  }, [centre, fix, mapFeaturePack, pixelsPerMetre, point, size]);
 
   const dangerSectors = useMemo(() => {
     if (!fix) return [];
@@ -510,6 +553,7 @@ function ProximityPlot({
           <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
         </filter>
         <pattern id="landHatch" width="12" height="12" patternUnits="userSpaceOnUse">
+          <rect className="land-fill-mark" width="12" height="12" />
           <path className="land-hatch-mark" d="M-3 12 12-3M6 15 15 6" />
         </pattern>
         <clipPath id="plotClip"><circle cx={centre} cy={centre} r="166" /></clipPath>
@@ -550,6 +594,13 @@ function ProximityPlot({
         })}
       </g>
 
+      <g className="map-feature-labels" aria-hidden="true">
+        {mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
+          {label.kind === "restaurant" && <circle r="2.2" />}
+          <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+        </g>)}
+      </g>
+
       <circle className="proximity-ring" cx={centre} cy={centre} r={ringRadius} />
       {dangerSectors.map((sector) => (
         <path
@@ -575,6 +626,7 @@ function ProximityPlot({
           <circle className="boat-centre" cx="0" cy="0" r="2.6" />
         </g>
       ) : <text className="plot-placeholder" x={centre} y={centre}>{copy.waitingGps.toUpperCase()}</text>}
+      <text className="proximity-map-credit" x="188" y="351">© OpenStreetMap contributors</text>
     </svg>
   );
 }
@@ -583,10 +635,13 @@ export default function ShorelineApp() {
   const [language, setLanguage] = useState<Language>("de");
   const [theme, setTheme] = useState<Theme>("ocean");
   const [autoSunlight, setAutoSunlight] = useState(true);
+  const [debugEnabled, setDebugEnabled] = useState(false);
   const [warningConfig, setWarningConfig] = useState<WarningConfig>(CROATIA_WARNING_CONFIG);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [pack, setPack] = useState<CoastlinePack | null>(null);
   const [packError, setPackError] = useState<string | null>(null);
+  const [mapFeaturePack, setMapFeaturePack] = useState<MapFeaturePack | null>(null);
+  const [mapFeatureError, setMapFeatureError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
   const [fix, setFix] = useState<Fix | null>(null);
   const [demoIndex, setDemoIndex] = useState(0);
@@ -601,11 +656,12 @@ export default function ShorelineApp() {
   const [alarmPlayCount, setAlarmPlayCount] = useState(0);
   const [visualSignal, setVisualSignal] = useState<{ kind: VisualSignalKind; sequence: number } | null>(null);
   const [powerSaveWakeUntil, setPowerSaveWakeUntil] = useState(0);
-  const [stationaryState, setStationaryState] = useState<StationaryState>({ reference: null, lastMovementAt: 0 });
+  const [stationaryState, setStationaryState] = useState<StationaryState>(() => createStationaryState());
   const [trackerTab, setTrackerTab] = useState<TrackerTab>("distance");
   const [warningZoneInside, setWarningZoneInside] = useState<boolean | null>(null);
   const [currentDepthMetres, setCurrentDepthMetres] = useState<number | null>(null);
   const [currentDepthState, setCurrentDepthState] = useState<CurrentDepthState>("idle");
+  const [depthDebug, setDepthDebug] = useState({ requestedAt: null as number | null, respondedAt: null as number | null, error: null as string | null });
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -622,6 +678,7 @@ export default function ShorelineApp() {
   const previousInsideLimit = useRef<boolean | null>(null);
   const previousSpeedViolation = useRef<boolean | null>(null);
   const warningSoundAvailableForDangerEpisode = useRef(false);
+  const depthQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -630,6 +687,7 @@ export default function ShorelineApp() {
       const savedTheme = window.localStorage.getItem("shoreline-theme");
       const savedAutoSunlight = window.localStorage.getItem(AUTO_SUNLIGHT_STORAGE_KEY);
       const savedWarningConfig = window.localStorage.getItem(WARNING_CONFIG_STORAGE_KEY);
+      const savedDebug = window.localStorage.getItem(DEBUG_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -641,6 +699,7 @@ export default function ShorelineApp() {
           setWarningConfig(CROATIA_WARNING_CONFIG);
         }
       }
+      setDebugEnabled(savedDebug === "true");
       setPreferencesLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -652,15 +711,26 @@ export default function ShorelineApp() {
     window.localStorage.setItem("shoreline-theme", theme);
     window.localStorage.setItem(AUTO_SUNLIGHT_STORAGE_KEY, String(autoSunlight));
     window.localStorage.setItem(WARNING_CONFIG_STORAGE_KEY, JSON.stringify(warningConfig));
+    window.localStorage.setItem(DEBUG_STORAGE_KEY, String(debugEnabled));
     document.documentElement.lang = language;
     document.documentElement.dataset.theme = theme;
-  }, [autoSunlight, language, preferencesLoaded, theme, warningConfig]);
+  }, [autoSunlight, debugEnabled, language, preferencesLoaded, theme, warningConfig]);
 
   useEffect(() => {
     if (mode === "idle") return;
     const interval = window.setInterval(() => setClockNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
   }, [mode]);
+
+  useEffect(() => {
+    const refreshClock = () => setClockNow(Date.now());
+    window.addEventListener("pageshow", refreshClock);
+    document.addEventListener("visibilitychange", refreshClock);
+    return () => {
+      window.removeEventListener("pageshow", refreshClock);
+      document.removeEventListener("visibilitychange", refreshClock);
+    };
+  }, []);
 
   useEffect(() => {
     let refreshing = false;
@@ -682,6 +752,14 @@ export default function ShorelineApp() {
       .then((data) => setPack(data))
       .catch((error: unknown) => setPackError(error instanceof Error ? error.message : "Coastline pack could not be loaded."));
 
+    fetch("/data/croatia-map-features.json")
+      .then((response) => {
+        if (!response.ok) throw new Error("Map feature pack could not be loaded.");
+        return response.json() as Promise<MapFeaturePack>;
+      })
+      .then((data) => setMapFeaturePack(data))
+      .catch((error: unknown) => setMapFeatureError(error instanceof Error ? error.message : "Map feature pack could not be loaded."));
+
     return () => navigator.serviceWorker?.removeEventListener("controllerchange", refreshForUpdate);
   }, []);
 
@@ -702,8 +780,12 @@ export default function ShorelineApp() {
   const gpsSignalProblem = gpsSignalState === "stale" || gpsSignalState === "lost";
   const gpsNavigationProblem = gpsNavigationState !== "reliable";
   const depthCellKey = fix ? depthSampleCellKey(fix) : null;
-  const depthLatitude = depthCellKey && fix ? Number(fix.latitude.toFixed(3)) : null;
-  const depthLongitude = depthCellKey && fix ? Number(fix.longitude.toFixed(3)) : null;
+  if (!depthCellKey || !fix) depthQueryPoint.current = null;
+  else if (depthQueryPoint.current?.key !== depthCellKey) {
+    depthQueryPoint.current = { key: depthCellKey, latitude: fix.latitude, longitude: fix.longitude };
+  }
+  const depthLatitude = depthQueryPoint.current?.latitude ?? null;
+  const depthLongitude = depthQueryPoint.current?.longitude ?? null;
   const sunlightActive = mode !== "idle" && shouldUseSunlightMode(
     autoSunlight,
     clockNow,
@@ -712,7 +794,7 @@ export default function ShorelineApp() {
   );
 
   useEffect(() => {
-    if (mode === "idle" || !gpsReliable || depthLatitude === null || depthLongitude === null) {
+    if (mode === "idle" || gpsSignalState !== "fresh" || depthLatitude === null || depthLongitude === null) {
       const timer = window.setTimeout(() => {
         setCurrentDepthMetres(null);
         setCurrentDepthState("idle");
@@ -724,6 +806,7 @@ export default function ShorelineApp() {
     const timer = window.setTimeout(() => {
       setCurrentDepthMetres(null);
       setCurrentDepthState("loading");
+      setDepthDebug({ requestedAt: Date.now(), respondedAt: null, error: null });
       fetchCurrentWaterDepth(
         { latitude: depthLatitude, longitude: depthLongitude },
         (input, init) => fetch(input, { ...init, signal: controller.signal }),
@@ -731,12 +814,14 @@ export default function ShorelineApp() {
         .then((depthMetres) => {
           if (controller.signal.aborted) return;
           setCurrentDepthMetres(depthMetres);
-          setCurrentDepthState("ready");
+          setCurrentDepthState(depthMetres === null ? "unavailable" : "ready");
+          setDepthDebug((current) => ({ ...current, respondedAt: Date.now(), error: null }));
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (controller.signal.aborted) return;
           setCurrentDepthMetres(null);
           setCurrentDepthState("error");
+          setDepthDebug((current) => ({ ...current, respondedAt: Date.now(), error: error instanceof Error ? error.message : "unknown" }));
         });
     }, 0);
 
@@ -744,7 +829,7 @@ export default function ShorelineApp() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [depthLatitude, depthLongitude, gpsReliable, mode]);
+  }, [depthCellKey, depthLatitude, depthLongitude, gpsSignalState, mode]);
 
   useEffect(() => {
     if (!nearest || !fix || mode === "idle") return;
@@ -815,6 +900,20 @@ export default function ShorelineApp() {
     gpsReliable,
     warningZoneInside,
   );
+  const anchorAlertActive = activeSpeedViolation
+    || courseRisk.level !== "none"
+    || (visualSignal !== null && visualSignal.kind !== "safe");
+  const anchorTimer = getAnchorTimerSnapshot({
+    enabled: warningConfig.powerSaveEnabled,
+    tracking: mode === "live",
+    gpsIsReliable: gpsReliable,
+    lastMovementAt: stationaryState.lastMovementAt,
+    stationaryAfterMinutes: warningConfig.powerSaveStationaryMinutes,
+    alertActive: anchorAlertActive,
+    wakeUntil: powerSaveWakeUntil,
+    now: clockNow,
+  });
+  const anchorDistanceMetres = fix ? distanceFromStationaryReference(stationaryState, fix) : null;
   const powerSaveReason = getPowerSaveReason({
     enabled: warningConfig.powerSaveEnabled,
     tracking: mode === "live",
@@ -823,7 +922,7 @@ export default function ShorelineApp() {
     farDistanceMetres: warningConfig.powerSaveDistanceMetres,
     lastMovementAt: stationaryState.lastMovementAt,
     stationaryAfterMinutes: warningConfig.powerSaveStationaryMinutes,
-    alertActive: insideLimit || activeSpeedViolation || courseRisk.level !== "none" || visualSignal !== null,
+    alertActive: anchorAlertActive,
     wakeUntil: powerSaveWakeUntil,
     now: clockNow,
   });
@@ -1122,7 +1221,7 @@ export default function ShorelineApp() {
     warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     setPowerSaveWakeUntil(0);
-    setStationaryState({ reference: null, lastMovementAt: 0 });
+    setStationaryState(createStationaryState());
     setTrackerTab("distance");
   }, []);
 
@@ -1152,7 +1251,7 @@ export default function ShorelineApp() {
     warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     const startedAt = Date.now();
-    setStationaryState({ reference: null, lastMovementAt: startedAt });
+    setStationaryState(createStationaryState(startedAt));
     setPowerSaveWakeUntil(0);
     setClockNow(startedAt);
     setTrackingStartedAt(startedAt);
@@ -1166,6 +1265,7 @@ export default function ShorelineApp() {
     navigator.storage?.persist?.().catch(() => false);
     watchId.current = navigator.geolocation.watchPosition(
       (position) => {
+        const observedAt = Date.now();
         const nextFix: Fix = {
           longitude: position.coords.longitude,
           latitude: position.coords.latitude,
@@ -1174,7 +1274,8 @@ export default function ShorelineApp() {
           heading: position.coords.heading,
           timestamp: position.timestamp,
         };
-        setStationaryState((current) => updateStationaryState(current, nextFix, warningConfig.powerSaveAnchorRadiusMetres));
+        setClockNow(observedAt);
+        setStationaryState((current) => updateStationaryState(current, nextFix, warningConfig.powerSaveAnchorRadiusMetres, observedAt));
         setFix(nextFix);
         setTrackingError(null);
       },
@@ -1274,6 +1375,78 @@ export default function ShorelineApp() {
         : currentDepthState === "ready"
           ? `${copy.chartDepth} ${currentDepthDisplay} m`
           : copy.depthWaiting;
+  const debugSnapshot = {
+    schemaVersion: 1,
+    appVersion: APP_VERSION,
+    generatedAt: new Date(clockNow).toISOString(),
+    environment: {
+      online,
+      visibility: typeof document === "undefined" ? "unknown" : document.visibilityState,
+      serviceWorkerControlled: typeof navigator !== "undefined" && Boolean(navigator.serviceWorker?.controller),
+      wakeLockActive: wakeLock.current !== null,
+    },
+    session: {
+      mode,
+      tab: trackerTab,
+      trackingStartedAt,
+      elapsedMs: trackingStartedAt === null ? 0 : Math.max(0, clockNow - trackingStartedAt),
+    },
+    gps: {
+      watchActive: watchId.current !== null,
+      signalState: gpsSignalState,
+      navigationState: gpsNavigationState,
+      reliable: gpsReliable,
+      ageSeconds: gpsAgeSeconds,
+      fix,
+      trackingError,
+    },
+    anchor: {
+      radiusMetres: warningConfig.powerSaveAnchorRadiusMetres,
+      reference: stationaryState.reference,
+      distanceFromReferenceMetres: anchorDistanceMetres,
+      lastFixTimestamp: stationaryState.lastFixTimestamp,
+      lastMovementAt: stationaryState.lastMovementAt,
+      movingCandidateSince: stationaryState.movingCandidateSince,
+      ...anchorTimer,
+      powerSaveReason,
+      wakeUntil: powerSaveWakeUntil,
+    },
+    shore: {
+      rawDistanceMetres: nearest?.distance ?? null,
+      conservativeDistanceMetres: conservativeDistance,
+      insideLimit,
+      warningZoneInside,
+      goNoGoState,
+      nearestPoint: nearest ? { latitude: nearest.latitude, longitude: nearest.longitude, bearing: nearest.bearing } : null,
+    },
+    depth: {
+      cellKey: depthCellKey,
+      queryPoint: depthLatitude === null || depthLongitude === null ? null : { latitude: depthLatitude, longitude: depthLongitude },
+      state: currentDepthState,
+      valueMetres: currentDepthMetres,
+      ...depthDebug,
+    },
+    warning: {
+      config: warningConfig,
+      speedViolation: activeSpeedViolation,
+      courseRisk,
+      closingRateMetresPerSecond,
+    },
+    alarm: {
+      armed: alarmArmed,
+      playback: alarmPlayback,
+      playCount: alarmPlayCount,
+      error: alarmError,
+      dangerEpisodeSoundAvailable: warningSoundAvailableForDangerEpisode.current,
+    },
+    mapData: {
+      coastlineReady: pack !== null,
+      coastlineError: packError,
+      featureCatalogReady: mapFeaturePack !== null,
+      featureCatalogStats: mapFeaturePack?.stats ?? null,
+      featureCatalogError: mapFeatureError,
+    },
+  };
   const alarmLabel = warningSoundMuted
     ? copy.muted
     : alarmPlayback === "playing" || alarmPlayback === "starting"
@@ -1427,6 +1600,11 @@ export default function ShorelineApp() {
                     </label>
                   </>
                 )}
+                <p className="settings-section-label">{copy.diagnosticsSection}</p>
+                <label className="toggle-row">
+                  <span><strong>{copy.debugMode}</strong><small>{copy.debugModeHint}</small></span>
+                  <input type="checkbox" checked={debugEnabled} onChange={(event) => setDebugEnabled(event.target.checked)} />
+                </label>
                 <div className="preset-row">
                   <p>{copy.croatiaRule}</p>
                   <button type="button" onClick={() => setWarningConfig((current) => ({ ...current, distanceMetres: CROATIA_WARNING_CONFIG.distanceMetres, speedWarningEnabled: CROATIA_WARNING_CONFIG.speedWarningEnabled, maxSpeedKnots: CROATIA_WARNING_CONFIG.maxSpeedKnots }))}>{copy.croatiaPreset}</button>
@@ -1472,6 +1650,11 @@ export default function ShorelineApp() {
               <div className={`current-depth-chip ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}>
                 <span aria-hidden="true">≈</span><b>{currentDepthDisplay}</b><em>m · {copy.chartDepth}</em>
               </div>
+              {mode === "live" && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
+                <small>{copy.anchorTimer}</small>
+                <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
+                <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
+              </div>}
               <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
                 <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
                 <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
@@ -1480,6 +1663,7 @@ export default function ShorelineApp() {
 
             <ProximityPlot
               pack={pack}
+              mapFeaturePack={mapFeaturePack}
               fix={fix}
               nearest={nearest}
               segments={nearbySegments}
@@ -1527,11 +1711,18 @@ export default function ShorelineApp() {
               proximityRangeMetres={viewRangeMetres}
               currentDepthMetres={currentDepthMetres}
               currentDepthState={currentDepthState}
+              mapFeaturePack={mapFeaturePack}
             />
           </div>
           </div>
 
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
+
+          {debugEnabled && <details className="debug-panel">
+            <summary><span>{copy.diagnosticsSection}</span><b>{copy.debugMode}</b></summary>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(debugSnapshot, null, 2)).catch(() => undefined)}>{copy.debugCopy}</button>
+            <pre>{JSON.stringify(debugSnapshot, null, 2)}</pre>
+          </details>}
 
           <nav className="tracker-tabs" aria-label={language === "de" ? "Ansicht" : "View"}>
             <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => { setTrackerTab("distance"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
@@ -1553,7 +1744,7 @@ export default function ShorelineApp() {
       {powerSaveReason && (
         <button className="power-save-screen" type="button" onClick={wakePowerDisplay} aria-label={copy.tapToWake}>
           <span className="power-save-mode">{copy.powerSavingActive}</span>
-          <span className="power-save-go"><i aria-hidden="true">✓</i> {copy.go}</span>
+          <span className={`power-save-go ${goNoGoState}`}><i aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</i> {goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</span>
           <span className="power-save-scope">{copy.powerNavigationScope}</span>
           <strong>{formatDistance(nearest?.distance ?? null, language)}</strong>
           <small>{distanceUnit}</small>

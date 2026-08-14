@@ -85,6 +85,9 @@ test("distance and route readiness require fresh GPS at the accuracy threshold",
 test("distance mode samples and displays the current EMODnet chart depth", async () => {
   const depthRoute = await readFile(new URL("../app/api/depth/route.ts", import.meta.url), "utf8");
   assert.match(app, /depthSampleCellKey\(fix\)/);
+  assert.match(app, /depthQueryPoint\.current = \{ key: depthCellKey, latitude: fix\.latitude, longitude: fix\.longitude \}/);
+  assert.match(app, /gpsSignalState !== "fresh"/);
+  assert.doesNotMatch(app, /fix\.latitude\.toFixed\(3\)/);
   assert.match(app, /fetchCurrentWaterDepth\(/);
   assert.match(app, /\(input, init\) => fetch\(input, \{ \.\.\.init, signal: controller\.signal \}\)/);
   assert.match(depthRoute, /fetchEmodnetWaterDepth\(point/);
@@ -93,6 +96,38 @@ test("distance mode samples and displays the current EMODnet chart depth", async
   assert.match(app, /className=\{`current-depth-chip \$\{currentDepthState\}`\}/);
   assert.match(app, /copy\.chartDepth/);
   assert.match(app, /currentDepthState=\{currentDepthState\}/);
+  assert.match(app, /depthMetres === null \? "unavailable" : "ready"/);
+});
+
+test("anchor timer is observable, uses wall-clock receipt time, and never hardcodes GO", () => {
+  assert.match(app, /getAnchorTimerSnapshot\(\{/);
+  assert.match(app, /const observedAt = Date\.now\(\)/);
+  assert.match(app, /updateStationaryState\(current, nextFix, warningConfig\.powerSaveAnchorRadiusMetres, observedAt\)/);
+  assert.match(app, /className=\{`anchor-timer-chip/);
+  assert.match(app, /className=\{`power-save-go \$\{goNoGoState\}`\}/);
+  assert.doesNotMatch(app, /className="power-save-go"><i aria-hidden="true">✓/);
+});
+
+test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {
+  assert.match(app, /localStorage\.getItem\(DEBUG_STORAGE_KEY\)/);
+  assert.match(app, /localStorage\.setItem\(DEBUG_STORAGE_KEY, String\(debugEnabled\)\)/);
+  for (const key of ["environment", "session", "gps", "anchor", "shore", "depth", "warning", "alarm", "mapData"]) {
+    assert.match(app, new RegExp(`${key}: \\{`));
+  }
+  assert.match(app, /className="debug-panel"/);
+});
+
+test("OSM feature catalog loads non-blockingly and labels both map modes", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(app, /fetch\("\/data\/croatia-map-features\.json"\)/);
+  assert.match(app, /mapFeatureError/);
+  assert.match(app, /<ProximityPlot[\s\S]*mapFeaturePack=\{mapFeaturePack\}/);
+  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, mapCentre, viewRangeMetres\)/);
+  assert.match(planner, /© OpenStreetMap contributors/);
+  const depthLayer = planner.indexOf("className=\"route-bathymetry-layer\"");
+  const landLayer = planner.indexOf("className=\"route-land-area\"");
+  const labelLayer = planner.indexOf("className=\"map-feature-labels\"");
+  assert.ok(depthLayer >= 0 && landLayer > depthLayer && labelLayer > landLayer);
 });
 
 test("active trip map mirrors the distance instrument's clearance geometry", async () => {
@@ -209,13 +244,14 @@ test("Croatian place search combines local fuzzy matching with bounded Photon re
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   const placeRoute = await readFile(new URL("../app/api/places/route.ts", import.meta.url), "utf8");
   assert.match(planner, /searchLocalCroatianPlaces\(placeQuery\)/);
+  assert.match(planner, /searchCroatianMapFeatures\(mapFeaturePack, placeQuery\)/);
   assert.match(planner, /fetch\(`\/api\/places\?q=\$\{encodeURIComponent\(query\)\}&lang=\$\{language\}`/);
   assert.match(planner, /focusPlaceResult\(result\)/);
   assert.match(planner, /setViewCentre\(\{ longitude: result\.longitude, latitude: result\.latitude \}\)/);
   assert.doesNotMatch(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(/);
   assert.match(placeRoute, /buildPhotonPlaceSearchUrl\(query, language\)/);
   assert.match(placeRoute, /AbortSignal\.timeout\(5_500\)/);
-  assert.match(placeRoute, /User-Agent": "Shoreline-Watch\/1\.9 place-search"/);
+  assert.match(placeRoute, /User-Agent": "Shoreline-Watch place-search \(\+https:\/\/boot\.maxi-bauer\.de\)"/);
 });
 
 test("warning display uses hysteresis, suppresses the initial alarm, and exposes text scaling", () => {

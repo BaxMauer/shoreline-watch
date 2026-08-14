@@ -68,14 +68,22 @@ export function buildCurrentDepthProxyUrl(point: GeoPoint) {
   const parameters = new URLSearchParams({
     latitude: point.latitude.toString(),
     longitude: point.longitude.toString(),
+    v: "2",
   });
   return `/api/depth?${parameters.toString()}`;
 }
 
-export function parseCurrentDepthProxyPayload(payload: unknown) {
+export function parseCurrentDepthProxyPayload(payload: unknown): {
+  depthMetres: number | null;
+  state: Exclude<CurrentDepthState, "idle" | "loading">;
+} | null {
   if (!payload || typeof payload !== "object") return null;
-  const depthMetres = finiteNumber((payload as Record<string, unknown>).depthMetres);
-  return depthMetres !== null && depthMetres >= 0 ? depthMetres : null;
+  const sample = payload as Record<string, unknown>;
+  const state = sample.state;
+  if (state !== "ready" && state !== "unavailable" && state !== "error") return null;
+  const depthMetres = finiteNumber(sample.depthMetres);
+  if (state === "ready" && (depthMetres === null || depthMetres < 0)) return null;
+  return { depthMetres: state === "ready" ? depthMetres : null, state };
 }
 
 export async function fetchEmodnetWaterDepth(
@@ -101,17 +109,14 @@ export async function fetchCurrentWaterDepth(
   point: GeoPoint,
   fetcher: typeof fetch = fetch,
 ) {
-  const readDepth = async (url: string, parse: (payload: unknown) => number | null) => {
-    const response = await fetcher(url, { headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error(`Depth request returned ${response.status}`);
-    const depth = parse(await response.json());
-    if (depth === null) throw new Error("No water depth in this grid cell");
-    return depth;
-  };
-  return Promise.any([
-    readDepth(buildCurrentDepthProxyUrl(point), parseCurrentDepthProxyPayload),
-    readDepth(buildCurrentDepthRequestUrl(point), parseEmodnetWaterDepth),
-  ]);
+  const response = await fetcher(buildCurrentDepthProxyUrl(point), {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Depth request returned ${response.status}`);
+  const result = parseCurrentDepthProxyPayload(await response.json());
+  if (!result || result.state === "error") throw new Error("Depth service unavailable");
+  return result.depthMetres;
 }
 
 export function formatCurrentDepth(depthMetres: number | null, language: "de" | "en") {
