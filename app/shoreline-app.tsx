@@ -31,6 +31,8 @@ import {
   getGoNoGoState,
   getPlotRangeMetres,
   getPowerSaveReason,
+  POWER_SAVE_INTERACTION_GUARD_MS,
+  shouldShowAnchorTimer,
   updateStationaryState,
   type StationaryState,
 } from "../lib/navigation-display";
@@ -41,7 +43,6 @@ import {
 } from "../lib/map-features";
 import {
   calculateClosingRate,
-  classifyClosingRate,
   getGpsNavigationState,
   getGpsSignalState,
   MAXIMUM_NAVIGATION_ACCURACY_METRES,
@@ -875,10 +876,6 @@ export default function ShorelineApp() {
     && speedKnots > warningConfig.maxSpeedKnots;
   const activeSpeedViolation = gpsReliable && speedViolation;
   const isUnderway = speedMetresPerSecond >= 0.77;
-  const closingTrend = classifyClosingRate(gpsReliable ? closingRateMetresPerSecond : null);
-  const closingMetresPerMinute = closingRateMetresPerSecond === null || !gpsReliable
-    ? null
-    : Math.round(Math.abs(closingRateMetresPerSecond) * 60);
 
   const courseRisk = useMemo<CourseRisk>(() => {
     if (!warningConfig.courseWarningEnabled || !gpsReliable || !courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
@@ -921,6 +918,7 @@ export default function ShorelineApp() {
     wakeUntil: powerSaveWakeUntil,
     now: clockNow,
   });
+  const anchorTimerVisible = mode === "live" && shouldShowAnchorTimer(anchorTimer.elapsedMs);
   const anchorDistanceMetres = fix ? distanceFromStationaryReference(stationaryState, fix) : null;
   const powerSaveReason = getPowerSaveReason({
     enabled: warningConfig.powerSaveEnabled,
@@ -935,9 +933,13 @@ export default function ShorelineApp() {
     now: clockNow,
   });
 
-  const wakePowerDisplay = useCallback(() => {
-    setPowerSaveWakeUntil(Date.now() + 30_000);
+  const registerInteraction = useCallback(() => {
+    const interactedAt = Date.now();
+    setClockNow(interactedAt);
+    setPowerSaveWakeUntil(interactedAt + POWER_SAVE_INTERACTION_GUARD_MS);
   }, []);
+
+  const wakePowerDisplay = registerInteraction;
 
   const getAudioContext = useCallback(() => {
     if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
@@ -1260,7 +1262,7 @@ export default function ShorelineApp() {
     setWarningZoneInside(null);
     const startedAt = Date.now();
     setStationaryState(createStationaryState(startedAt));
-    setPowerSaveWakeUntil(0);
+    setPowerSaveWakeUntil(startedAt + POWER_SAVE_INTERACTION_GUARD_MS);
     setClockNow(startedAt);
     setTrackingStartedAt(startedAt);
     setClosingRateMetresPerSecond(null);
@@ -1365,13 +1367,6 @@ export default function ShorelineApp() {
     : gpsNavigationState === "stale"
       ? copy.gpsStaleDetail(gpsAgeSeconds)
       : copy.gpsLostDetail(gpsAgeSeconds);
-  const closingDisplay = closingTrend === "approaching"
-    ? `↓${closingMetresPerMinute}`
-    : closingTrend === "receding"
-      ? `↑${closingMetresPerMinute}`
-      : closingTrend === "steady"
-        ? "≈0"
-        : "—";
   const warningSoundMuted = !warningConfig.warningSoundEnabled || warningConfig.alertVolumePercent === 0;
   const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
   const currentDepthLabel = currentDepthState === "loading"
@@ -1416,6 +1411,7 @@ export default function ShorelineApp() {
       lastMovementAt: stationaryState.lastMovementAt,
       movingCandidateSince: stationaryState.movingCandidateSince,
       ...anchorTimer,
+      visibleInOverview: anchorTimerVisible,
       powerSaveReason,
       wakeUntil: powerSaveWakeUntil,
     },
@@ -1471,7 +1467,12 @@ export default function ShorelineApp() {
       : { title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) };
 
   return (
-    <main className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""} ${sunlightActive ? "sunlight-mode" : ""} ${powerSaveReason ? "power-save-active" : ""}`}>
+    <main
+      className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""} ${sunlightActive ? "sunlight-mode" : ""} ${powerSaveReason ? "power-save-active" : ""}`}
+      onPointerDownCapture={registerInteraction}
+      onKeyDownCapture={registerInteraction}
+      onWheelCapture={registerInteraction}
+    >
       <audio
         className="alarm-audio"
         ref={alarmAudio}
@@ -1673,6 +1674,11 @@ export default function ShorelineApp() {
                   <span />{alarmLabel}
                 </div>
               </div>
+              {anchorTimerVisible && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
+                <small>{copy.anchorTimer}</small>
+                <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
+                <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
+              </div>}
               <div className="summary-primary-row">
                 <div className="distance-readout">
                   <span>{copy.nearestShore}</span>
@@ -1686,19 +1692,6 @@ export default function ShorelineApp() {
                   <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
                 </div>
               </div>
-              <div className="live-readouts">
-                <div className={`speed-readout ${activeSpeedViolation ? "danger" : ""}`} role="status" aria-label={`${copy.currentSpeed}: ${speedKnots === null ? "—" : speedKnots.toFixed(1)} kn`}>
-                  <span aria-hidden="true">↗</span><b>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</b><em>kn · {copy.currentSpeed}</em>
-                </div>
-                <div className={`current-depth-chip ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}>
-                  <span aria-hidden="true">≈</span><b>{currentDepthDisplay}</b><em>m · {copy.chartDepth}</em>
-                </div>
-              </div>
-              {mode === "live" && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
-                <small>{copy.anchorTimer}</small>
-                <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
-                <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
-              </div>}
             </div>
 
             <div className="map-stage">
@@ -1734,8 +1727,9 @@ export default function ShorelineApp() {
                 </div>
               ) : (
                 <div className="instrument-meta">
+                  <span className={`current-depth-footer ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}><strong>≈{currentDepthDisplay}</strong> m · {copy.chartDepth}</span>
                   <span><strong>{fix ? `±${Math.round(fix.accuracy)}` : "—"}</strong> m GPS</span>
-                  <span className={`closing-rate ${closingTrend}`} aria-label={copy.closingRate(closingTrend, closingMetresPerMinute)} title={copy.closing}><strong>{closingDisplay}</strong> m/min</span>
+                  <span className={`current-speed-footer ${activeSpeedViolation ? "danger" : ""}`} aria-label={`${copy.currentSpeed}: ${speedKnots === null ? "—" : speedKnots.toFixed(1)} kn`}><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
                 </div>
               )}
             </div>
@@ -1760,8 +1754,8 @@ export default function ShorelineApp() {
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
 
           <nav className="tracker-tabs" aria-label={language === "de" ? "Ansicht" : "View"}>
-            <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => { setTrackerTab("distance"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
-            <button type="button" className={trackerTab === "route" ? "active" : ""} aria-current={trackerTab === "route" ? "page" : undefined} onClick={() => { setTrackerTab("route"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">↗</span>{copy.routeTab}</button>
+            <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => setTrackerTab("distance")}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
+            <button type="button" className={trackerTab === "route" ? "active" : ""} aria-current={trackerTab === "route" ? "page" : undefined} onClick={() => setTrackerTab("route")}><span aria-hidden="true">↗</span>{copy.routeTab}</button>
           </nav>
 
           {mode === "demo" && trackerTab === "distance" && (

@@ -16,6 +16,9 @@ export type StationaryState = {
 
 export type AnchorTimerBlocker = "disabled" | "not-live" | "gps" | "alert" | "wake-window" | null;
 
+export const ANCHOR_TIMER_VISIBLE_AFTER_MS = 20_000;
+export const POWER_SAVE_INTERACTION_GUARD_MS = 120_000;
+
 const MOVING_SPEED_METRES_PER_SECOND = 0.8;
 const MOVING_CONFIRMATION_MS = 3_000;
 
@@ -113,6 +116,10 @@ export function getAnchorTimerSnapshot({
     eligible: blocker === null,
     active: blocker === null && remainingMs === 0,
   };
+}
+
+export function shouldShowAnchorTimer(elapsedMs: number) {
+  return Number.isFinite(elapsedMs) && elapsedMs >= ANCHOR_TIMER_VISIBLE_AFTER_MS;
 }
 
 export function getGoNoGoState(

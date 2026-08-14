@@ -106,6 +106,7 @@ test("sunlight mode provides a dedicated high-contrast instrument", () => {
 
 test("distance digits cannot collide on a narrow phone", () => {
   assert.match(css, /\.distance-readout strong\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(css, /\.distance-readout strong\s*\{[^}]*4\.1rem[^}]*18vw[^}]*6\.2rem/s);
   assert.match(css, /\.distance-readout strong\s*\{[^}]*letter-spacing:\s*-\.055em/s);
   assert.match(css, /\.distance-readout strong\s*\{[^}]*white-space:\s*nowrap/s);
   assert.doesNotMatch(css, /\.distance-readout strong\s*\{[^}]*letter-spacing:\s*-\.10[5-9]em/s);
@@ -127,7 +128,7 @@ test("distance, status, GO, and warning cards are sized for viewing from afar", 
   assert.match(css, /\.visual-signal-card strong\s*\{[^}]*font-size:\s*1\.28rem/s);
   assert.match(css, /\.theme-xp \.go-no-go\.no-go, \.theme-nautical \.go-no-go\.no-go, \.sunlight-mode \.go-no-go\.no-go\s*\{[^}]*#9f2d23[^}]*#fff/s);
   assert.match(css, /\.theme-xp \.go-no-go\.go, \.theme-nautical \.go-no-go\.go, \.sunlight-mode \.go-no-go\.go\s*\{[^}]*#006b54[^}]*#fff/s);
-  assert.match(css, /\.speed-readout, \.current-depth-chip\s*\{[^}]*min-height:\s*38px[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(css, /\.instrument-meta\s*\{[^}]*min-height:\s*48px[^}]*font-variant-numeric:\s*tabular-nums/s);
 });
 
 test("live map uses dedicated rows without persistent overlays", () => {
@@ -136,6 +137,8 @@ test("live map uses dedicated rows without persistent overlays", () => {
   assert.match(css, /\.map-stage\s*\{[^}]*position:\s*relative[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.proximity-plot\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/s);
   assert.match(css, /\.instrument-footer\s*\{[^}]*position:\s*relative/s);
+  assert.match(css, /\.current-depth-footer strong\s*\{[^}]*var\(--aqua\)/s);
+  assert.match(css, /\.current-speed-footer strong\s*\{[^}]*var\(--aqua\)/s);
   assert.doesNotMatch(css, /\.distance-readout\s*\{[^}]*position:\s*absolute/s);
 });
 
