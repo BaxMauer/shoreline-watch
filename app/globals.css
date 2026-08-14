@@ -310,15 +310,17 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .distance-readout strong { display: block; max-width: 100%; margin: 2px auto 0; overflow: hidden; font-size: clamp(calc(5.4rem * var(--distance-scale, 1)), calc(23vw * var(--distance-scale, 1)), calc(8rem * var(--distance-scale, 1))); font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: -.055em; line-height: .91; white-space: nowrap; text-shadow: 0 12px 42px rgba(0,0,0,.26); }
 .distance-readout strong.placeholder { color: #395158; letter-spacing: -.03em; }
 .distance-readout small { display: block; margin-top: 3px; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .8rem; letter-spacing: .14em; text-transform: uppercase; }
-.go-no-go { display: inline-flex; min-height: 50px; align-items: center; gap: 10px; margin-top: 10px; border-radius: 999px; background: rgba(4,54,48,.94); padding: 0 19px 0 8px; color: #ecfff9; font-family: var(--font-geist-mono), monospace; font-size: 1rem; font-weight: 900; letter-spacing: .09em; box-shadow: 0 7px 25px rgba(0,0,0,.22), 0 0 0 2px rgba(115,229,203,.18); }
-.go-no-go span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: rgba(115,229,203,.2); font-size: 1.25rem; }
+.go-no-go { display: inline-flex; min-height: 58px; align-items: center; gap: 11px; margin-top: 10px; border: 3px solid transparent; border-radius: 999px; padding: 0 22px 0 7px; font-family: var(--font-geist-mono), monospace; font-size: 1.12rem; font-weight: 950; letter-spacing: .11em; }
+.go-no-go span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; font-size: 1.55rem; font-weight: 950; line-height: 1; }
+.go-no-go.go { border-color: #7ff3d1; background: #075f50; color: #fff; box-shadow: 0 9px 30px rgba(4,74,62,.35), 0 0 0 3px rgba(127,243,209,.34); }
+.go-no-go.go span { background: #8ff5d8; color: #063f36; box-shadow: inset 0 0 0 2px rgba(255,255,255,.48); }
 .go-no-go.no-go { background: rgba(139,31,23,.96); color: #fff; box-shadow: 0 7px 26px rgba(116,24,17,.3), 0 0 0 3px rgba(255,116,95,.24); }
 .go-no-go.no-go span { background: rgba(255,116,95,.18); }
 .go-no-go.unknown { background: rgba(75,58,18,.94); color: #ffe7a8; }
 .go-no-go.unknown span { background: rgba(255,210,122,.14); }
-.navigation-scope { max-width: 360px; margin: 8px auto 0; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .5rem; letter-spacing: 0; line-height: 1.35; text-transform: none; }
-.theme-xp .go-no-go, .theme-nautical .go-no-go, .sunlight-mode .go-no-go { background: rgba(255,255,255,.82); }
+.theme-xp .go-no-go.go, .theme-nautical .go-no-go.go, .sunlight-mode .go-no-go.go { border-color: #a2ffe1; background: #006b54; color: #fff; box-shadow: 0 9px 30px rgba(0,80,62,.28), 0 0 0 3px rgba(0,107,84,.2); }
 .theme-xp .go-no-go.no-go, .theme-nautical .go-no-go.no-go, .sunlight-mode .go-no-go.no-go { background: #9f2d23; color: #fff; }
+.theme-xp .go-no-go.unknown, .theme-nautical .go-no-go.unknown, .sunlight-mode .go-no-go.unknown { background: #6b5316; color: #fff3c5; }
 
 .proximity-plot { position: absolute; z-index: 2; top: 50%; left: 50%; width: min(124%, 520px); height: auto; transform: translate(-50%, -31%); overflow: visible; }
 .gps-stale .proximity-plot { opacity: .62; }
@@ -431,8 +433,6 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-detail { margin: 7px 0 0; color: var(--aqua); font-size: .61rem; line-height: 1.3; text-align: center; }
 .route-detail.restricted { color: var(--danger); }
 .route-passage-warning { margin: 7px 0 0; color: var(--danger); font-size: .62rem; font-weight: 700; line-height: 1.35; text-align: center; }
-.route-scope { max-width: none; margin-top: 7px; text-align: center; }
-
 .route-controls { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .route-speed { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; border-radius: 9px; background: rgba(255,255,255,.045); padding: 6px 10px; }
 .route-speed > span:first-child { display: grid; gap: 1px; }
@@ -514,8 +514,8 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
   .tracker { gap: 7px; padding-top: 7px; }
   .distance-readout { top: 50px; }
   .distance-readout strong { font-size: clamp(calc(4.6rem * var(--distance-scale, 1)), calc(21vw * var(--distance-scale, 1)), calc(6.5rem * var(--distance-scale, 1))); }
-  .go-no-go { min-height: 42px; margin-top: 6px; font-size: .87rem; }
-  .go-no-go span { width: 28px; height: 28px; }
+  .go-no-go { min-height: 48px; margin-top: 6px; padding-right: 17px; font-size: .95rem; }
+  .go-no-go span { width: 34px; height: 34px; font-size: 1.3rem; }
   .proximity-plot { width: min(112%, 410px); top: 51%; }
   .sound-button, .next-button { min-height: 54px; }
   .course-alert { min-height: 55px; }

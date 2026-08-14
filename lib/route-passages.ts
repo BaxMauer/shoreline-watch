@@ -1,6 +1,10 @@
 export type RoutePassageHint = {
   id: string;
   conditional: true;
+  gate: readonly [
+    { longitude: number; latitude: number },
+    { longitude: number; latitude: number },
+  ];
   points: Array<{ longitude: number; latitude: number }>;
 };
 
@@ -14,6 +18,13 @@ export const ROUTE_PASSAGE_HINTS: RoutePassageHint[] = [
   {
     id: "tisno-murter-bridge",
     conditional: true,
+    // A shore-to-shore cross-section of the narrow bridge opening. Crossing
+    // this gate marks the route as conditional even when the regular grid is
+    // fine enough to traverse the opening without using the hint nodes.
+    gate: [
+      { longitude: 15.64150, latitude: 43.79898 },
+      { longitude: 15.64161, latitude: 43.79931 },
+    ],
     points: [
       { longitude: 15.650548, latitude: 43.794038 },
       { longitude: 15.648308, latitude: 43.795576 },

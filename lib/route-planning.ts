@@ -2,6 +2,7 @@ import {
   findNearestShore,
   getLandIntervalsAtLatitude,
   isPointOnLand,
+  offsetFromShore,
   distanceToSegment,
   type CoastlinePack,
   type LongitudeInterval,
@@ -123,7 +124,7 @@ class MinHeap {
 
 type LocalPoint = { x: number; y: number };
 type NodeInfo = { point: GeoPoint; land: boolean; shoreDistance: number };
-type EndpointCandidate = { key: number; connectionDistance: number; adjusted: boolean };
+type EndpointCandidate = { key: number; connectionDistance: number };
 
 function interpolate(left: GeoPoint, right: GeoPoint, position: number): GeoPoint {
   return {
@@ -145,22 +146,11 @@ function intervalContains(intervals: LongitudeInterval[], longitude: number) {
   return false;
 }
 
-function segmentLandProfile(pack: CoastlinePack, start: GeoPoint, end: GeoPoint, spacingMetres = 22) {
-  const distance = geoDistanceMetres(start, end);
-  const samples = Math.max(1, Math.ceil(distance / spacingMetres));
-  let hasLand = false;
-  let hasWater = false;
-  let landAfterWater = false;
-  for (let sample = 0; sample <= samples; sample += 1) {
-    const point = interpolate(start, end, sample / samples);
-    if (isPointOnLand(pack, point.longitude, point.latitude)) {
-      hasLand = true;
-      if (hasWater) landAfterWater = true;
-    } else {
-      hasWater = true;
-    }
-  }
-  return { waterOnly: !hasLand, exitsLandOnce: hasLand && hasWater && !landAfterWater };
+function isPointStrictlyOnLand(pack: CoastlinePack, point: GeoPoint) {
+  return intervalContains(
+    getLandIntervalsAtLatitude(pack, point.latitude, pack.bounds[0], pack.bounds[2]),
+    point.longitude,
+  );
 }
 
 function segmentsIntersect(
@@ -187,6 +177,94 @@ function segmentsIntersect(
   if (Math.abs(secondA) <= epsilon && onSegment(secondStart, secondEnd, firstStart)) return true;
   if (Math.abs(secondB) <= epsilon && onSegment(secondStart, secondEnd, firstEnd)) return true;
   return false;
+}
+
+function initialSegmentExitsLandOnce(pack: CoastlinePack, start: GeoPoint, end: GeoPoint) {
+  if (!isPointOnLand(pack, start.longitude, start.latitude)
+    || isPointOnLand(pack, end.longitude, end.latitude)) return false;
+
+  // The offline rings can overlap within their three-metre simplification
+  // tolerance. Treat any resulting land re-entry as ambiguous even when the
+  // explicit segment intersections themselves appear monotonic.
+  const sampleCount = Math.max(2, Math.ceil(geoDistanceMetres(start, end)));
+  let sampledWater = false;
+  for (let sample = 1; sample <= sampleCount; sample += 1) {
+    const point = interpolate(start, end, sample / sampleCount);
+    const land = isPointOnLand(pack, point.longitude, point.latitude);
+    if (!land) sampledWater = true;
+    else if (sampledWater) return false;
+  }
+  if (!sampledWater) return false;
+
+  const scale = longitudeScale((start.latitude + end.latitude) / 2);
+  const routeX = (end.longitude - start.longitude) * scale;
+  const routeY = (end.latitude - start.latitude) * METRES_PER_LATITUDE_DEGREE;
+  const routeLengthSquared = routeX * routeX + routeY * routeY;
+  if (routeLengthSquared <= 0) return false;
+  const cross = (leftX: number, leftY: number, rightX: number, rightY: number) => leftX * rightY - leftY * rightX;
+  const parameters: number[] = [];
+  let ambiguous = false;
+  const minimumX = Math.floor(Math.min(start.longitude, end.longitude) / pack.cellSize);
+  const maximumX = Math.floor(Math.max(start.longitude, end.longitude) / pack.cellSize);
+  const minimumY = Math.floor(Math.min(start.latitude, end.latitude) / pack.cellSize);
+  const maximumY = Math.floor(Math.max(start.latitude, end.latitude) / pack.cellSize);
+
+  for (let cellX = minimumX; cellX <= maximumX; cellX += 1) {
+    for (let cellY = minimumY; cellY <= maximumY; cellY += 1) {
+      const values = pack.cells[`${cellX}:${cellY}`];
+      if (!values) continue;
+      for (let index = 0; index < values.length; index += 4) {
+        const shoreX = (values[index] - start.longitude) * scale;
+        const shoreY = (values[index + 1] - start.latitude) * METRES_PER_LATITUDE_DEGREE;
+        const shoreDeltaX = (values[index + 2] - values[index]) * scale;
+        const shoreDeltaY = (values[index + 3] - values[index + 1]) * METRES_PER_LATITUDE_DEGREE;
+        const denominator = cross(routeX, routeY, shoreDeltaX, shoreDeltaY);
+        if (Math.abs(denominator) <= 1e-8) {
+          const distanceFromRoute = Math.abs(cross(shoreX, shoreY, routeX, routeY)) / Math.sqrt(routeLengthSquared);
+          const shoreStartPosition = (shoreX * routeX + shoreY * routeY) / routeLengthSquared;
+          const shoreEndPosition = ((shoreX + shoreDeltaX) * routeX + (shoreY + shoreDeltaY) * routeY) / routeLengthSquared;
+          const overlapsRoute = Math.max(0, Math.min(shoreStartPosition, shoreEndPosition))
+            <= Math.min(1, Math.max(shoreStartPosition, shoreEndPosition));
+          if (distanceFromRoute <= 0.01 && overlapsRoute) ambiguous = true;
+          continue;
+        }
+        const position = cross(shoreX, shoreY, shoreDeltaX, shoreDeltaY) / denominator;
+        const shorePosition = cross(shoreX, shoreY, routeX, routeY) / denominator;
+        if (position >= -1e-10 && position <= 1 + 1e-10
+          && shorePosition >= -1e-10 && shorePosition <= 1 + 1e-10) {
+          parameters.push(Math.max(0, Math.min(1, position)));
+        }
+      }
+    }
+  }
+  if (ambiguous) return false;
+  parameters.sort((left, right) => left - right);
+  const uniqueParameters = parameters.filter((position, index) => index === 0 || position - parameters[index - 1] > 1e-8);
+  if (uniqueParameters.length === 0) return false;
+  const boundaries = [0, ...uniqueParameters.filter((position) => position > 1e-10 && position < 1 - 1e-10), 1];
+  const intervalStates: boolean[] = [];
+  for (let index = 1; index < boundaries.length; index += 1) {
+    if (boundaries[index] - boundaries[index - 1] <= 1e-10) continue;
+    const midpoint = interpolate(start, end, (boundaries[index - 1] + boundaries[index]) / 2);
+    intervalStates.push(isPointStrictlyOnLand(pack, midpoint));
+  }
+  if (intervalStates.length < 2 || !intervalStates[0] || intervalStates.at(-1)) return false;
+  let reachedWater = false;
+  for (const land of intervalStates) {
+    if (!land) reachedWater = true;
+    else if (reachedWater) return false;
+  }
+  return reachedWater;
+}
+
+function passageIdsForGeometry(points: GeoPoint[]) {
+  const ids = new Set<string>();
+  for (let index = 1; index < points.length; index += 1) {
+    for (const passage of ROUTE_PASSAGE_HINTS) {
+      if (segmentsIntersect(points[index - 1], points[index], passage.gate[0], passage.gate[1])) ids.add(passage.id);
+    }
+  }
+  return [...ids];
 }
 
 export function routeSegmentCrossesShoreline(pack: CoastlinePack, start: GeoPoint, end: GeoPoint) {
@@ -224,10 +302,32 @@ export function routeGeometryIsWaterOnly(
       && allowedInitialLandExitMetres > 0
       && isPointOnLand(pack, start.longitude, start.latitude)
       && geoDistanceMetres(start, end) <= allowedInitialLandExitMetres
-      && segmentLandProfile(pack, start, end, 8).exitsLandOnce) continue;
+      && initialSegmentExitsLandOnce(pack, start, end)) continue;
     if (routeSegmentCrossesShoreline(pack, start, end)) return false;
   }
   return true;
+}
+
+function resolveWaterStartAnchor(
+  pack: CoastlinePack,
+  start: GeoPoint,
+  toleranceMetres: number,
+) {
+  if (toleranceMetres <= 0) return null;
+  const shore = findNearestShore(pack, start.longitude, start.latitude);
+  if (!shore || shore.distance + 4 > toleranceMetres) return null;
+
+  // The nearest shoreline point is still geometrically ambiguous. Step a few
+  // metres beyond it along the outward bearing, then retain the candidate only
+  // when the existing one-time land-exit validator proves the whole correction.
+  for (let overrunMetres = 4; overrunMetres <= toleranceMetres - shore.distance; overrunMetres += 4) {
+    const candidate = offsetFromShore(shore, shore.bearing, overrunMetres);
+    if (isPointOnLand(pack, candidate.longitude, candidate.latitude)) continue;
+    if (geoDistanceMetres(start, candidate) > toleranceMetres) continue;
+    if (!routeGeometryIsWaterOnly(pack, [start, candidate], toleranceMetres)) continue;
+    return candidate;
+  }
+  return null;
 }
 
 function shorelineDistanceWithin(pack: CoastlinePack, point: GeoPoint, limitMetres: number) {
@@ -344,14 +444,21 @@ export function planWaterRoute(
   if (directDistance < 30) {
     const directPoints = [start, destination];
     if (!routeGeometryIsWaterOnly(pack, directPoints, startIsLand ? startSnapTolerance : 0)) return { failure: "no-route" };
-    const route = buildRoute(pack, directPoints, options, "clearance");
-    route.mode = route.restrictedDistanceMetres > 0 ? "restricted" : "clearance";
+    const passageIds = passageIdsForGeometry(directPoints);
+    if (passageIds.length > 0 && !options.conditionalPassagesEnabled) return { failure: "no-route" };
+    const route = buildRoute(pack, directPoints, options, "clearance", passageIds);
+    route.mode = route.restrictedDistanceMetres > 0 || passageIds.length > 0 ? "restricted" : "clearance";
     return { route };
   }
 
+  const startAnchor = startIsLand ? resolveWaterStartAnchor(pack, start, startSnapTolerance) : null;
+  if (startIsLand && !startAnchor) return { failure: "no-route" };
+  const routingStart = startAnchor ?? start;
+  const startCorrectionDistance = startAnchor ? geoDistanceMetres(start, startAnchor) : 0;
+
   const centreLatitude = (start.latitude + destination.latitude) / 2;
   const metresPerLongitudeDegree = longitudeScale(centreLatitude);
-  const origin = start;
+  const origin = routingStart;
   const toLocal = (point: GeoPoint): LocalPoint => ({
     x: (point.longitude - origin.longitude) * metresPerLongitudeDegree,
     y: (point.latitude - origin.latitude) * METRES_PER_LATITUDE_DEGREE,
@@ -405,6 +512,12 @@ export function planWaterRoute(
       pointIndex,
       point,
     })));
+    const passageGateAllowed = options.conditionalPassagesEnabled && allowRestricted;
+    const passageIdsCrossedBySegment = (segmentStart: GeoPoint, segmentEnd: GeoPoint) => ROUTE_PASSAGE_HINTS
+      .filter((passage) => segmentsIntersect(segmentStart, segmentEnd, passage.gate[0], passage.gate[1]))
+      .map((passage) => passage.id);
+    const crossesBlockedPassageGate = (segmentStart: GeoPoint, segmentEnd: GeoPoint) => !passageGateAllowed
+      && passageIdsCrossedBySegment(segmentStart, segmentEnd).length > 0;
     const node = (key: number) => {
       const cached = nodeCache.get(key);
       if (cached) return cached;
@@ -438,11 +551,9 @@ export function planWaterRoute(
       return value;
     };
 
-    const endpointCandidates = (point: GeoPoint, pointLocal: LocalPoint, startEndpoint: boolean) => {
+    const endpointCandidates = (point: GeoPoint, pointLocal: LocalPoint) => {
       const centreIndex = nearestIndex(pointLocal);
-      const connectionLimit = startEndpoint && startIsLand
-        ? startSnapTolerance
-        : Math.max(cellSize * 3.25, 180);
+      const connectionLimit = Math.max(cellSize * 3.25, 180);
       const radius = Math.max(1, Math.ceil(connectionLimit / cellSize));
       const candidates: EndpointCandidate[] = [];
       for (let row = Math.max(0, centreIndex.row - radius); row <= Math.min(rows - 1, centreIndex.row + radius); row += 1) {
@@ -452,11 +563,9 @@ export function planWaterRoute(
           if (candidate.land) continue;
           const connectionDistance = geoDistanceMetres(point, candidate.point);
           if (connectionDistance > connectionLimit) continue;
-          const adjusted = startEndpoint && startIsLand;
-          if (adjusted) {
-            if (!segmentLandProfile(pack, point, candidate.point, 8).exitsLandOnce) continue;
-          } else if (routeSegmentCrossesShoreline(pack, point, candidate.point)) continue;
-          candidates.push({ key, connectionDistance, adjusted });
+          if (routeSegmentCrossesShoreline(pack, point, candidate.point)) continue;
+          if (crossesBlockedPassageGate(point, candidate.point)) continue;
+          candidates.push({ key, connectionDistance });
         }
       }
       // Multi-source/multi-target anchoring prevents a narrow inlet from being
@@ -464,15 +573,15 @@ export function planWaterRoute(
       return candidates.sort((left, right) => left.connectionDistance - right.connectionDistance).slice(0, 40);
     };
 
-    const startCandidates = endpointCandidates(start, startLocal, true);
-    const destinationCandidates = endpointCandidates(destination, destinationLocal, false);
+    const startCandidates = endpointCandidates(routingStart, startLocal);
+    const destinationCandidates = endpointCandidates(destination, destinationLocal);
     if (startCandidates.length === 0 || destinationCandidates.length === 0) return null;
     const destinationConnections = new Map<number, number>();
     for (const candidate of destinationCandidates) {
       const current = destinationConnections.get(candidate.key);
       if (current === undefined || candidate.connectionDistance < current) destinationConnections.set(candidate.key, candidate.connectionDistance);
     }
-    const nearEndpoint = (point: GeoPoint) => geoDistanceMetres(point, start) <= endpointGrace || geoDistanceMetres(point, destination) <= endpointGrace;
+    const nearEndpoint = (point: GeoPoint) => geoDistanceMetres(point, routingStart) <= endpointGrace || geoDistanceMetres(point, destination) <= endpointGrace;
     const passageConnections = new Map<number, number[]>();
     const addPassageConnection = (gridKey: number, passageKey: number) => {
       passageConnections.set(gridKey, [...(passageConnections.get(gridKey) ?? []), passageKey]);
@@ -505,9 +614,9 @@ export function planWaterRoute(
     const previous = new Int32Array(totalNodeCount);
     previous.fill(-1);
     for (const candidate of startCandidates) {
-      // Starting from a chart-adjusted fix is deliberately more expensive than
-      // a normal water connection, so it is chosen only as far as necessary.
-      const cost = candidate.connectionDistance * (candidate.adjusted ? 6 : 1);
+      // Keep a chart-adjusted start expensive so it is used only when the live
+      // fix genuinely needs the bounded one-time recovery.
+      const cost = startCorrectionDistance * 6 + candidate.connectionDistance;
       if (cost >= costs[candidate.key]) continue;
       costs[candidate.key] = cost;
       previous[candidate.key] = -2;
@@ -559,7 +668,8 @@ export function planWaterRoute(
         const edgeId = currentEntry.key < nextKey ? `${currentEntry.key}:${nextKey}` : `${nextKey}:${currentEntry.key}`;
         let edgeBlocked = edgeCache.get(edgeId);
         if (edgeBlocked === undefined) {
-          edgeBlocked = routeSegmentCrossesShoreline(pack, current.point, next.point);
+          edgeBlocked = routeSegmentCrossesShoreline(pack, current.point, next.point)
+            || crossesBlockedPassageGate(current.point, next.point);
           edgeCache.set(edgeId, edgeBlocked);
         }
         if (edgeBlocked) continue;
@@ -593,9 +703,11 @@ export function planWaterRoute(
       if (key === -2) break;
       if (key < 0) return null;
     }
-    const points = [start, ...reversed.reverse(), destination]
+    const points = [start, ...(startAnchor ? [startAnchor] : []), ...reversed.reverse(), destination]
       .filter((point, index, routePoints) => index === 0 || geoDistanceMetres(routePoints[index - 1], point) > 0.5);
     if (!routeGeometryIsWaterOnly(pack, points, startIsLand ? startSnapTolerance : 0)) return null;
+    for (const passageId of passageIdsForGeometry(points)) usedPassageIds.add(passageId);
+    if (usedPassageIds.size > 0 && !passageGateAllowed) return null;
     return { points, passageIds: [...usedPassageIds] };
   };
 
