@@ -310,6 +310,17 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .distance-readout strong { display: block; max-width: 100%; margin: 2px auto 0; overflow: hidden; font-size: clamp(calc(5.4rem * var(--distance-scale, 1)), calc(23vw * var(--distance-scale, 1)), calc(8rem * var(--distance-scale, 1))); font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: -.055em; line-height: .91; white-space: nowrap; text-shadow: 0 12px 42px rgba(0,0,0,.26); }
 .distance-readout strong.placeholder { color: #395158; letter-spacing: -.03em; }
 .distance-readout small { display: block; margin-top: 3px; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .8rem; letter-spacing: .14em; text-transform: uppercase; }
+.current-depth-chip { display: inline-flex; min-height: 36px; align-items: center; gap: 6px; margin-top: 8px; border: 1px solid rgba(115,229,203,.22); border-radius: 999px; background: rgba(5,20,26,.64); color: #d9e7e3; padding: 0 12px; backdrop-filter: blur(9px); font-family: var(--font-geist-mono), monospace; font-variant-numeric: tabular-nums; }
+.current-depth-chip > span { color: var(--aqua); font-size: .88rem; }
+.current-depth-chip b { color: #fff; font-size: 1rem; font-weight: 800; }
+.current-depth-chip em { color: var(--muted); font-size: .58rem; font-style: normal; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.current-depth-chip.loading, .current-depth-chip.idle { opacity: .68; }
+.current-depth-chip.unavailable, .current-depth-chip.error { border-color: rgba(255,210,122,.22); }
+.current-depth-chip.unavailable > span, .current-depth-chip.error > span { color: var(--amber); }
+.sunlight-mode .current-depth-chip { border-color: rgba(0,99,79,.18); background: rgba(255,255,255,.9); color: #193f42; }
+.sunlight-mode .current-depth-chip b { color: #071b22; }
+.theme-xp .current-depth-chip, .theme-nautical .current-depth-chip { background: rgba(255,255,255,.78); }
+.theme-xp .current-depth-chip b, .theme-nautical .current-depth-chip b { color: var(--foam); }
 .go-no-go { display: inline-flex; min-height: 58px; align-items: center; gap: 11px; margin-top: 10px; border: 3px solid transparent; border-radius: 999px; padding: 0 22px 0 7px; font-family: var(--font-geist-mono), monospace; font-size: 1.12rem; font-weight: 950; letter-spacing: .11em; }
 .go-no-go span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; font-size: 1.55rem; font-weight: 950; line-height: 1; }
 .go-no-go.go { border-color: #7ff3d1; background: #075f50; color: #fff; box-shadow: 0 9px 30px rgba(4,74,62,.35), 0 0 0 3px rgba(127,243,209,.34); }
@@ -428,6 +439,13 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-map-mode button.active { background: #fff; color: #073b38; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
 .route-map-mode button:first-child.active b { background: var(--aqua); }
 .route-map-mode button:last-child.active b { background: var(--amber); }
+.route-live-readouts { position: absolute; z-index: 5; top: 11px; left: 11px; display: flex; gap: 5px; }
+.route-live-readouts > span { display: grid; min-width: 92px; min-height: 48px; align-content: center; gap: 2px; border: 1px solid rgba(255,255,255,.11); border-radius: 10px; background: rgba(8,28,32,.84); padding: 6px 10px; backdrop-filter: blur(10px); }
+.route-live-readouts small { color: #b9cecd; font-family: var(--font-geist-mono), monospace; font-size: .43rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.route-live-readouts strong { color: #fff; font-family: var(--font-geist-mono), monospace; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.route-live-readouts > span.ready strong { color: #9ff5dd; }
+.route-live-readouts > span.loading strong { color: #ffd27a; }
+.route-live-readouts > span.unavailable strong, .route-live-readouts > span.error strong { color: #ffb5a9; }
 .route-layer-tools { position: absolute; z-index: 4; bottom: 27px; left: 10px; display: grid; gap: 3px; pointer-events: none; }
 .route-layer-tools button { display: flex; min-height: 34px; width: max-content; align-items: center; gap: 7px; border-radius: 10px; background: rgba(8,28,32,.82); color: #d7e6e5; padding: 0 10px; backdrop-filter: blur(10px); cursor: pointer; font-size: .57rem; font-weight: 800; pointer-events: auto; }
 .route-layer-tools button.active { background: rgba(5,92,108,.92); color: #fff; }
@@ -531,6 +549,10 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .sunlight-mode .route-screen-header strong, .sunlight-mode .route-panel > summary strong, .sunlight-mode .route-speed strong, .sunlight-mode .route-speed input, .sunlight-mode .route-metrics strong, .sunlight-mode .route-point-fields strong, .sunlight-mode .route-point-fields input, .sunlight-mode .route-option strong { color: #071b22; }
 .sunlight-mode .route-map-wrap { border-color: rgba(13,77,76,.12); box-shadow: 0 10px 25px rgba(18,62,63,.1); }
 .sunlight-mode .route-depth-tile { filter: saturate(.48) contrast(1.03) brightness(1.06); }
+.sunlight-mode .route-live-readouts > span { border-color: rgba(0,87,72,.18); background: rgba(255,255,255,.92); }
+.sunlight-mode .route-live-readouts small { color: #49696b; }
+.sunlight-mode .route-live-readouts strong { color: #071b22; }
+.sunlight-mode .route-live-readouts > span.ready strong { color: #006b54; }
 .sunlight-mode .route-summary, .sunlight-mode .route-panel, .sunlight-mode .route-speed, .sunlight-mode .route-option { border-color: rgba(13,77,76,.1); background: rgba(255,255,255,.82); }
 .sunlight-mode .route-state { background: rgba(255,255,255,.9); }
 .sunlight-mode .route-state.ready { background: #d7f4eb; color: #00634f; box-shadow: 0 0 0 1px rgba(0,99,79,.2); }
@@ -604,6 +626,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
   .tracker { gap: 7px; padding-top: 7px; }
   .distance-readout { top: 50px; }
   .distance-readout strong { font-size: clamp(calc(4.6rem * var(--distance-scale, 1)), calc(21vw * var(--distance-scale, 1)), calc(6.5rem * var(--distance-scale, 1))); }
+  .current-depth-chip { min-height: 31px; margin-top: 5px; }
   .go-no-go { min-height: 48px; margin-top: 6px; padding-right: 17px; font-size: .95rem; }
   .go-no-go span { width: 34px; height: 34px; font-size: 1.3rem; }
   .proximity-plot { width: min(112%, 410px); top: 51%; }

@@ -82,6 +82,15 @@ test("distance and route readiness require fresh GPS at the accuracy threshold",
   assert.match(planner, /!gpsReliable \|\| !fix \|\| !target \|\| !hasReachedRouteTarget\(fix, target\)/);
 });
 
+test("distance mode samples and displays the current EMODnet chart depth", async () => {
+  assert.match(app, /depthSampleCellKey\(fix\)/);
+  assert.match(app, /fetch\(buildCurrentDepthRequestUrl\(/);
+  assert.match(app, /parseEmodnetWaterDepth\(payload\)/);
+  assert.match(app, /className=\{`current-depth-chip \$\{currentDepthState\}`\}/);
+  assert.match(app, /copy\.chartDepth/);
+  assert.match(app, /currentDepthState=\{currentDepthState\}/);
+});
+
 test("power saver runs only in live mode, wakes on tap, and retains GPS tracking", () => {
   assert.match(app, /tracking:\s*mode === "live"/);
   assert.match(app, /setPowerSaveWakeUntil\(Date\.now\(\) \+ 30_000\)/);
@@ -237,6 +246,10 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /\{journeyState === "planning" && <div className="route-metrics">/);
   assert.match(planner, /REISE AKTIV/);
   assert.match(planner, /TRIP ACTIVE/);
+  assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
+  assert.match(planner, /className="route-live-readouts"/);
+  assert.match(planner, /shoreDistanceMetres === null/);
+  assert.match(planner, /currentDepthState === "ready"/);
 });
 
 test("route bearing follows monotonic projected progress instead of a passed waypoint", async () => {

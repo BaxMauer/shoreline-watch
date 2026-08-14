@@ -127,6 +127,13 @@ test("distance, status, GO, and warning cards are sized for viewing from afar", 
   assert.match(css, /\.visual-signal-card strong\s*\{[^}]*font-size:\s*1\.28rem/s);
   assert.match(css, /\.theme-xp \.go-no-go\.no-go, \.theme-nautical \.go-no-go\.no-go, \.sunlight-mode \.go-no-go\.no-go\s*\{[^}]*#9f2d23[^}]*#fff/s);
   assert.match(css, /\.theme-xp \.go-no-go\.go, \.theme-nautical \.go-no-go\.go, \.sunlight-mode \.go-no-go\.go\s*\{[^}]*#006b54[^}]*#fff/s);
+  assert.match(css, /\.current-depth-chip\s*\{[^}]*min-height:\s*36px[^}]*font-variant-numeric:\s*tabular-nums/s);
+});
+
+test("active route view exposes compact live shoreline and depth readouts", () => {
+  assert.match(css, /\.route-live-readouts\s*\{[^}]*position:\s*absolute[^}]*display:\s*flex/s);
+  assert.match(css, /\.route-live-readouts > span\s*\{[^}]*min-height:\s*48px/s);
+  assert.match(css, /\.route-live-readouts > span\.ready strong\s*\{[^}]*#9ff5dd/s);
 });
 
 test("route map declares touch panning and strong focus affordances", () => {

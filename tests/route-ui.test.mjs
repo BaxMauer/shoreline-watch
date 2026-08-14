@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAXIMUM_CRUISE_SPEED_KNOTS,
+  MAXIMUM_ACTIVE_ROUTE_VIEW_METRES,
   MAXIMUM_ROUTE_VIEW_METRES,
   MINIMUM_CRUISE_SPEED_KNOTS,
+  MINIMUM_ACTIVE_ROUTE_VIEW_METRES,
   MINIMUM_ROUTE_VIEW_METRES,
   ROUTE_ARRIVAL_RADIUS_METRES,
   buildEmodnetBathymetryTiles,
@@ -12,6 +14,7 @@ import {
   clampRouteViewRange,
   formatRouteClearance,
   formatRouteEta,
+  getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
   getRouteReadinessState,
   hasReachedRouteTarget,
@@ -94,6 +97,13 @@ test("map zoom remains inside the supported offline planning range", () => {
   assert.equal(clampRouteViewRange(1), MINIMUM_ROUTE_VIEW_METRES);
   assert.equal(clampRouteViewRange(20_000), 20_000);
   assert.equal(clampRouteViewRange(500_000), MAXIMUM_ROUTE_VIEW_METRES);
+});
+
+test("active navigation follows the compact distance-tab map range", () => {
+  assert.equal(getActiveRouteViewRange(405, 300), MINIMUM_ACTIVE_ROUTE_VIEW_METRES);
+  assert.equal(getActiveRouteViewRange(1_230, 300), 1_230);
+  assert.equal(getActiveRouteViewRange(20_000, 300), MAXIMUM_ACTIVE_ROUTE_VIEW_METRES);
+  assert.equal(getActiveRouteViewRange(Number.NaN, 300), MINIMUM_ACTIVE_ROUTE_VIEW_METRES);
 });
 
 test("selecting a distant target zooms out enough to keep it visible", () => {

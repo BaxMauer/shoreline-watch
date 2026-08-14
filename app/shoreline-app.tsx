@@ -40,6 +40,13 @@ import {
   shouldUseSunlightMode,
   type DistanceSample,
 } from "../lib/navigation-metrics";
+import {
+  buildCurrentDepthRequestUrl,
+  depthSampleCellKey,
+  formatCurrentDepth,
+  parseEmodnetWaterDepth,
+  type CurrentDepthState,
+} from "../lib/bathymetry";
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
@@ -87,7 +94,7 @@ const COPY = {
     coastLoading: "Kroatische Küste wird geladen",
     startLive: "Live starten",
     demo: "Demo",
-    finePrint: "Nur Küstengeometrie und Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften. Amtliche Seekarte verwenden und Ausguck halten.",
+    finePrint: "Kartentiefe nur zur Orientierung. Keine Prüfung von Untiefen, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften. Amtliche Seekarte verwenden und Ausguck halten.",
     language: "Sprache",
     theme: "Design",
     themeOcean: "Ocean",
@@ -163,6 +170,12 @@ const COPY = {
     ready: "Bereit",
     notReady: "Nicht bereit",
     nearestShore: "Nächste Küste",
+    chartDepth: "Kartentiefe",
+    depthWaiting: "Warte auf GPS für Kartentiefe",
+    depthLoading: "Kartentiefe wird geladen",
+    depthUnavailable: "Keine Wassertiefe im Kartenraster",
+    depthError: "Kartentiefe momentan nicht verfügbar",
+    depthDetail: "EMODnet · ca. 115-m-Raster",
     metres: "Meter",
     kilometres: "Kilometer",
     acquiring: "Position wird ermittelt",
@@ -201,7 +214,7 @@ const COPY = {
     coastLoading: "Loading Croatia shoreline",
     startLive: "Start live",
     demo: "Demo",
-    finePrint: "Shoreline geometry and clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks. Keep an approved chart and normal lookout.",
+    finePrint: "Chart depth is for orientation only. No shoal, rock, traffic, buoy, channel, weather, or legal checks. Keep an approved chart and normal lookout.",
     language: "Language",
     theme: "Theme",
     themeOcean: "Ocean",
@@ -277,6 +290,12 @@ const COPY = {
     ready: "Ready",
     notReady: "Not ready",
     nearestShore: "Nearest shoreline",
+    chartDepth: "Chart depth",
+    depthWaiting: "Waiting for GPS chart depth",
+    depthLoading: "Loading chart depth",
+    depthUnavailable: "No water depth in the chart grid",
+    depthError: "Chart depth is currently unavailable",
+    depthDetail: "EMODnet · approx. 115 m grid",
     metres: "metres",
     kilometres: "kilometres",
     acquiring: "acquiring",
@@ -586,6 +605,8 @@ export default function ShorelineApp() {
   const [stationaryState, setStationaryState] = useState<StationaryState>({ reference: null, lastMovementAt: 0 });
   const [trackerTab, setTrackerTab] = useState<TrackerTab>("distance");
   const [warningZoneInside, setWarningZoneInside] = useState<boolean | null>(null);
+  const [currentDepthMetres, setCurrentDepthMetres] = useState<number | null>(null);
+  const [currentDepthState, setCurrentDepthState] = useState<CurrentDepthState>("idle");
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -681,12 +702,60 @@ export default function ShorelineApp() {
   const gpsAgeSeconds = Math.max(0, Math.floor((clockNow - (fix?.timestamp ?? trackingStartedAt ?? clockNow)) / 1_000));
   const gpsSignalProblem = gpsSignalState === "stale" || gpsSignalState === "lost";
   const gpsNavigationProblem = gpsNavigationState !== "reliable";
+  const depthCellKey = fix ? depthSampleCellKey(fix) : null;
+  const depthLatitude = depthCellKey && fix ? Number(fix.latitude.toFixed(3)) : null;
+  const depthLongitude = depthCellKey && fix ? Number(fix.longitude.toFixed(3)) : null;
   const sunlightActive = mode !== "idle" && shouldUseSunlightMode(
     autoSunlight,
     clockNow,
     fix?.latitude ?? null,
     fix?.longitude ?? null,
   );
+
+  useEffect(() => {
+    if (mode === "idle" || !gpsReliable || depthLatitude === null || depthLongitude === null) {
+      const timer = window.setTimeout(() => {
+        setCurrentDepthMetres(null);
+        setCurrentDepthState("idle");
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setCurrentDepthMetres(null);
+      setCurrentDepthState("loading");
+      fetch(buildCurrentDepthRequestUrl({ latitude: depthLatitude, longitude: depthLongitude }), {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error(`Depth request returned ${response.status}`);
+          return response.json() as Promise<unknown>;
+        })
+        .then((payload) => {
+          if (controller.signal.aborted) return;
+          const depthMetres = parseEmodnetWaterDepth(payload);
+          if (depthMetres !== null) {
+            setCurrentDepthMetres(depthMetres);
+            setCurrentDepthState("ready");
+          } else {
+            setCurrentDepthMetres(null);
+            setCurrentDepthState("unavailable");
+          }
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setCurrentDepthMetres(null);
+          setCurrentDepthState("error");
+        });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [depthLatitude, depthLongitude, gpsReliable, mode]);
 
   useEffect(() => {
     if (!nearest || !fix || mode === "idle") return;
@@ -1206,6 +1275,16 @@ export default function ShorelineApp() {
         ? "≈0"
         : "—";
   const warningSoundMuted = !warningConfig.warningSoundEnabled || warningConfig.alertVolumePercent === 0;
+  const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
+  const currentDepthLabel = currentDepthState === "loading"
+    ? copy.depthLoading
+    : currentDepthState === "unavailable"
+      ? copy.depthUnavailable
+      : currentDepthState === "error"
+        ? copy.depthError
+        : currentDepthState === "ready"
+          ? `${copy.chartDepth} ${currentDepthDisplay} m`
+          : copy.depthWaiting;
   const alarmLabel = warningSoundMuted
     ? copy.muted
     : alarmPlayback === "playing" || alarmPlayback === "starting"
@@ -1401,6 +1480,9 @@ export default function ShorelineApp() {
               <span>{copy.nearestShore}</span>
               <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
               <small>{gpsSignalProblem && nearest ? `${copy.lastKnown} · ${distanceUnit}` : nearest ? distanceUnit : copy.acquiring}</small>
+              <div className={`current-depth-chip ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}>
+                <span aria-hidden="true">≈</span><b>{currentDepthDisplay}</b><em>m · {copy.chartDepth}</em>
+              </div>
               <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
                 <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
                 <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
@@ -1452,6 +1534,10 @@ export default function ShorelineApp() {
               warningConfig={warningConfig}
               language={language}
               gpsNavigationState={gpsNavigationState}
+              shoreDistanceMetres={nearest?.distance ?? null}
+              proximityRangeMetres={viewRangeMetres}
+              currentDepthMetres={currentDepthMetres}
+              currentDepthState={currentDepthState}
             />
           </div>
           </div>

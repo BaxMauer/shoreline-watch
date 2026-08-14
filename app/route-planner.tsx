@@ -21,6 +21,7 @@ import {
   clampRouteViewRange,
   formatRouteClearance,
   formatRouteEta,
+  getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
   getRouteReadinessState,
   hasReachedRouteTarget,
@@ -34,6 +35,7 @@ import {
   routeViewRangeForTarget,
   shouldRerouteRoute,
 } from "../lib/route-ui";
+import { formatCurrentDepth, type CurrentDepthState } from "../lib/bathymetry";
 import {
   MAXIMUM_NAVIGATION_ACCURACY_METRES,
   type GpsNavigationState,
@@ -62,10 +64,13 @@ const COPY = {
     remainingEta: "Restzeit",
     clearance: "Kleinster Abstand",
     bearing: "Nächster Kurs",
+    shore: "Küste",
+    chartDepth: "Kartentiefe",
     ready: "ROUTE BEREIT",
     check: "ROUTE PRÜFEN",
     waiting: "PUNKTE SETZEN",
     navigating: "REISE AKTIV",
+    following: "Bootszentrierte Live-Ansicht",
     arrived: "ZIEL ERREICHT",
     clearanceDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie hält den bevorzugten Abstand von ${distance} m ein.`,
     restrictedDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie unterschreitet stellenweise ${distance} m – besonders Start und Ziel prüfen.`,
@@ -136,10 +141,13 @@ const COPY = {
     remainingEta: "Time left",
     clearance: "Minimum clearance",
     bearing: "Next course",
+    shore: "Shore",
+    chartDepth: "Chart depth",
     ready: "ROUTE READY",
     check: "CHECK ROUTE",
     waiting: "SET POINTS",
     navigating: "TRIP ACTIVE",
+    following: "Boat-centred live view",
     arrived: "DESTINATION REACHED",
     clearanceDetail: (distance: number) => `The calculated shoreline geometry maintains the preferred ${distance} m clearance.`,
     restrictedDetail: (distance: number) => `The calculated shoreline geometry is inside ${distance} m in places – check start and destination carefully.`,
@@ -202,12 +210,26 @@ function coordinateText(value: number | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : "";
 }
 
-export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNavigationState }: {
+export default function RoutePlanner({
+  pack,
+  fix,
+  warningConfig,
+  language,
+  gpsNavigationState,
+  shoreDistanceMetres,
+  proximityRangeMetres,
+  currentDepthMetres,
+  currentDepthState,
+}: {
   pack: CoastlinePack | null;
   fix: Fix | null;
   warningConfig: WarningConfig;
   language: Language;
   gpsNavigationState: GpsNavigationState;
+  shoreDistanceMetres: number | null;
+  proximityRangeMetres: number;
+  currentDepthMetres: number | null;
+  currentDepthState: CurrentDepthState;
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
@@ -312,7 +334,7 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
           setJourneyState("active");
           setStartMode("gps");
           setViewCentre(null);
-          setViewRangeMetres(clampRouteViewRange(Math.min(8_000, Math.max(2_500, result.route.distanceMetres / 3))));
+          setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
         }
       },
       onError: () => {
@@ -322,7 +344,7 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
         setStartingJourney(false);
       },
     });
-  }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, pack, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, pack, proximityRangeMetres, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const fitRoute = useCallback((start = effectiveStart, destination = target) => {
     if (!start || !destination) return;
@@ -376,6 +398,15 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
   // Re-plan when preferences change; point changes calculate directly.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conditionalPassagesEnabled, cruiseSpeedKnots, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+
+  useEffect(() => {
+    if (journeyState !== "active" || !gpsReliable) return;
+    const timer = window.setTimeout(() => {
+      setViewCentre(null);
+      setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [gpsReliable, journeyState, proximityRangeMetres, warningConfig.distanceMetres]);
 
   const size = 360;
   const centre = size / 2;
@@ -623,7 +654,8 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
 
   const recenterMap = () => {
     setViewCentre(null);
-    if (fix && target && journeyState === "planning") setViewRangeMetres(clampRouteViewRange(routeViewRangeForTarget(2_500, fix, target) * .62));
+    if (journeyState === "active") setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+    else if (fix && target) setViewRangeMetres(clampRouteViewRange(routeViewRangeForTarget(2_500, fix, target) * .62));
   };
 
   const displayedStartLatitude = startMode === "gps" ? coordinateText(fix?.latitude) : startLatitude;
@@ -632,11 +664,12 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
   const startSummary = startMode === "gps" ? copy.currentGps : effectiveStart ? `${effectiveStart.latitude.toFixed(4)}, ${effectiveStart.longitude.toFixed(4)}` : copy.manualPoint;
   const targetSummary = target ? `${target.latitude.toFixed(4)}, ${target.longitude.toFixed(4)}` : copy.tapSetsTarget;
   const routeNoticeCount = route ? Number(route.mode === "restricted") + Number(route.passageIds.includes("tisno-murter-bridge")) : 0;
+  const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
 
   return (
     <section className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <header className="route-screen-header">
-        <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.tapSetsStart : copy.tapSetsTarget : targetSummary}</small></span>
+        <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.tapSetsStart : copy.tapSetsTarget : copy.following}</small></span>
         <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
       </header>
 
@@ -668,13 +701,17 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
           <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
         </div>}
+        {(journeyState === "active" || journeyState === "arrived") && <div className="route-live-readouts" aria-live="polite">
+          <span><small>{copy.shore}</small><strong>{shoreDistanceMetres === null ? "—" : formatRouteClearance(shoreDistanceMetres)}</strong></span>
+          <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈ ${currentDepthDisplay} m` : "—"}</strong></span>
+        </div>}
         <div className="route-layer-tools">
           <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
         </div>
         <div className="route-zoom" aria-label="Zoom">
-          <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>
-          <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>
+          {journeyState === "planning" && <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>}
+          {journeyState === "planning" && <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>}
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
