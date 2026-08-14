@@ -5,6 +5,8 @@ import {
   MAXIMUM_ROUTE_VIEW_METRES,
   MINIMUM_CRUISE_SPEED_KNOTS,
   MINIMUM_ROUTE_VIEW_METRES,
+  ROUTE_ARRIVAL_RADIUS_METRES,
+  buildGebcoBathymetryUrl,
   canPlanRoute,
   clampCruiseSpeed,
   clampRouteViewRange,
@@ -12,10 +14,14 @@ import {
   formatRouteEta,
   getProgressAwareRouteGuidance,
   getRouteReadinessState,
+  hasReachedRouteTarget,
   parseRouteCoordinate,
   panRouteMapCentre,
   pinchRouteViewRange,
   routeMapPixelToGeo,
+  routeProgressPercent,
+  routeRemainingDistance,
+  routeCoordinateIsValid,
   routeRerouteThreshold,
   routeViewRangeForTarget,
   shouldRerouteRoute,
@@ -31,6 +37,39 @@ test("empty, partial, and malformed coordinates are rejected", () => {
   for (const value of ["", " ", "43.8 north", "--15", "12,3,4", "NaN", "Infinity"]) {
     assert.equal(parseRouteCoordinate(value), null, value);
   }
+});
+
+test("route points reject impossible latitude and longitude values", () => {
+  assert.equal(routeCoordinateIsValid({ latitude: 43.8, longitude: 15.6 }), true);
+  assert.equal(routeCoordinateIsValid({ latitude: 91, longitude: 15.6 }), false);
+  assert.equal(routeCoordinateIsValid({ latitude: 43.8, longitude: 361 }), false);
+  assert.equal(routeCoordinateIsValid({ latitude: Number.NaN, longitude: 15.6 }), false);
+});
+
+test("GEBCO depth relief uses a bounded WMS request around the visible route map", () => {
+  const value = buildGebcoBathymetryUrl({ latitude: 43.8, longitude: 15.6 }, 10_000, 720);
+  assert.ok(value);
+  const url = new URL(value);
+  assert.equal(url.origin, "https://wms.gebco.net");
+  assert.equal(url.searchParams.get("layers"), "gebco_2026_2_sub_ice_topo");
+  assert.equal(url.searchParams.get("crs"), "EPSG:4326");
+  assert.equal(url.searchParams.get("width"), "720");
+  const bounds = url.searchParams.get("BBOX").split(",").map(Number);
+  assert.equal(bounds.length, 4);
+  assert.ok(bounds[0] < 43.8 && bounds[2] > 43.8);
+  assert.ok(bounds[1] < 15.6 && bounds[3] > 15.6);
+});
+
+test("active route progress remains bounded and detects arrival", () => {
+  assert.equal(routeRemainingDistance(1_000, 250), 750);
+  assert.equal(routeRemainingDistance(1_000, 1_500), 0);
+  assert.equal(routeProgressPercent(1_000, 250), 25);
+  assert.equal(routeProgressPercent(1_000, 1_500), 100);
+  assert.equal(routeProgressPercent(0, 500), 0);
+  const target = { latitude: 43.8, longitude: 15.6 };
+  assert.equal(hasReachedRouteTarget(target, target), true);
+  assert.equal(hasReachedRouteTarget({ latitude: 43.798, longitude: 15.6 }, target), false);
+  assert.equal(ROUTE_ARRIVAL_RADIUS_METRES, 75);
 });
 
 test("route ETA formats short and multi-hour journeys without a 60-minute display", () => {
