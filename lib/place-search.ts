@@ -1,4 +1,10 @@
 import type { GeoPoint } from "./route-planning.ts";
+import {
+  findNearestShore,
+  isPointOnLand,
+  offsetFromShore,
+  type CoastlinePack,
+} from "./shoreline.ts";
 
 export type PlaceKind = "place" | "bay" | "island";
 export type PlaceSearchResult = GeoPoint & {
@@ -16,6 +22,32 @@ export const CROATIA_SEARCH_BOUNDS = {
   east: 19.6,
   north: 46.7,
 } as const;
+
+export const PLACE_TARGET_WATER_OFFSET_METRES = 40;
+
+export function resolvePlaceSearchTarget(
+  pack: CoastlinePack | null,
+  result: Pick<PlaceSearchResult, "latitude" | "longitude">,
+  waterOffsetMetres = PLACE_TARGET_WATER_OFFSET_METRES,
+): GeoPoint {
+  const original = { latitude: result.latitude, longitude: result.longitude };
+  if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return original;
+
+  const shore = findNearestShore(pack, original.longitude, original.latitude);
+  if (!shore) return original;
+
+  const offset = Math.max(8, Math.min(250, waterOffsetMetres));
+  const distances = [offset, offset * 1.5, offset * 2, Math.max(120, offset * 3), 250, 500];
+  const bearingOffsets = [0, -15, 15, -30, 30, -45, 45, -60, 60, -90, 90, 180];
+
+  for (const distance of [...new Set(distances)]) {
+    for (const bearingOffset of bearingOffsets) {
+      const candidate = offsetFromShore(shore, shore.bearing + bearingOffset, distance);
+      if (!isPointOnLand(pack, candidate.longitude, candidate.latitude)) return candidate;
+    }
+  }
+  return original;
+}
 
 const COASTAL_PLACES: PlaceSearchResult[] = [
   { id: "local-pakostane", name: "Pakoštane", aliases: ["Pakostane"], detail: "Ort · Zadar", kind: "place", latitude: 43.8197, longitude: 15.5086, source: "local" },

@@ -209,6 +209,12 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
 
+test("place search converts land centroids into navigable water targets", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result\)/);
+  assert.match(planner, /selectTarget\(destination\)/);
+});
+
 test("route destination requires a stationary long press or entered coordinates", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /longPressTimer\.current = window\.setTimeout/);
@@ -280,7 +286,7 @@ test("Croatian place search combines local fuzzy matching with bounded Photon re
   assert.match(planner, /searchCroatianMapFeatures\(mapFeaturePack, placeQuery\)/);
   assert.match(planner, /fetch\(`\/api\/places\?q=\$\{encodeURIComponent\(query\)\}&lang=\$\{language\}`/);
   assert.match(planner, /focusPlaceResult\(result\)/);
-  assert.match(planner, /const destination = \{ longitude: result\.longitude, latitude: result\.latitude \}/);
+  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result\)/);
   assert.match(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(destination\)/);
   assert.match(placeRoute, /buildPhotonPlaceSearchUrl\(query, language\)/);
   assert.match(placeRoute, /AbortSignal\.timeout\(5_500\)/);

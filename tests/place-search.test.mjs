@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  PLACE_TARGET_WATER_OFFSET_METRES,
   buildPhotonPlaceSearchUrl,
   fuzzyPlaceScore,
   formatPlaceSearchDetail,
   mergePlaceSearchResults,
   normalizePlaceSearchText,
   parsePhotonPlaceSearchPayload,
+  resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
 } from "../lib/place-search.ts";
+import { findNearestShore, isPointOnLand } from "../lib/shoreline.ts";
+import { planWaterRoute } from "../lib/route-planning.ts";
 
 test("Croatian diacritics and common misspellings match locally", () => {
   assert.equal(normalizePlaceSearchText("  Pakoštane  "), "pakostane");
@@ -50,4 +55,24 @@ test("place details do not repeat the result category", () => {
   const result = searchLocalCroatianPlaces("Pakostane")[0];
   assert.equal(formatPlaceSearchDetail(result, "de"), "Ort · Zadar");
   assert.equal(formatPlaceSearchDetail(result, "en"), "Place · Zadar");
+});
+
+test("an island search result resolves to nearby water instead of its land centroid", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const result = { latitude: 43.830668, longitude: 15.515315 };
+  assert.equal(isPointOnLand(coastline, result.longitude, result.latitude), true, "Murvenjak centroid must reproduce the reported failure");
+
+  const target = resolvePlaceSearchTarget(coastline, result);
+  const shore = findNearestShore(coastline, target.longitude, target.latitude);
+  assert.equal(isPointOnLand(coastline, target.longitude, target.latitude), false);
+  assert.ok(shore && shore.distance >= 5);
+  assert.ok(shore && shore.distance <= PLACE_TARGET_WATER_OFFSET_METRES + 2);
+
+  const route = planWaterRoute(coastline, { longitude: 15.5, latitude: 43.82 }, target, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  });
+  assert.ok(route.route, route.failure);
 });
