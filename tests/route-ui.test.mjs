@@ -6,7 +6,7 @@ import {
   MINIMUM_CRUISE_SPEED_KNOTS,
   MINIMUM_ROUTE_VIEW_METRES,
   ROUTE_ARRIVAL_RADIUS_METRES,
-  buildGebcoBathymetryUrl,
+  buildEmodnetBathymetryTiles,
   canPlanRoute,
   clampCruiseSpeed,
   clampRouteViewRange,
@@ -46,18 +46,22 @@ test("route points reject impossible latitude and longitude values", () => {
   assert.equal(routeCoordinateIsValid({ latitude: Number.NaN, longitude: 15.6 }), false);
 });
 
-test("GEBCO depth relief uses a bounded WMS request around the visible route map", () => {
-  const value = buildGebcoBathymetryUrl({ latitude: 43.8, longitude: 15.6 }, 10_000, 720);
-  assert.ok(value);
-  const url = new URL(value);
-  assert.equal(url.origin, "https://wms.gebco.net");
-  assert.equal(url.searchParams.get("layers"), "gebco_2026_2_sub_ice_topo");
-  assert.equal(url.searchParams.get("crs"), "EPSG:4326");
-  assert.equal(url.searchParams.get("width"), "720");
-  const bounds = url.searchParams.get("BBOX").split(",").map(Number);
-  assert.equal(bounds.length, 4);
-  assert.ok(bounds[0] < 43.8 && bounds[2] > 43.8);
-  assert.ok(bounds[1] < 15.6 && bounds[3] > 15.6);
+test("EMODnet bathymetry uses bounded cached tiles that cover the visible route map", () => {
+  const tiles = buildEmodnetBathymetryTiles({ latitude: 43.8, longitude: 15.6 }, 10_000, 720);
+  assert.ok(tiles.length >= 4);
+  assert.ok(tiles.length <= 20);
+  for (const tile of tiles) {
+    const url = new URL(tile.url);
+    assert.equal(url.origin, "https://tiles.emodnet-bathymetry.eu");
+    assert.match(url.pathname, /\/latest\/mean_atlas_land\/web_mercator\/\d+\/\d+\/\d+\.png$/);
+    assert.ok(tile.west < tile.east);
+    assert.ok(tile.south < tile.north);
+  }
+  assert.ok(Math.min(...tiles.map((tile) => tile.west)) < 15.6);
+  assert.ok(Math.max(...tiles.map((tile) => tile.east)) > 15.6);
+  assert.ok(Math.min(...tiles.map((tile) => tile.south)) < 43.8);
+  assert.ok(Math.max(...tiles.map((tile) => tile.north)) > 43.8);
+  assert.deepEqual(buildEmodnetBathymetryTiles({ latitude: 90, longitude: 15.6 }, 10_000), []);
 });
 
 test("active route progress remains bounded and detects arrival", () => {

@@ -14,8 +14,8 @@ import {
   type RoutePlanningWorker,
 } from "../lib/route-planning-worker";
 import {
-  GEBCO_BATHYMETRY_ATTRIBUTION,
-  buildGebcoBathymetryUrl,
+  EMODNET_BATHYMETRY_ATTRIBUTION,
+  buildEmodnetBathymetryTiles,
   canPlanRoute,
   clampCruiseSpeed,
   clampRouteViewRange,
@@ -92,10 +92,15 @@ const COPY = {
     cruiseSpeedHint: "Außerhalb des Warnbereichs",
     nauticalMiles: "sm",
     minutes: "Min.",
-    depthLayer: "Tiefenrelief",
+    depthLayer: "Tiefenkarte",
     depthLoading: "Tiefen werden geladen",
     depthUnavailable: "Tiefenebene momentan nicht verfügbar",
-    depthSource: "GEBCO 2026 · Übersicht · nicht routingwirksam",
+    depthSource: "EMODnet 2024 · Übersicht",
+    pointsPanel: "Start & Ziel",
+    optionsPanel: "Routenoptionen",
+    edit: "Bearbeiten",
+    routeNotes: "Routenhinweise",
+    routeNoteCount: (count: number) => `${count} ${count === 1 ? "Hinweis" : "Hinweise"}`,
     conditionalPassages: "Bedingte Durchfahrten",
     conditionalPassagesHint: "z. B. Tisno-Klappbrücke",
     startJourney: "Reise starten",
@@ -161,10 +166,15 @@ const COPY = {
     cruiseSpeedHint: "Outside the warning area",
     nauticalMiles: "nm",
     minutes: "min",
-    depthLayer: "Depth relief",
+    depthLayer: "Depth map",
     depthLoading: "Loading depths",
     depthUnavailable: "Depth layer is currently unavailable",
-    depthSource: "GEBCO 2026 · overview · not used for routing",
+    depthSource: "EMODnet 2024 · overview",
+    pointsPanel: "Start & destination",
+    optionsPanel: "Route options",
+    edit: "Edit",
+    routeNotes: "Route notes",
+    routeNoteCount: (count: number) => `${count} ${count === 1 ? "note" : "notes"}`,
     conditionalPassages: "Conditional passages",
     conditionalPassagesHint: "e.g. Tisno lift bridge",
     startJourney: "Start trip",
@@ -215,7 +225,6 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
   const [cruiseSpeedKnots, setCruiseSpeedKnots] = useState(16);
   const [conditionalPassagesEnabled, setConditionalPassagesEnabled] = useState(true);
   const [showDepths, setShowDepths] = useState(true);
-  const [depthUrl, setDepthUrl] = useState<string | null>(null);
   const [depthStatus, setDepthStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [startLatitude, setStartLatitude] = useState("");
   const [startLongitude, setStartLongitude] = useState("");
@@ -229,6 +238,8 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
   const routeWorker = useRef<RoutePlanningWorkerController | null>(null);
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const mapGesture = useRef<{ centre: GeoPoint; range: number; centroid: { x: number; y: number }; distance: number; moved: boolean } | null>(null);
+  const depthLoadState = useRef({ key: "", loaded: 0, failed: 0 });
+  const routeEditor = useRef<HTMLDetailsElement | null>(null);
 
   const effectiveStart = startMode === "manual" ? manualStart : fix;
   const parsedManualStart = startMode === "manual" ? {
@@ -376,9 +387,11 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
     y: centre - (value.latitude - mapCentre.latitude) * 110_540 * pixelsPerMetre,
   }), [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
   const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, 5_000) : [], [mapCentre.latitude, mapCentre.longitude, pack, viewRangeMetres]);
+  const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(mapCentre, viewRangeMetres, 720) : [], [mapCentre, showDepths, viewRangeMetres]);
+  const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
   const hatchPath = useMemo(() => {
     if (!pack) return "";
-    const bandHeight = 6;
+    const bandHeight = 1.5;
     const minimumLongitude = mapCentre.longitude - viewRangeMetres / metresPerLongitudeDegree;
     const maximumLongitude = mapCentre.longitude + viewRangeMetres / metresPerLongitudeDegree;
     let path = "";
@@ -395,13 +408,22 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
   }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, viewRangeMetres]);
 
   useEffect(() => {
-    if (!showDepths) return;
-    const timer = window.setTimeout(() => {
-      setDepthStatus("loading");
-      setDepthUrl(buildGebcoBathymetryUrl(mapCentre, viewRangeMetres));
-    }, 350);
+    depthLoadState.current = { key: bathymetryKey, loaded: 0, failed: 0 };
+    const timer = window.setTimeout(() => setDepthStatus(showDepths && bathymetryTiles.length > 0 ? "loading" : "idle"), 0);
     return () => window.clearTimeout(timer);
-  }, [mapCentre, showDepths, viewRangeMetres]);
+  }, [bathymetryKey, bathymetryTiles.length, showDepths]);
+
+  const depthTileLoaded = (key: string) => {
+    if (depthLoadState.current.key !== bathymetryKey || !bathymetryKey.includes(key)) return;
+    depthLoadState.current.loaded += 1;
+    setDepthStatus("ready");
+  };
+
+  const depthTileFailed = (key: string) => {
+    if (depthLoadState.current.key !== bathymetryKey || !bathymetryKey.includes(key)) return;
+    depthLoadState.current.failed += 1;
+    if (depthLoadState.current.loaded === 0 && depthLoadState.current.failed >= bathymetryTiles.length) setDepthStatus("error");
+  };
 
   const routePoints = route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "";
   const boatPoint = fix ? point(fix) : null;
@@ -544,6 +566,7 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
     if (startMode === "manual") setManualStart(start);
     setTarget(destination);
     setInputError(false);
+    if (routeEditor.current) routeEditor.current.open = false;
     fitRoute(start, destination);
     calculate(destination, start);
   };
@@ -605,19 +628,31 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
 
   const displayedStartLatitude = startMode === "gps" ? coordinateText(fix?.latitude) : startLatitude;
   const displayedStartLongitude = startMode === "gps" ? coordinateText(fix?.longitude) : startLongitude;
+  const scaleLabel = viewRangeMetres >= 1_000 ? `${Math.round(viewRangeMetres / 1_000)} km` : `${Math.round(viewRangeMetres)} m`;
+  const startSummary = startMode === "gps" ? copy.currentGps : effectiveStart ? `${effectiveStart.latitude.toFixed(4)}, ${effectiveStart.longitude.toFixed(4)}` : copy.manualPoint;
+  const targetSummary = target ? `${target.latitude.toFixed(4)}, ${target.longitude.toFixed(4)}` : copy.tapSetsTarget;
+  const routeNoticeCount = route ? Number(route.mode === "restricted") + Number(route.passageIds.includes("tisno-murter-bridge")) : 0;
 
   return (
     <section className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
+      <header className="route-screen-header">
+        <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.tapSetsStart : copy.tapSetsTarget : targetSummary}</small></span>
+        <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
+      </header>
+
       <div className="route-map-wrap">
         <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={journeyState !== "planning" || planning} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
-          <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-hidden="true">
+          <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="none" role="img" aria-hidden="true">
             <defs>
-              <pattern id="routeLandHatch" width="10" height="10" patternUnits="userSpaceOnUse"><path className="route-land-hatch-mark" d="M-2 10 10-2M6 14 14 6" /></pattern>
               <filter id="routeBoatGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
             </defs>
             <rect className="route-water" width={size} height={size} />
-            {showDepths && depthUrl && <image className="route-depth-image" href={depthUrl} width={size} height={size} preserveAspectRatio="none" onLoad={() => setDepthStatus("ready")} onError={() => setDepthStatus("error")} />}
             {hatchPath && <path className="route-land-area" d={hatchPath} />}
+            {showDepths && <g className="route-bathymetry-layer">{bathymetryTiles.map((tile) => {
+              const northWest = point({ longitude: tile.west, latitude: tile.north });
+              const southEast = point({ longitude: tile.east, latitude: tile.south });
+              return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
+            })}</g>}
             <g className="route-coast-layer">{segments.map((segment, index) => {
               const start = point({ longitude: segment[0], latitude: segment[1] });
               const end = point({ longitude: segment[2], latitude: segment[3] });
@@ -629,84 +664,86 @@ export default function RoutePlanner({ pack, fix, warningConfig, language, gpsNa
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
-        <div className="route-map-heading">
-          <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.tapSetsStart : copy.tapSetsTarget : copy.navigating}</small></span>
-          <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
-        </div>
+        {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
+          <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
+          <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
+        </div>}
         <div className="route-layer-tools">
-          <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}>≋ {copy.depthLayer}</button>
-          {showDepths && <small>{depthStatus === "error" ? copy.depthUnavailable : depthStatus === "loading" ? copy.depthLoading : copy.depthSource}</small>}
+          <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
+          {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
         </div>
         <div className="route-zoom" aria-label="Zoom">
           <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>
-          <span>{viewRangeMetres >= 1_000 ? `${Math.round(viewRangeMetres / 1_000)} km` : `${Math.round(viewRangeMetres)} m`}</span>
           <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>
-          {route && <button type="button" aria-label={copy.fitRoute} onClick={() => fitRoute()}>↔</button>}
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
+        <div className="route-scale"><span /><small>{scaleLabel}</small></div>
+        {showDepths && <div className="route-map-credit">{EMODNET_BATHYMETRY_ATTRIBUTION}</div>}
       </div>
 
-      {journeyState === "planning" && <div className="route-points-editor">
-        <div className="route-point-row">
-          <span className="route-point-badge start">A</span>
-          <div className="route-point-fields">
-            <span><strong>{copy.start}</strong><small>{startMode === "gps" ? copy.currentGps : copy.manualPoint}</small></span>
-            <label><span>{copy.latitude}</span><input aria-label={`${copy.start} ${copy.latitude}`} inputMode="decimal" value={displayedStartLatitude} onChange={(event) => editStartCoordinate("latitude", event.target.value)} /></label>
-            <label><span>{copy.longitude}</span><input aria-label={`${copy.start} ${copy.longitude}`} inputMode="decimal" value={displayedStartLongitude} onChange={(event) => editStartCoordinate("longitude", event.target.value)} /></label>
+      {journeyState === "planning" && <details ref={routeEditor} className="route-panel route-editor">
+        <summary><span><strong>{copy.pointsPanel}</strong><small>{startSummary} → {targetSummary}</small></span><b>{copy.edit}</b></summary>
+        <div className="route-panel-body route-points-editor">
+          <div className="route-point-row">
+            <span className="route-point-badge start">A</span>
+            <div className="route-point-fields">
+              <span><strong>{copy.start}</strong><small>{startMode === "gps" ? copy.currentGps : copy.manualPoint}</small></span>
+              <label><span>{copy.latitude}</span><input aria-label={`${copy.start} ${copy.latitude}`} inputMode="decimal" value={displayedStartLatitude} onChange={(event) => editStartCoordinate("latitude", event.target.value)} /></label>
+              <label><span>{copy.longitude}</span><input aria-label={`${copy.start} ${copy.longitude}`} inputMode="decimal" value={displayedStartLongitude} onChange={(event) => editStartCoordinate("longitude", event.target.value)} /></label>
+            </div>
+            <div className="route-point-actions"><button type="button" className={startMode === "gps" ? "active" : ""} onClick={useGpsStart} aria-label={copy.useGps}>◎</button></div>
           </div>
-          <div className="route-point-actions">
-            <button type="button" className={startMode === "gps" ? "active" : ""} onClick={useGpsStart} aria-label={copy.useGps}>◎</button>
-            <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")} aria-label={copy.setStartOnMap}>⌖</button>
+          <button className="route-swap" type="button" disabled={!effectiveStart || !target} onClick={swapPoints} aria-label={copy.swap}>⇅</button>
+          <div className="route-point-row">
+            <span className="route-point-badge target">B</span>
+            <div className="route-point-fields">
+              <span><strong>{copy.target}</strong><small>{target ? copy.manualPoint : copy.tapSetsTarget}</small></span>
+              <label><span>{copy.latitude}</span><input aria-label={`${copy.target} ${copy.latitude}`} inputMode="decimal" value={targetLatitude} onChange={(event) => { setTargetLatitude(event.target.value); setInputError(false); }} /></label>
+              <label><span>{copy.longitude}</span><input aria-label={`${copy.target} ${copy.longitude}`} inputMode="decimal" value={targetLongitude} onChange={(event) => { setTargetLongitude(event.target.value); setInputError(false); }} /></label>
+            </div>
           </div>
+          {inputError && <p className="route-input-error" role="alert">{copy.invalidCoordinates}</p>}
+          <button className="route-calculate" type="button" disabled={planning || !planningStartAvailable} onClick={useCoordinateInputs}>{planning ? copy.calculating : copy.calculateRoute}</button>
         </div>
-        <button className="route-swap" type="button" disabled={!effectiveStart || !target} onClick={swapPoints} aria-label={copy.swap}>⇅</button>
-        <div className="route-point-row">
-          <span className="route-point-badge target">B</span>
-          <div className="route-point-fields">
-            <span><strong>{copy.target}</strong><small>{target ? copy.manualPoint : copy.tapSetsTarget}</small></span>
-            <label><span>{copy.latitude}</span><input aria-label={`${copy.target} ${copy.latitude}`} inputMode="decimal" value={targetLatitude} onChange={(event) => { setTargetLatitude(event.target.value); setInputError(false); }} /></label>
-            <label><span>{copy.longitude}</span><input aria-label={`${copy.target} ${copy.longitude}`} inputMode="decimal" value={targetLongitude} onChange={(event) => { setTargetLongitude(event.target.value); setInputError(false); }} /></label>
-          </div>
-          <div className="route-point-actions"><button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")} aria-label={copy.setTargetOnMap}>⌖</button></div>
-        </div>
-        {inputError && <p className="route-input-error" role="alert">{copy.invalidCoordinates}</p>}
-        <button className="route-calculate" type="button" disabled={planning || !planningStartAvailable} onClick={useCoordinateInputs}>{planning ? copy.calculating : copy.calculateRoute}</button>
-      </div>}
+      </details>}
 
-      <div className="route-summary" aria-live="polite">
+      {(planning || failure || route) && <div className="route-summary" aria-live="polite">
         {planning ? <p className="route-message">{startingJourney ? copy.startingJourney : copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
           <>
             {(journeyState === "active" || journeyState === "arrived") && <div className={`route-navigation ${journeyState}`}>
               <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
               <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
               <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
-              <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
             </div>}
             {journeyState === "planning" && <div className="route-metrics">
               <span><small>{copy.distance}</small><strong>{formatRouteDistance(route.distanceMetres).toFixed(route.distanceMetres < 18_520 ? 1 : 0)} {copy.nauticalMiles}</strong></span>
               <span><small>{copy.eta}</small><strong>{formatRouteEta(route.estimatedSeconds, copy.minutes)}</strong></span>
               <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
-              <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
             </div>}
             {(journeyState === "active" || journeyState === "arrived") && <div className="route-progress"><span style={{ width: `${progressPercent}%` }} /><small>{copy.progress} {Math.round(progressPercent)}%</small></div>}
-            <p className={`route-detail ${route.mode}`}>{route.mode === "clearance" ? copy.clearanceDetail(warningConfig.distanceMetres) : copy.restrictedDetail(warningConfig.distanceMetres)}</p>
-            {route.passageIds.includes("tisno-murter-bridge") && <p className="route-passage-warning" role="alert">{copy.tisnoPassage}</p>}
+            {(journeyState === "active" || journeyState === "arrived") && <div className={`route-clearance-chip ${route.mode}`}>{copy.clearance}: <strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></div>}
+            {routeNoticeCount > 0 && <details className="route-notices">
+              <summary><span role="alert">{copy.routeNotes}</span><b>{copy.routeNoteCount(routeNoticeCount)}</b></summary>
+              <div>{route.mode === "restricted" && <p className="route-detail restricted">{copy.restrictedDetail(warningConfig.distanceMetres)}</p>}{route.passageIds.includes("tisno-murter-bridge") && <p className="route-passage-warning" role="alert">{copy.tisnoPassage}</p>}</div>
+            </details>}
           </>
         ) : <p className="route-message">{copy.subtitle}</p>}
-      </div>
+      </div>}
 
       {route && <div className="route-trip-actions">
         {journeyState === "planning" ? <button className="route-start-trip" type="button" disabled={!gpsReliable || planning} onClick={startJourney}>{copy.startJourney}</button> : <button className={journeyState === "arrived" ? "route-finish-trip" : "route-end-trip"} type="button" onClick={endJourney}>{journeyState === "arrived" ? copy.finishJourney : copy.endJourney}</button>}
         {journeyState === "planning" && !gpsReliable && <small>{copy.liveGpsNeeded}</small>}
       </div>}
 
-      <div className="route-controls">
-        <label className="route-speed"><span><strong>{copy.cruiseSpeed}</strong><small>{copy.cruiseSpeedHint}</small></span><span><input type="number" min="2" max="60" step="1" value={cruiseSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setCruiseSpeedKnots(clampCruiseSpeed(event.target.valueAsNumber))} /> kn</span></label>
-        <div className="route-rule">{copy.rule(warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled)}</div>
-        <label className="route-option"><span><strong>{copy.conditionalPassages}</strong><small>{copy.conditionalPassagesHint}</small></span><input type="checkbox" checked={conditionalPassagesEnabled} onChange={(event) => setConditionalPassagesEnabled(event.target.checked)} /></label>
-        <p className="route-depth-credit">{GEBCO_BATHYMETRY_ATTRIBUTION}</p>
-        {(target || manualStart) && <button className="route-reset" type="button" onClick={reset}>{copy.reset}</button>}
-      </div>
+      {journeyState === "planning" && <details className="route-panel route-options">
+        <summary><span><strong>{copy.optionsPanel}</strong><small>{cruiseSpeedKnots} kn · {copy.rule(warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled)}</small></span><b>{copy.edit}</b></summary>
+        <div className="route-panel-body route-controls">
+          <label className="route-speed"><span><strong>{copy.cruiseSpeed}</strong><small>{copy.cruiseSpeedHint}</small></span><span><input type="number" min="2" max="60" step="1" value={cruiseSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setCruiseSpeedKnots(clampCruiseSpeed(event.target.valueAsNumber))} /> kn</span></label>
+          <div className="route-rule">{copy.rule(warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled)}</div>
+          <label className="route-option"><span><strong>{copy.conditionalPassages}</strong><small>{copy.conditionalPassagesHint}</small></span><input type="checkbox" checked={conditionalPassagesEnabled} onChange={(event) => setConditionalPassagesEnabled(event.target.checked)} /></label>
+          {(target || manualStart) && <button className="route-reset" type="button" onClick={reset}>{copy.reset}</button>}
+        </div>
+      </details>}
 
       {journeyState === "active" && !gpsReliable && <p className="route-live-gps-warning" role="alert">{gpsIssueMessage}</p>}
     </section>

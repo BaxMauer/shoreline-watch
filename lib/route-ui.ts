@@ -6,13 +6,24 @@ export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
 export const ROUTE_ARRIVAL_RADIUS_METRES = 75;
-export const GEBCO_BATHYMETRY_ATTRIBUTION = "GEBCO Compilation Group (2026)";
+export const EMODNET_BATHYMETRY_ATTRIBUTION = "© EMODnet Bathymetry 2024";
+const MAXIMUM_MERCATOR_LATITUDE = 85.05112878;
+const MAXIMUM_BATHYMETRY_TILES = 20;
 
 export type RouteReadinessState = "waiting" | "calculating" | "check" | "ready";
 export type RouteGuidanceProjection = {
   progressMetres: number;
   distanceToRouteMetres: number;
   target: GeoPoint;
+};
+
+export type BathymetryTile = {
+  key: string;
+  url: string;
+  north: number;
+  east: number;
+  south: number;
+  west: number;
 };
 
 export function canPlanRoute(gpsNavigationState: GpsNavigationState, fix: GeoPoint | null) {
@@ -73,31 +84,70 @@ export function hasReachedRouteTarget(current: GeoPoint, target: GeoPoint, radiu
   return geoDistanceMetres(current, target) <= radius;
 }
 
-export function buildGebcoBathymetryUrl(centre: GeoPoint, rangeMetres: number, imageSize = 720) {
-  if (!routeCoordinateIsValid(centre)) return null;
+function longitudeToTileX(longitude: number, zoom: number) {
+  return (longitude + 180) / 360 * 2 ** zoom;
+}
+
+function latitudeToTileY(latitude: number, zoom: number) {
+  const bounded = Math.max(-MAXIMUM_MERCATOR_LATITUDE, Math.min(MAXIMUM_MERCATOR_LATITUDE, latitude));
+  const radians = bounded * Math.PI / 180;
+  return (1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2 * 2 ** zoom;
+}
+
+function tileXToLongitude(column: number, zoom: number) {
+  return column / 2 ** zoom * 360 - 180;
+}
+
+function tileYToLatitude(row: number, zoom: number) {
+  return Math.atan(Math.sinh(Math.PI * (1 - 2 * row / 2 ** zoom))) * 180 / Math.PI;
+}
+
+function bathymetryTileBounds(centre: GeoPoint, rangeMetres: number, zoom: number) {
   const range = clampRouteViewRange(rangeMetres);
   const latitudeDelta = range / 110_540;
-  const longitudeMetres = Math.max(1, mapLongitudeScale(centre.latitude));
-  const longitudeDelta = range / longitudeMetres;
+  const longitudeDelta = range / Math.max(1, mapLongitudeScale(centre.latitude));
+  const west = longitudeToTileX(Math.max(-180, centre.longitude - longitudeDelta), zoom);
+  const east = longitudeToTileX(Math.min(180, centre.longitude + longitudeDelta), zoom);
+  const north = latitudeToTileY(Math.min(MAXIMUM_MERCATOR_LATITUDE, centre.latitude + latitudeDelta), zoom);
+  const south = latitudeToTileY(Math.max(-MAXIMUM_MERCATOR_LATITUDE, centre.latitude - latitudeDelta), zoom);
+  return {
+    minimumColumn: Math.floor(west),
+    maximumColumn: Math.floor(east),
+    minimumRow: Math.floor(north),
+    maximumRow: Math.floor(south),
+  };
+}
+
+export function buildEmodnetBathymetryTiles(centre: GeoPoint, rangeMetres: number, imageSize = 720): BathymetryTile[] {
+  if (!routeCoordinateIsValid(centre) || Math.abs(centre.latitude) > MAXIMUM_MERCATOR_LATITUDE) return [];
   const size = Math.max(256, Math.min(1_280, Math.round(Number.isFinite(imageSize) ? imageSize : 720)));
-  const bounds = [
-    Math.max(-90, centre.latitude - latitudeDelta),
-    Math.max(-180, centre.longitude - longitudeDelta),
-    Math.min(90, centre.latitude + latitudeDelta),
-    Math.min(360, centre.longitude + longitudeDelta),
-  ];
-  const params = new URLSearchParams({
-    BBOX: bounds.map((value) => value.toFixed(6)).join(","),
-    crs: "EPSG:4326",
-    format: "image/jpeg",
-    height: size.toString(),
-    layers: "gebco_2026_2_sub_ice_topo",
-    request: "getmap",
-    service: "wms",
-    version: "1.3.0",
-    width: size.toString(),
-  });
-  return `https://wms.gebco.net/2026/mapserv?${params.toString()}`;
+  const metresPerPixel = clampRouteViewRange(rangeMetres) * 2 / size;
+  const localMercatorResolution = 156_543.03392 * Math.cos(centre.latitude * Math.PI / 180);
+  let zoom = Math.max(0, Math.min(15, Math.ceil(Math.log2(localMercatorResolution / metresPerPixel))));
+  let bounds = bathymetryTileBounds(centre, rangeMetres, zoom);
+  const tileCount = () => (bounds.maximumColumn - bounds.minimumColumn + 1) * (bounds.maximumRow - bounds.minimumRow + 1);
+  while (zoom > 0 && tileCount() > MAXIMUM_BATHYMETRY_TILES) {
+    zoom -= 1;
+    bounds = bathymetryTileBounds(centre, rangeMetres, zoom);
+  }
+
+  const matrixSize = 2 ** zoom;
+  const tiles: BathymetryTile[] = [];
+  for (let row = bounds.minimumRow; row <= bounds.maximumRow; row += 1) {
+    if (row < 0 || row >= matrixSize) continue;
+    for (let column = bounds.minimumColumn; column <= bounds.maximumColumn; column += 1) {
+      const wrappedColumn = ((column % matrixSize) + matrixSize) % matrixSize;
+      tiles.push({
+        key: `${zoom}/${wrappedColumn}/${row}`,
+        url: `https://tiles.emodnet-bathymetry.eu/latest/mean_atlas_land/web_mercator/${zoom}/${wrappedColumn}/${row}.png`,
+        west: tileXToLongitude(column, zoom),
+        east: tileXToLongitude(column + 1, zoom),
+        north: tileYToLatitude(row, zoom),
+        south: tileYToLatitude(row + 1, zoom),
+      });
+    }
+  }
+  return tiles;
 }
 
 export function formatRouteEta(seconds: number, minuteLabel: string) {
