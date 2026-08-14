@@ -93,7 +93,7 @@ test("distance mode samples and displays the current EMODnet chart depth", async
   assert.match(depthRoute, /fetchEmodnetWaterDepth\(point/);
   assert.match(depthRoute, /AbortSignal\.timeout\(6_500\)/);
   assert.match(await readFile(new URL("../lib/bathymetry.ts", import.meta.url), "utf8"), /const restDepth = finiteNumber\(sample\.avg\) \?\? finiteNumber\(sample\.smoothed\)/);
-  assert.match(app, /className=\{`current-depth-chip \$\{currentDepthState\}`\}/);
+  assert.match(app, /className=\{`current-depth-footer \$\{currentDepthState\}`\}/);
   assert.match(app, /copy\.chartDepth/);
   assert.match(app, /currentDepthState=\{currentDepthState\}/);
   assert.match(app, /depthMetres === null \? "unavailable" : "ready"/);
@@ -108,21 +108,34 @@ test("anchor timer is observable, uses wall-clock receipt time, and never hardco
   assert.doesNotMatch(app, /className="power-save-go"><i aria-hidden="true">✓/);
 });
 
-test("live overview keeps speed visible and collision prediction is opt-in", () => {
-  assert.match(app, /className=\{`speed-readout \$\{activeSpeedViolation \? "danger" : ""\}`\}/);
-  assert.match(app, /className="live-readouts"/);
+test("live overview keeps GPS speed in knots and collision prediction is opt-in", () => {
+  assert.match(app, /className=\{`current-speed-footer \$\{activeSpeedViolation \? "danger" : ""\}`\}/);
+  assert.match(app, /speedKnots === null \? "—" : speedKnots\.toFixed\(1\)/);
+  assert.doesNotMatch(app, /className="live-readouts"/);
   assert.match(app, /checked=\{warningConfig\.courseWarningEnabled\}/);
   assert.match(app, /if \(!warningConfig\.courseWarningEnabled \|\| !gpsReliable/);
 });
 
 test("live overview keeps persistent readouts outside the map stage", () => {
   const summary = app.indexOf('className="instrument-summary"');
+  const anchor = app.indexOf("anchor-timer-chip", summary);
+  const distance = app.indexOf('className="summary-primary-row"', summary);
   const mapStage = app.indexOf('className="map-stage"');
   const proximityPlot = app.indexOf("<ProximityPlot", mapStage);
   const footer = app.indexOf('className="instrument-footer"');
-  assert.ok(summary >= 0 && mapStage > summary && proximityPlot > mapStage && footer > proximityPlot);
+  const depth = app.indexOf("current-depth-footer", footer);
+  const accuracy = app.indexOf("m GPS", depth);
+  const speed = app.indexOf("current-speed-footer", accuracy);
+  assert.ok(summary >= 0 && anchor > summary && distance > anchor && mapStage > distance && proximityPlot > mapStage && footer > proximityPlot);
+  assert.ok(depth > footer && accuracy > depth && speed > accuracy);
   assert.doesNotMatch(app, /className="tracker-head"/);
   assert.match(app, /className="tracking-controls"/);
+});
+
+test("anchor timer stays in debug data but appears in the overview only after twenty seconds", () => {
+  assert.match(app, /const anchorTimerVisible = mode === "live" && shouldShowAnchorTimer\(anchorTimer\.elapsedMs\)/);
+  assert.match(app, /visibleInOverview: anchorTimerVisible/);
+  assert.match(app, /\{anchorTimerVisible && <div className=\{`anchor-timer-chip/);
 });
 
 test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {
@@ -156,9 +169,12 @@ test("active trip map mirrors the distance instrument's clearance geometry", asy
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
 });
 
-test("power saver runs only in live mode, wakes on tap, and retains GPS tracking", () => {
+test("power saver runs only in live mode, honours all recent interaction, and retains GPS tracking", () => {
   assert.match(app, /tracking:\s*mode === "live"/);
-  assert.match(app, /setPowerSaveWakeUntil\(Date\.now\(\) \+ 30_000\)/);
+  assert.match(app, /setPowerSaveWakeUntil\(interactedAt \+ POWER_SAVE_INTERACTION_GUARD_MS\)/);
+  for (const handler of ["onPointerDownCapture", "onKeyDownCapture", "onWheelCapture"]) {
+    assert.match(app, new RegExp(`${handler}=\\{registerInteraction\\}`));
+  }
   assert.match(app, /className="power-save-screen" type="button" onClick=\{wakePowerDisplay\}/);
   assert.doesNotMatch(app, /powerSaveReason[\s\S]{0,200}clearWatch/);
 });
@@ -264,8 +280,8 @@ test("Croatian place search combines local fuzzy matching with bounded Photon re
   assert.match(planner, /searchCroatianMapFeatures\(mapFeaturePack, placeQuery\)/);
   assert.match(planner, /fetch\(`\/api\/places\?q=\$\{encodeURIComponent\(query\)\}&lang=\$\{language\}`/);
   assert.match(planner, /focusPlaceResult\(result\)/);
-  assert.match(planner, /setViewCentre\(\{ longitude: result\.longitude, latitude: result\.latitude \}\)/);
-  assert.doesNotMatch(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(/);
+  assert.match(planner, /const destination = \{ longitude: result\.longitude, latitude: result\.latitude \}/);
+  assert.match(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(destination\)/);
   assert.match(placeRoute, /buildPhotonPlaceSearchUrl\(query, language\)/);
   assert.match(placeRoute, /AbortSignal\.timeout\(5_500\)/);
   assert.match(placeRoute, /User-Agent": "Shoreline-Watch place-search \(\+https:\/\/boot\.maxi-bauer\.de\)"/);

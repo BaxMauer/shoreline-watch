@@ -439,11 +439,15 @@ export default function RoutePlanner({
   }, [calculate, fitRoute, target]);
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
+    const destination = { longitude: result.longitude, latitude: result.latitude };
     setFocusedPlace(result);
-    setViewCentre({ longitude: result.longitude, latitude: result.latitude });
-    setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
+    selectTarget(destination);
+    if (!effectiveStart) {
+      setViewCentre(destination);
+      setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
+    }
   };
 
   const runPlaceSearch = async () => {

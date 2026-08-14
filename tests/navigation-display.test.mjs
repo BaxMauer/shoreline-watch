@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ANCHOR_TIMER_VISIBLE_AFTER_MS,
   createStationaryState,
   getAnchorTimerSnapshot,
   getGoNoGoState,
   getPlotRangeMetres,
   getPowerSaveReason,
+  POWER_SAVE_INTERACTION_GUARD_MS,
+  shouldShowAnchorTimer,
   updateStationaryState,
 } from "../lib/navigation-display.ts";
 
@@ -57,6 +60,20 @@ test("power saver stays awake for danger, bad GPS, movement, or a temporary wake
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, gpsIsReliable: false }), null);
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, lastMovementAt: 301_999 }), null);
   assert.equal(getPowerSaveReason({ ...POWER_INPUT, wakeUntil: 400_000 }), null);
+});
+
+test("every interaction blocks all power-save reasons for two minutes", () => {
+  assert.equal(POWER_SAVE_INTERACTION_GUARD_MS, 120_000);
+  assert.equal(getPowerSaveReason({
+    ...POWER_INPUT,
+    distanceMetres: 2_100,
+    wakeUntil: POWER_INPUT.now + 1,
+  }), null);
+  assert.equal(getPowerSaveReason({
+    ...POWER_INPUT,
+    distanceMetres: 2_100,
+    wakeUntil: POWER_INPUT.now,
+  }), "far-shore");
 });
 
 test("power saver requires an enabled live session with a known shoreline", () => {
@@ -231,6 +248,13 @@ test("anchor timer uses observed wall clock and activates exactly at threshold",
   assert.equal(getAnchorTimerSnapshot({ ...input, now: 301_000 }).active, true);
   assert.equal(getAnchorTimerSnapshot({ ...input, now: 999 }).elapsedMs, 0);
   assert.equal(getAnchorTimerSnapshot({ ...input, now: 301_000, gpsIsReliable: false }).blocker, "gps");
+});
+
+test("anchor timer stays debug-only for the first twenty seconds", () => {
+  assert.equal(ANCHOR_TIMER_VISIBLE_AFTER_MS, 20_000);
+  assert.equal(shouldShowAnchorTimer(19_999), false);
+  assert.equal(shouldShowAnchorTimer(20_000), true);
+  assert.equal(shouldShowAnchorTimer(Number.NaN), false);
 });
 
 test("stationary power saving can activate inside the shoreline warning distance", () => {
