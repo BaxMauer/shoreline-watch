@@ -21,7 +21,7 @@ test("German and all four requested themes remain selectable", () => {
 
 test("warning preferences are loaded, sanitized, and persisted locally", () => {
   assert.match(app, /localStorage\.getItem\(WARNING_CONFIG_STORAGE_KEY\)/);
-  assert.match(app, /sanitizeWarningConfig\(JSON\.parse\(savedWarningConfig\)\)/);
+  assert.match(app, /migrateWarningConfig\(JSON\.parse\(savedWarningConfig\)\)/);
   assert.match(app, /localStorage\.setItem\(WARNING_CONFIG_STORAGE_KEY, JSON\.stringify\(warningConfig\)\)/);
 });
 
@@ -106,6 +106,13 @@ test("anchor timer is observable, uses wall-clock receipt time, and never hardco
   assert.match(app, /className=\{`anchor-timer-chip/);
   assert.match(app, /className=\{`power-save-go \$\{goNoGoState\}`\}/);
   assert.doesNotMatch(app, /className="power-save-go"><i aria-hidden="true">✓/);
+});
+
+test("live overview keeps speed visible and collision prediction is opt-in", () => {
+  assert.match(app, /className=\{`speed-readout \$\{activeSpeedViolation \? "danger" : ""\}`\}/);
+  assert.match(app, /className="live-readouts"/);
+  assert.match(app, /checked=\{warningConfig\.courseWarningEnabled\}/);
+  assert.match(app, /if \(!warningConfig\.courseWarningEnabled \|\| !gpsReliable/);
 });
 
 test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {

@@ -13,7 +13,7 @@ import {
   getNearbyShorelineSegments,
   offsetFromShore,
 } from "../lib/shoreline";
-import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
+import { CROATIA_WARNING_CONFIG, migrateWarningConfig, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
 import {
   classifyWarningZone,
   gateWarningSoundForDangerEpisode,
@@ -122,6 +122,8 @@ const COPY = {
     speedWarning: "Tempo im Küstenbereich prüfen",
     speedLimit: "Maximaltempo",
     speedWarningHint: (distance: number) => `Warnt über dem Limit innerhalb von ${distance} m.`,
+    courseWarningSetting: "Kollisionswarnung",
+    courseWarningSettingHint: "Warnt, wenn der aktuelle Kurs die Küste oder den Warnabstand schneidet.",
     quietAtSafeSpeed: "Distanzton nur über eingestelltem Limit",
     quietAtSafeSpeedHint: (speed: number) => `Bis zum eingestellten Wert von ${speed} kn bleibt der Ton beim Einfahren aus. Bildschirmwarnung und Vibration bleiben aktiv.`,
     croatiaPreset: "Kroatienwerte",
@@ -160,7 +162,7 @@ const COPY = {
     powerFar: "Küste weit entfernt",
     powerStationary: "Keine Bewegung erkannt",
     tapToWake: "Antippen für volle Anzeige",
-    muted: "Stumm",
+    muted: "Ton aus",
     visualDistance: "Warnbereich erreicht",
     visualDistanceDetail: (distance: number) => `Weniger als ${distance} m zur Küste`,
     visualSpeed: "Tempo reduzieren",
@@ -168,7 +170,7 @@ const COPY = {
     visualSafe: "Abstand wieder frei",
     visualSafeDetail: (distance: number) => `Mehr als ${distance} m zur Küste`,
     live: "Live",
-    end: "Beenden",
+    end: "Tracking beenden",
     waitingGps: "Warte auf GPS",
     weakGps: "GPS ungenau",
     weakGpsDetail: (accuracy: string, maximum: number) => `GPS-Genauigkeit ±${accuracy} m. Benötigt: ±${maximum} m oder besser.`,
@@ -181,12 +183,14 @@ const COPY = {
     clearLimit: (distance: number) => `${distance} m frei`,
     speedDanger: "Eingestelltes Tempolimit überschritten",
     speedDangerDetail: (speed: string, limit: string, distance: number) => `${speed} kn · Limit ${limit} kn innerhalb ${distance} m`,
-    playing: "Wiedergabe",
-    blocked: "Blockiert",
+    playing: "Ton aktiv",
+    blocked: "Ton blockiert",
     ready: "Bereit",
-    notReady: "Nicht bereit",
+    soundReady: "Ton bereit",
+    notReady: "Ton nicht bereit",
     nearestShore: "Nächste Küste",
     chartDepth: "Kartentiefe",
+    currentSpeed: "Geschwindigkeit",
     depthWaiting: "Warte auf GPS für Kartentiefe",
     depthLoading: "Kartentiefe wird geladen",
     depthUnavailable: "Keine Wassertiefe im Kartenraster",
@@ -250,6 +254,8 @@ const COPY = {
     speedWarning: "Check speed near shore",
     speedLimit: "Maximum speed",
     speedWarningHint: (distance: number) => `Warn above the limit while within ${distance} m.`,
+    courseWarningSetting: "Collision warning",
+    courseWarningSettingHint: "Warn when the current course intersects the shoreline or warning distance.",
     quietAtSafeSpeed: "Distance sound only above configured limit",
     quietAtSafeSpeedHint: (speed: number) => `At or below the configured ${speed} kn, entering the zone stays silent. Screen alert and vibration remain active.`,
     croatiaPreset: "Croatia preset",
@@ -288,7 +294,7 @@ const COPY = {
     powerFar: "Shoreline is far away",
     powerStationary: "No movement detected",
     tapToWake: "Tap for full display",
-    muted: "Muted",
+    muted: "Sound off",
     visualDistance: "Warning zone reached",
     visualDistanceDetail: (distance: number) => `Less than ${distance} m from shore`,
     visualSpeed: "Reduce speed",
@@ -296,7 +302,7 @@ const COPY = {
     visualSafe: "Distance clear again",
     visualSafeDetail: (distance: number) => `More than ${distance} m from shore`,
     live: "Live",
-    end: "End",
+    end: "End tracking",
     waitingGps: "Waiting for GPS",
     weakGps: "Low GPS accuracy",
     weakGpsDetail: (accuracy: string, maximum: number) => `GPS accuracy ±${accuracy} m. Required: ±${maximum} m or better.`,
@@ -309,12 +315,14 @@ const COPY = {
     clearLimit: (distance: number) => `${distance} m clear`,
     speedDanger: "Configured speed limit exceeded",
     speedDangerDetail: (speed: string, limit: string, distance: number) => `${speed} kn · ${limit} kn limit within ${distance} m`,
-    playing: "Playing",
-    blocked: "Blocked",
+    playing: "Sound active",
+    blocked: "Sound blocked",
     ready: "Ready",
-    notReady: "Not ready",
+    soundReady: "Sound ready",
+    notReady: "Sound not ready",
     nearestShore: "Nearest shoreline",
     chartDepth: "Chart depth",
+    currentSpeed: "Speed",
     depthWaiting: "Waiting for GPS chart depth",
     depthLoading: "Loading chart depth",
     depthUnavailable: "No water depth in the chart grid",
@@ -694,7 +702,7 @@ export default function ShorelineApp() {
       if (savedAutoSunlight === "true") setAutoSunlight(true);
       if (savedWarningConfig) {
         try {
-          setWarningConfig(sanitizeWarningConfig(JSON.parse(savedWarningConfig)));
+          setWarningConfig(migrateWarningConfig(JSON.parse(savedWarningConfig)));
         } catch {
           setWarningConfig(CROATIA_WARNING_CONFIG);
         }
@@ -873,7 +881,7 @@ export default function ShorelineApp() {
     : Math.round(Math.abs(closingRateMetresPerSecond) * 60);
 
   const courseRisk = useMemo<CourseRisk>(() => {
-    if (!gpsReliable || !courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
+    if (!warningConfig.courseWarningEnabled || !gpsReliable || !courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
     const secondsToShore = courseToShore.distance / speedMetresPerSecond;
     const secondsToMark = Math.max(0, (courseToShore.distance - warningConfig.distanceMetres) / speedMetresPerSecond);
 
@@ -892,7 +900,7 @@ export default function ShorelineApp() {
       };
     }
     return { level: "none", label: "", detail: "" };
-  }, [copy, courseToShore, gpsReliable, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
+  }, [copy, courseToShore, gpsReliable, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.courseWarningEnabled, warningConfig.distanceMetres]);
 
   const goNoGoState = getGoNoGoState(
     conservativeDistance,
@@ -1454,7 +1462,7 @@ export default function ShorelineApp() {
       : alarmPlayback === "blocked"
         ? copy.blocked
         : alarmArmed
-          ? copy.ready
+          ? copy.soundReady
           : copy.notReady;
   const visualSignalCopy = visualSignal?.kind === "speed"
     ? { title: copy.visualSpeed, detail: copy.visualSpeedDetail(warningConfig.maxSpeedKnots) }
@@ -1557,6 +1565,10 @@ export default function ShorelineApp() {
                     </label>
                   </>
                 )}
+                <label className="toggle-row">
+                  <span><strong>{copy.courseWarningSetting}</strong><small>{copy.courseWarningSettingHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.courseWarningEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, courseWarningEnabled: event.target.checked }))} />
+                </label>
                 <p className="settings-section-label">{copy.alertOutputs}</p>
                 <label className="volume-setting" htmlFor="alert-volume">
                   <span><strong>{copy.alertVolume}</strong><small>{copy.volumeBoostHint}</small></span>
@@ -1607,7 +1619,7 @@ export default function ShorelineApp() {
                 </label>
                 <div className="preset-row">
                   <p>{copy.croatiaRule}</p>
-                  <button type="button" onClick={() => setWarningConfig((current) => ({ ...current, distanceMetres: CROATIA_WARNING_CONFIG.distanceMetres, speedWarningEnabled: CROATIA_WARNING_CONFIG.speedWarningEnabled, maxSpeedKnots: CROATIA_WARNING_CONFIG.maxSpeedKnots }))}>{copy.croatiaPreset}</button>
+                  <button type="button" onClick={() => setWarningConfig((current) => ({ ...current, distanceMetres: CROATIA_WARNING_CONFIG.distanceMetres, speedWarningEnabled: CROATIA_WARNING_CONFIG.speedWarningEnabled, maxSpeedKnots: CROATIA_WARNING_CONFIG.maxSpeedKnots, courseWarningEnabled: CROATIA_WARNING_CONFIG.courseWarningEnabled }))}>{copy.croatiaPreset}</button>
                 </div>
               </div>
             </details>
@@ -1647,8 +1659,13 @@ export default function ShorelineApp() {
               <span>{copy.nearestShore}</span>
               <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
               <small>{gpsSignalProblem && nearest ? `${copy.lastKnown} · ${distanceUnit}` : nearest ? distanceUnit : copy.acquiring}</small>
-              <div className={`current-depth-chip ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}>
-                <span aria-hidden="true">≈</span><b>{currentDepthDisplay}</b><em>m · {copy.chartDepth}</em>
+              <div className="live-readouts">
+                <div className={`speed-readout ${activeSpeedViolation ? "danger" : ""}`} role="status" aria-label={`${copy.currentSpeed}: ${speedKnots === null ? "—" : speedKnots.toFixed(1)} kn`}>
+                  <span aria-hidden="true">↗</span><b>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</b><em>kn · {copy.currentSpeed}</em>
+                </div>
+                <div className={`current-depth-chip ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}>
+                  <span aria-hidden="true">≈</span><b>{currentDepthDisplay}</b><em>m · {copy.chartDepth}</em>
+                </div>
               </div>
               {mode === "live" && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
                 <small>{copy.anchorTimer}</small>
@@ -1692,7 +1709,6 @@ export default function ShorelineApp() {
                 </div>
               ) : (
                 <div className="instrument-meta">
-                  <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn</span>
                   <span><strong>{fix ? `±${Math.round(fix.accuracy)}` : "—"}</strong> m GPS</span>
                   <span className={`closing-rate ${closingTrend}`} aria-label={copy.closingRate(closingTrend, closingMetresPerMinute)} title={copy.closing}><strong>{closingDisplay}</strong> m/min</span>
                 </div>
@@ -1719,7 +1735,7 @@ export default function ShorelineApp() {
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
 
           {debugEnabled && <details className="debug-panel">
-            <summary><span>{copy.diagnosticsSection}</span><b>{copy.debugMode}</b></summary>
+            <summary title={copy.debugMode} aria-label={copy.debugMode}><span aria-hidden="true">⌁</span><b>{copy.diagnosticsSection}</b></summary>
             <button type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(debugSnapshot, null, 2)).catch(() => undefined)}>{copy.debugCopy}</button>
             <pre>{JSON.stringify(debugSnapshot, null, 2)}</pre>
           </details>}
