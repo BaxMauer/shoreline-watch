@@ -14,7 +14,13 @@ import {
   offsetFromShore,
 } from "../lib/shoreline";
 import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig, type WarningConfig } from "../lib/warning-config";
-import { classifyWarningZone, getWarningHysteresisMetres, getWarningOutputPlan, getWarningTransition } from "../lib/warning-state";
+import {
+  classifyWarningZone,
+  gateWarningSoundForDangerEpisode,
+  getWarningHysteresisMetres,
+  getWarningOutputPlan,
+  getWarningTransition,
+} from "../lib/warning-state";
 import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
@@ -595,6 +601,7 @@ export default function ShorelineApp() {
   const demoTimestamp = useRef(0);
   const previousInsideLimit = useRef<boolean | null>(null);
   const previousSpeedViolation = useRef<boolean | null>(null);
+  const warningSoundAvailableForDangerEpisode = useRef(false);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -968,10 +975,18 @@ export default function ShorelineApp() {
       speedKnown: speedKnots !== null,
       speedViolation: nextSpeedViolation,
     });
+    const gatedSound = gateWarningSoundForDangerEpisode(
+      outputPlan.sound,
+      transition,
+      warningSoundAvailableForDangerEpisode.current,
+      wasInside,
+      nextInside,
+    );
+    warningSoundAvailableForDangerEpisode.current = gatedSound.availableForDangerEpisode;
     if (outputPlan.visual) triggerVisualSignal(outputPlan.visual);
     if (outputPlan.vibration) triggerVibration(outputPlan.vibration);
-    if (outputPlan.sound === "warning") void soundAlarm();
-    if (outputPlan.sound === "safe") void soundSafeChime();
+    if (gatedSound.sound === "warning") void soundAlarm();
+    if (gatedSound.sound === "safe") void soundSafeChime();
     previousInsideLimit.current = nextInside;
     previousSpeedViolation.current = nextSpeedViolation;
     setWarningZoneInside(nextInside);
@@ -1046,6 +1061,7 @@ export default function ShorelineApp() {
     distanceSamples.current = [];
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     setPowerSaveWakeUntil(0);
     setStationaryState({ reference: null, lastMovementAt: 0 });
@@ -1075,6 +1091,7 @@ export default function ShorelineApp() {
     }
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     const startedAt = Date.now();
     setStationaryState({ reference: null, lastMovementAt: startedAt });
@@ -1140,6 +1157,7 @@ export default function ShorelineApp() {
     }
     previousInsideLimit.current = null;
     previousSpeedViolation.current = null;
+    warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     demoTimestamp.current = Date.now();
     setClockNow(demoTimestamp.current);

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyWarningZone, getWarningHysteresisMetres, getWarningOutputPlan, getWarningTransition } from "../lib/warning-state.ts";
+import {
+  classifyWarningZone,
+  gateWarningSoundForDangerEpisode,
+  getWarningHysteresisMetres,
+  getWarningOutputPlan,
+  getWarningTransition,
+} from "../lib/warning-state.ts";
 
 const OUTPUTS = {
   alertVolumePercent: 100,
@@ -151,4 +157,79 @@ test("safe-water sound does not depend on the warning-alarm switch", () => {
 
 test("no transition never emits any output", () => {
   assert.deepEqual(getWarningOutputPlan("none", OUTPUTS), { sound: null, visual: null, vibration: null });
+});
+
+test("one danger episode can emit only one warning sound", () => {
+  let availableForDangerEpisode = true;
+  const sounds = [];
+  for (const transition of ["enter-distance", "enter-speed"]) {
+    const plan = getWarningOutputPlan(transition, OUTPUTS);
+    const gated = gateWarningSoundForDangerEpisode(plan.sound, transition, availableForDangerEpisode, false, true);
+    availableForDangerEpisode = gated.availableForDangerEpisode;
+    sounds.push(gated.sound);
+  }
+  assert.deepEqual(sounds, ["warning", null]);
+  assert.equal(availableForDangerEpisode, false);
+});
+
+test("moving beyond the hysteresis exit rearms the next danger episode", () => {
+  let inside = false;
+  let availableForDangerEpisode = true;
+  const sounds = [];
+  for (const distance of [284, 300, 314, 315, 284]) {
+    const nextInside = classifyWarningZone(inside, distance, 300);
+    const transition = getWarningTransition(inside, nextInside, false, false);
+    const plan = getWarningOutputPlan(transition, OUTPUTS);
+    const gated = gateWarningSoundForDangerEpisode(plan.sound, transition, availableForDangerEpisode, inside, nextInside);
+    availableForDangerEpisode = gated.availableForDangerEpisode;
+    sounds.push(gated.sound);
+    inside = nextInside;
+  }
+  assert.deepEqual(sounds.filter(Boolean), ["warning", "safe", "warning"]);
+  assert.equal(availableForDangerEpisode, false);
+});
+
+test("a suppressed distance sound does not consume the episode warning", () => {
+  const distancePlan = getWarningOutputPlan("enter-distance", {
+    ...OUTPUTS,
+    speedViolation: false,
+    suppressDistanceSoundAtSafeSpeed: true,
+  });
+  const afterDistance = gateWarningSoundForDangerEpisode(distancePlan.sound, "enter-distance", true, false, true);
+  assert.deepEqual(afterDistance, { sound: null, availableForDangerEpisode: true });
+
+  const speedPlan = getWarningOutputPlan("enter-speed", OUTPUTS);
+  const afterSpeed = gateWarningSoundForDangerEpisode(
+    speedPlan.sound,
+    "enter-speed",
+    afterDistance.availableForDangerEpisode,
+    true,
+    true,
+  );
+  assert.deepEqual(afterSpeed, { sound: "warning", availableForDangerEpisode: false });
+});
+
+test("starting inside remains silent until the danger episode has cleared", () => {
+  const initial = gateWarningSoundForDangerEpisode(null, "none", false, null, true);
+  assert.deepEqual(initial, { sound: null, availableForDangerEpisode: false });
+
+  const speedPlan = getWarningOutputPlan("enter-speed", OUTPUTS);
+  const speedCrossing = gateWarningSoundForDangerEpisode(
+    speedPlan.sound,
+    "enter-speed",
+    initial.availableForDangerEpisode,
+    true,
+    true,
+  );
+  assert.deepEqual(speedCrossing, { sound: null, availableForDangerEpisode: false });
+
+  const cleared = gateWarningSoundForDangerEpisode("safe", "exit-distance", false, true, false);
+  assert.deepEqual(cleared, { sound: "safe", availableForDangerEpisode: true });
+});
+
+test("the first reliable outside fix arms warning audio without making a sound", () => {
+  assert.deepEqual(
+    gateWarningSoundForDangerEpisode(null, "none", false, null, false),
+    { sound: null, availableForDangerEpisode: true },
+  );
 });

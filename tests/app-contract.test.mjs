@@ -47,8 +47,9 @@ test("screen wake lock recovers while live and releases cleanly when stopped", (
 test("distance warning retains visual and vibration paths independently from audio", () => {
   assert.match(app, /if \(outputPlan\.visual\) triggerVisualSignal\(outputPlan\.visual\)/);
   assert.match(app, /if \(outputPlan\.vibration\) triggerVibration\(outputPlan\.vibration\)/);
-  assert.match(app, /if \(outputPlan\.sound === "warning"\) void soundAlarm\(\)/);
-  assert.match(app, /if \(outputPlan\.sound === "safe"\) void soundSafeChime\(\)/);
+  assert.match(app, /gateWarningSoundForDangerEpisode\([\s\S]*outputPlan\.sound/);
+  assert.match(app, /if \(gatedSound\.sound === "warning"\) void soundAlarm\(\)/);
+  assert.match(app, /if \(gatedSound\.sound === "safe"\) void soundSafeChime\(\)/);
 });
 
 test("alarm media is preloaded and primed from the user start gesture", () => {
@@ -76,9 +77,9 @@ test("distance and route readiness require fresh GPS at the accuracy threshold",
   assert.match(app, /getGoNoGoState\([\s\S]*gpsReliable,[\s\S]*warningZoneInside/);
   assert.match(app, /gpsIsReliable:\s*gpsReliable/);
   assert.match(app, /gpsNavigationState=\{gpsNavigationState\}/);
-  assert.match(planner, /!canPlanRoute\(gpsNavigationState, start\)/);
+  assert.match(planner, /if \(start === fix && !gpsReliable\) return;/);
   assert.match(planner, /getRouteReadinessState\(\{/);
-  assert.match(planner, /if \(!target \|\| !fix \|\| !gpsReliable\) return;/);
+  assert.match(planner, /!gpsReliable \|\| !fix \|\| !target \|\| !hasReachedRouteTarget\(fix, target\)/);
 });
 
 test("power saver runs only in live mode, wakes on tap, and retains GPS tracking", () => {
@@ -111,7 +112,7 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /clearanceMetres: warningConfig\.distanceMetres/);
   assert.match(planner, /speedWarningEnabled: warningConfig\.speedWarningEnabled/);
   assert.match(planner, /nearShoreSpeedKnots: warningConfig\.maxSpeedKnots/);
-  assert.match(planner, /startAccuracyMetres: start\.accuracy/);
+  assert.match(planner, /startAccuracyMetres: start === fix \? fix\?\.accuracy : undefined/);
   assert.match(planner, /route\.mode === "clearance"/);
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
@@ -119,9 +120,10 @@ test("route planning applies warning distance and near-shore speed settings", as
 test("route destination can be selected by map tap or entered coordinates", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /onPointerUp=\{handlePointerUp\}/);
-  assert.match(planner, /selectTarget\(routeMapPixelToGeo\(mapCentre, viewRangeMetres, size, x, y\)\)/);
+  assert.match(planner, /const selected = routeMapPixelToGeo\(mapCentre, viewRangeMetres, size, x, y\)/);
+  assert.match(planner, /if \(mapEditMode === "start"\) selectStart\(selected\);[\s\S]*else selectTarget\(selected\);/);
   assert.match(planner, /inputMode="decimal"/);
-  assert.match(planner, /selectTarget\(\{ latitude, longitude \}\)/);
+  assert.match(planner, /const destination = \{ latitude: parsedTargetLatitude, longitude: parsedTargetLongitude \}/);
 });
 
 test("route calculations use a cancellable worker and reset completely", async () => {
@@ -134,32 +136,34 @@ test("route calculations use a cancellable worker and reset completely", async (
 
 test("route planning keeps a pending movement reroute across high-frequency GPS fixes", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  const movementEffect = planner.match(/useEffect\(\(\) => \{\n    latestRerouteFix\.current = fix;[\s\S]*?\n  \}, \[calculate, clearPendingReroute, fix, gpsReliable, planning, target, warningConfig\.distanceMetres\]\);/)?.[0] ?? "";
+  const movementEffect = planner.match(/useEffect\(\(\) => \{\n    latestRerouteFix\.current = fix;[\s\S]*?\n  \}, \[calculate, clearPendingReroute, fix, gpsReliable, journeyState, planning, target, warningConfig\.distanceMetres\]\);/)?.[0] ?? "";
 
   assert.notEqual(movementEffect, "");
+  assert.match(movementEffect, /journeyState !== "active"/);
   assert.match(movementEffect, /shouldRerouteRoute\(plannedFrom\.current, fix, warningConfig\.distanceMetres\)/);
-  assert.match(movementEffect, /if \(rerouteTimer\.current !== null\) return;/);
+  assert.match(movementEffect, /rerouteTimer\.current !== null/);
   assert.match(movementEffect, /const rerouteFix = latestRerouteFix\.current;/);
   assert.match(movementEffect, /shouldRerouteRoute\(plannedFrom\.current, rerouteFix, warningConfig\.distanceMetres\)/);
-  assert.match(movementEffect, /calculate\(target, rerouteFix\)/);
+  assert.match(movementEffect, /calculate\(target, rerouteFix, true\)/);
   assert.doesNotMatch(movementEffect, /return \(\) => window\.clearTimeout/);
 });
 
 test("route planning cancels pending reroutes only when navigation becomes unsafe or the route is reset", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /if \(gpsReliable\) return;\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
+  assert.match(planner, /if \(\(journeyState !== "active" && startMode !== "gps"\) \|\| gpsReliable\) return;\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
   assert.match(planner, /const reset = \(\) => \{\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
   assert.match(planner, /useEffect\(\(\) => \(\) => clearPendingReroute\(\), \[clearPendingReroute\]\);/);
-  assert.match(planner, /\[cruiseSpeedKnots, gpsReliable, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
+  assert.match(planner, /\[conditionalPassagesEnabled, cruiseSpeedKnots, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
 });
 
-test("route map controls are bounded and target selection requires a position", async () => {
+test("route map controls are bounded and can edit either route point", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /aria-disabled=\{!gpsReliable\}/);
-  assert.match(planner, /wasSinglePointer && !gesture\?\.moved && gpsReliable && !planning/);
+  assert.match(planner, /aria-disabled=\{journeyState !== "planning" \|\| planning\}/);
+  assert.match(planner, /wasSinglePointer && !gesture\?\.moved && !planning/);
+  assert.match(planner, /mapEditMode === "start"/);
   assert.match(planner, /clampRouteViewRange\(value \/ 1\.7\)/);
   assert.match(planner, /clampRouteViewRange\(value \* 1\.7\)/);
-  assert.match(planner, /routeViewRangeForTarget\(current, fix, destination\)/);
+  assert.match(planner, /routeViewRangeForTarget\(2_500, start, destination\)/);
 });
 
 test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async () => {
@@ -190,10 +194,44 @@ test("route result exposes all navigation metrics and accessible status messages
   assert.match(planner, /route\.mode === "clearance" \? copy\.clearanceDetail/);
 });
 
+test("route planning exposes editable start and target points", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /type StartMode = "gps" \| "manual"/);
+  assert.match(planner, /aria-label=\{`\$\{copy\.start\} \$\{copy\.latitude\}`\}/);
+  assert.match(planner, /aria-label=\{`\$\{copy\.target\} \$\{copy\.longitude\}`\}/);
+  assert.match(planner, /const swapPoints = \(\) =>/);
+  assert.match(planner, /className="route-calculate"/);
+  assert.match(planner, /setMapEditMode\("start"\)/);
+});
+
+test("depth relief is optional, attributed, and excluded from routing options", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /buildGebcoBathymetryUrl\(mapCentre, viewRangeMetres\)/);
+  assert.match(planner, /className="route-depth-image"/);
+  assert.match(planner, /GEBCO_BATHYMETRY_ATTRIBUTION/);
+  assert.match(planner, /nicht routingwirksam/);
+  assert.match(planner, /not used for routing/);
+  assert.doesNotMatch(planner, /depthMetres:/);
+});
+
+test("a planned route can become an active trip with progress and arrival", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /type JourneyState = "planning" \| "active" \| "arrived"/);
+  assert.match(planner, /const startJourney = \(\) =>/);
+  assert.match(planner, /calculate\(target, fix, true\)/);
+  assert.match(planner, /hasReachedRouteTarget\(fix, target\)/);
+  assert.match(planner, /routeProgressPercent\(route\.distanceMetres, progressMetres\)/);
+  assert.match(planner, /className="route-start-trip"/);
+  assert.match(planner, /route-navigation[\s\S]*copy\.remaining[\s\S]*copy\.remainingEta[\s\S]*copy\.clearance/);
+  assert.match(planner, /\{journeyState === "planning" && <div className="route-metrics">/);
+  assert.match(planner, /REISE AKTIV/);
+  assert.match(planner, /TRIP ACTIVE/);
+});
+
 test("route bearing follows monotonic projected progress instead of a passed waypoint", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /getProgressAwareRouteGuidance\(route\.points, fix\)/);
-  assert.match(planner, /geoBearing\(fix, routeGuidance\.target\)/);
+  assert.match(planner, /getProgressAwareRouteGuidance\(route\.points, guidancePosition/);
+  assert.match(planner, /geoBearing\(guidancePosition, routeGuidance\.target\)/);
   assert.doesNotMatch(planner, /route\.points\.find\(\(candidate, index\)/);
 });
 

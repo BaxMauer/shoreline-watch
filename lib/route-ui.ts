@@ -5,6 +5,8 @@ export const MINIMUM_ROUTE_VIEW_METRES = 2_500;
 export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
+export const ROUTE_ARRIVAL_RADIUS_METRES = 75;
+export const GEBCO_BATHYMETRY_ATTRIBUTION = "GEBCO Compilation Group (2026)";
 
 export type RouteReadinessState = "waiting" | "calculating" | "check" | "ready";
 export type RouteGuidanceProjection = {
@@ -43,6 +45,59 @@ export function parseRouteCoordinate(value: string) {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function routeCoordinateIsValid(point: GeoPoint) {
+  return Number.isFinite(point.latitude)
+    && Number.isFinite(point.longitude)
+    && point.latitude >= -90
+    && point.latitude <= 90
+    && point.longitude >= -180
+    && point.longitude <= 360;
+}
+
+export function routeRemainingDistance(totalDistanceMetres: number, progressMetres: number) {
+  const total = Math.max(0, Number.isFinite(totalDistanceMetres) ? totalDistanceMetres : 0);
+  const progress = Math.max(0, Number.isFinite(progressMetres) ? progressMetres : 0);
+  return Math.max(0, total - progress);
+}
+
+export function routeProgressPercent(totalDistanceMetres: number, progressMetres: number) {
+  const total = Math.max(0, Number.isFinite(totalDistanceMetres) ? totalDistanceMetres : 0);
+  if (total === 0) return 0;
+  return Math.max(0, Math.min(100, progressMetres / total * 100));
+}
+
+export function hasReachedRouteTarget(current: GeoPoint, target: GeoPoint, radiusMetres = ROUTE_ARRIVAL_RADIUS_METRES) {
+  const radius = Math.max(0, Number.isFinite(radiusMetres) ? radiusMetres : ROUTE_ARRIVAL_RADIUS_METRES);
+  return geoDistanceMetres(current, target) <= radius;
+}
+
+export function buildGebcoBathymetryUrl(centre: GeoPoint, rangeMetres: number, imageSize = 720) {
+  if (!routeCoordinateIsValid(centre)) return null;
+  const range = clampRouteViewRange(rangeMetres);
+  const latitudeDelta = range / 110_540;
+  const longitudeMetres = Math.max(1, mapLongitudeScale(centre.latitude));
+  const longitudeDelta = range / longitudeMetres;
+  const size = Math.max(256, Math.min(1_280, Math.round(Number.isFinite(imageSize) ? imageSize : 720)));
+  const bounds = [
+    Math.max(-90, centre.latitude - latitudeDelta),
+    Math.max(-180, centre.longitude - longitudeDelta),
+    Math.min(90, centre.latitude + latitudeDelta),
+    Math.min(360, centre.longitude + longitudeDelta),
+  ];
+  const params = new URLSearchParams({
+    BBOX: bounds.map((value) => value.toFixed(6)).join(","),
+    crs: "EPSG:4326",
+    format: "image/jpeg",
+    height: size.toString(),
+    layers: "gebco_2026_2_sub_ice_topo",
+    request: "getmap",
+    service: "wms",
+    version: "1.3.0",
+    width: size.toString(),
+  });
+  return `https://wms.gebco.net/2026/mapserv?${params.toString()}`;
 }
 
 export function formatRouteEta(seconds: number, minuteLabel: string) {
