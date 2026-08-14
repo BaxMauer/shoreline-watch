@@ -46,6 +46,7 @@ import {
   mergePlaceSearchResults,
   formatPlaceSearchDetail,
   normalizePlaceSearchText,
+  resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
   type PlaceSearchResult,
 } from "../lib/place-search";
@@ -117,7 +118,7 @@ const COPY = {
     searchLoading: "Suche in kroatischen Küstenorten …",
     searchEmpty: "Kein passender Ort gefunden.",
     searchOffline: "Online-Suche nicht erreichbar – lokale Treffer werden angezeigt.",
-    searchHint: (name: string, point: string) => `${name} zentriert · ${point} im Wasser gedrückt halten`,
+    searchHint: (name: string) => `${name} · Ziel automatisch im Wasser gesetzt`,
     swap: "Start und Ziel tauschen",
     calculateRoute: "Route berechnen",
     invalidCoordinates: "Bitte gültige Breiten- und Längengrade eingeben.",
@@ -203,7 +204,7 @@ const COPY = {
     searchLoading: "Searching Croatian coastal places …",
     searchEmpty: "No matching place found.",
     searchOffline: "Online search unavailable — showing local matches.",
-    searchHint: (name: string, point: string) => `${name} centred · press and hold in the water for ${point}`,
+    searchHint: (name: string) => `${name} · destination placed in the water automatically`,
     swap: "Swap start and destination",
     calculateRoute: "Calculate route",
     invalidCoordinates: "Enter valid latitude and longitude values.",
@@ -439,7 +440,7 @@ export default function RoutePlanner({
   }, [calculate, fitRoute, target]);
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
-    const destination = { longitude: result.longitude, latitude: result.latitude };
+    const destination = resolvePlaceSearchTarget(pack, result);
     setFocusedPlace(result);
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
@@ -848,7 +849,7 @@ export default function RoutePlanner({
           {placeSearchState === "offline" && <p className="route-place-offline">{copy.searchOffline}</p>}
           <small className="route-place-credit">© OpenStreetMap contributors · Photon</small>
         </div>}
-        {focusedPlace && <small className="route-place-focus">{copy.searchHint(focusedPlace.name, mapEditMode === "start" ? copy.start : copy.target)}</small>}
+        {focusedPlace && <small className="route-place-focus">{copy.searchHint(focusedPlace.name)}</small>}
       </div>}
 
       <div className="route-map-wrap">
