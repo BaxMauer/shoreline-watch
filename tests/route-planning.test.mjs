@@ -210,7 +210,7 @@ test("adaptive refinement finds a roughly 100-metre narrow passage", () => {
     { ...OPTIONS, clearanceMetres: 30 },
   );
   assert.ok(result.route, result.failure);
-  assert.ok(result.route.points.length > 2);
+  assert.ok(result.route.points.length <= 3, "line-of-sight smoothing should remove raster staircase points");
   assert.equal(result.route.mode, "clearance");
   assert.ok(result.route.minimumShoreDistanceMetres >= 30);
   for (let index = 1; index < result.route.points.length; index += 1) {
@@ -380,6 +380,24 @@ test("the bundled Croatia chart routes through the conditional Tisno bridge pass
   }
 });
 
+test("the Pakoštane screenshot corridor no longer produces a 29-mile raster detour", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const start = { longitude: 15.8074, latitude: 43.6946 };
+  const destination = { longitude: 15.5, latitude: 43.82 };
+  const startedAt = performance.now();
+  const result = planWaterRoute(croatiaPack, start, destination, {
+    ...OPTIONS,
+    clearanceMetres: 300,
+    startAccuracyMetres: 12,
+  });
+
+  assert.ok(result.route, result.failure);
+  assert.ok(performance.now() - startedAt < 5_000, "screenshot route must remain interactive on a phone");
+  assert.ok(formatRouteDistance(result.route.distanceMetres) < 18, "A* should reject the former 29-mile detour");
+  assert.ok(result.route.points.length <= 8, "the displayed route should not expose raster staircase turns");
+  assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points), true);
+});
+
 test("the Tisno passage remains water-only and works in the reverse direction", async () => {
   const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const passage = ROUTE_PASSAGE_HINTS.find(({ id }) => id === "tisno-murter-bridge");
@@ -482,7 +500,7 @@ test("conditional passage routing can be disabled without weakening shoreline ch
   );
   assert.ok(result.route, result.failure);
   assert.deepEqual(result.route.passageIds, []);
-  assert.ok(result.route.distanceMetres > 23_000);
+  assert.ok(result.route.distanceMetres > 20_000);
   for (let index = 1; index < result.route.points.length; index += 1) {
     assert.equal(routeSegmentCrossesShoreline(croatiaPack, result.route.points[index - 1], result.route.points[index]), false);
   }

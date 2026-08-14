@@ -83,12 +83,24 @@ test("distance and route readiness require fresh GPS at the accuracy threshold",
 });
 
 test("distance mode samples and displays the current EMODnet chart depth", async () => {
+  const depthRoute = await readFile(new URL("../app/api/depth/route.ts", import.meta.url), "utf8");
   assert.match(app, /depthSampleCellKey\(fix\)/);
-  assert.match(app, /fetch\(buildCurrentDepthRequestUrl\(/);
-  assert.match(app, /parseEmodnetWaterDepth\(payload\)/);
+  assert.match(app, /fetchCurrentWaterDepth\(/);
+  assert.match(app, /\(input, init\) => fetch\(input, \{ \.\.\.init, signal: controller\.signal \}\)/);
+  assert.match(depthRoute, /fetchEmodnetWaterDepth\(point/);
+  assert.match(depthRoute, /AbortSignal\.timeout\(6_500\)/);
   assert.match(app, /className=\{`current-depth-chip \$\{currentDepthState\}`\}/);
   assert.match(app, /copy\.chartDepth/);
   assert.match(app, /currentDepthState=\{currentDepthState\}/);
+});
+
+test("active trip map mirrors the distance instrument's clearance geometry", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /findNearestShore\(pack, fix\.longitude, fix\.latitude\)/);
+  assert.match(planner, /className="route-warning-ring"/);
+  assert.match(planner, /className="route-nearest-line"/);
+  assert.match(planner, /className="route-distance-label"/);
+  assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
 });
 
 test("power saver runs only in live mode, wakes on tap, and retains GPS tracking", () => {

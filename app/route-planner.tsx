@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getLandIntervalsAtLatitude, getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
+import { findNearestShore, getLandIntervalsAtLatitude, getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
 import {
   formatRouteDistance,
   geoBearing,
@@ -43,7 +43,7 @@ import {
 import type { WarningConfig } from "../lib/warning-config";
 
 type Language = "de" | "en";
-type Fix = GeoPoint & { speed: number | null; accuracy?: number };
+type Fix = GeoPoint & { speed: number | null; accuracy?: number; heading?: number | null };
 type RoutePlannerFailure = RoutePlanningFailure | "calculation-failed";
 type StartMode = "gps" | "manual";
 type MapEditMode = "start" | "target";
@@ -458,6 +458,10 @@ export default function RoutePlanner({
 
   const routePoints = route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "";
   const boatPoint = fix ? point(fix) : null;
+  const liveNearest = useMemo(() => pack && fix ? findNearestShore(pack, fix.longitude, fix.latitude) : null, [fix, pack]);
+  const liveNearestPoint = liveNearest ? point(liveNearest) : null;
+  const liveWarningRadius = warningConfig.distanceMetres * pixelsPerMetre;
+  const liveDistanceLabel = shoreDistanceMetres === null ? "—" : formatRouteClearance(shoreDistanceMetres);
   const startPoint = startMode === "manual" && manualStart ? point(manualStart) : null;
   const targetPoint = target ? point(target) : null;
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
@@ -691,10 +695,21 @@ export default function RoutePlanner({
               const end = point({ longitude: segment[2], latitude: segment[3] });
               return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
             })}</g>
+            {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
+              <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
+              {liveNearestPoint && <>
+                <line className="route-nearest-line" x1={boatPoint.x} y1={boatPoint.y} x2={liveNearestPoint.x} y2={liveNearestPoint.y} />
+                <circle className="route-nearest-point" cx={liveNearestPoint.x} cy={liveNearestPoint.y} r="3.5" />
+                <g className="route-distance-label" transform={`translate(${(boatPoint.x + liveNearestPoint.x) / 2} ${(boatPoint.y + liveNearestPoint.y) / 2})`}>
+                  <rect x="-25" y="-10" width="50" height="18" rx="7" />
+                  <text y="3">{liveDistanceLabel}</text>
+                </g>
+              </>}
+            </g>}
             {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
             {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><circle r="10" /><text y="3.5">A</text></g>}
             {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="11" /><text y="3.5">B</text></g>}
-            {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
+            {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${fix?.heading ?? 0})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
         {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
@@ -702,7 +717,7 @@ export default function RoutePlanner({
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
         </div>}
         {(journeyState === "active" || journeyState === "arrived") && <div className="route-live-readouts" aria-live="polite">
-          <span><small>{copy.shore}</small><strong>{shoreDistanceMetres === null ? "—" : formatRouteClearance(shoreDistanceMetres)}</strong></span>
+          <span><small>{copy.shore}</small><strong>{liveDistanceLabel}</strong></span>
           <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈ ${currentDepthDisplay} m` : "—"}</strong></span>
         </div>}
         <div className="route-layer-tools">

@@ -420,6 +420,12 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-land-area { fill: #d7dcd7; opacity: .96; }
 .route-depth-tile { opacity: .96; filter: saturate(.58) contrast(1.06) brightness(.8); image-rendering: auto; }
 .route-coast-layer line { stroke: var(--shore-stroke); stroke-width: 1.05; stroke-linecap: round; opacity: .62; vector-effect: non-scaling-stroke; }
+.route-warning-ring { fill: rgba(115,229,203,.035); stroke: rgba(115,229,203,.9); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.route-live-proximity.danger .route-warning-ring { fill: rgba(255,116,95,.08); stroke: var(--danger); animation: ring-breathe 1.6s ease-in-out infinite; }
+.route-nearest-line { stroke: #f7c75d; stroke-width: 1.8; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.route-nearest-point { fill: #f7c75d; stroke: #102a30; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.route-distance-label rect { fill: rgba(8,28,32,.88); stroke: rgba(255,255,255,.16); stroke-width: .6; vector-effect: non-scaling-stroke; }
+.route-distance-label text { fill: #fff; font-family: var(--font-geist-mono), monospace; font-size: 7px; font-weight: 850; text-anchor: middle; }
 .planned-route { fill: none; stroke: var(--aqua); stroke-width: 4.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 3px rgba(0,55,49,.55)); vector-effect: non-scaling-stroke; }
 .planned-route.restricted { stroke: var(--danger); stroke-dasharray: 7 5; filter: drop-shadow(0 0 5px rgba(255,116,95,.25)); }
 .route-start circle, .route-target circle { stroke: var(--instrument-surface); stroke-width: 2; vector-effect: non-scaling-stroke; }
@@ -541,7 +547,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-reset { min-height: 36px; border-radius: 8px; background: rgba(115,229,203,.1); color: var(--aqua); padding: 0 10px; cursor: pointer; font-size: .62rem; font-weight: 700; }
 .route-reset { grid-column: 1 / -1; }
 .route-live-gps-warning { position: sticky; z-index: 8; bottom: 0; margin: 0; border-radius: 9px; background: rgba(139,31,23,.96); color: #fff; padding: 9px 11px; font-size: .65rem; text-align: center; }
-.journey-active .route-map-wrap, .journey-arrived .route-map-wrap { height: clamp(360px,55svh,520px); }
+.journey-active .route-map-wrap, .journey-arrived .route-map-wrap { width: 100%; max-width: 520px; height: auto; aspect-ratio: 1 / 1; margin-inline: auto; }
 .journey-active .route-map, .journey-arrived .route-map { cursor: default; }
 .journey-active .route-controls, .journey-arrived .route-controls { display: none; }
 
@@ -553,6 +559,8 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .sunlight-mode .route-live-readouts small { color: #49696b; }
 .sunlight-mode .route-live-readouts strong { color: #071b22; }
 .sunlight-mode .route-live-readouts > span.ready strong { color: #006b54; }
+.sunlight-mode .route-distance-label rect { fill: rgba(255,255,255,.94); stroke: rgba(0,87,72,.22); }
+.sunlight-mode .route-distance-label text { fill: #071b22; }
 .sunlight-mode .route-summary, .sunlight-mode .route-panel, .sunlight-mode .route-speed, .sunlight-mode .route-option { border-color: rgba(13,77,76,.1); background: rgba(255,255,255,.82); }
 .sunlight-mode .route-state { background: rgba(255,255,255,.9); }
 .sunlight-mode .route-state.ready { background: #d7f4eb; color: #00634f; box-shadow: 0 0 0 1px rgba(0,99,79,.2); }
