@@ -699,4 +699,1059 @@ export default function ShorelineApp() {
           setWarningConfig(CROATIA_WARNING_CONFIG);
         }
       }
-      setDebugEnabled(savedDebug === "true")
+      setDebugEnabled(savedDebug === "true");
+      setPreferencesLoaded(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    window.localStorage.setItem("shoreline-language", language);
+    window.localStorage.setItem("shoreline-theme", theme);
+    window.localStorage.setItem(AUTO_SUNLIGHT_STORAGE_KEY, String(autoSunlight));
+    window.localStorage.setItem(WARNING_CONFIG_STORAGE_KEY, JSON.stringify(warningConfig));
+    window.localStorage.setItem(DEBUG_STORAGE_KEY, String(debugEnabled));
+    document.documentElement.lang = language;
+    document.documentElement.dataset.theme = theme;
+  }, [autoSunlight, debugEnabled, language, preferencesLoaded, theme, warningConfig]);
+
+  useEffect(() => {
+    if (mode === "idle") return;
+    const interval = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [mode]);
+
+  useEffect(() => {
+    const refreshClock = () => setClockNow(Date.now());
+    window.addEventListener("pageshow", refreshClock);
+    document.addEventListener("visibilitychange", refreshClock);
+    return () => {
+      window.removeEventListener("pageshow", refreshClock);
+      document.removeEventListener("visibilitychange", refreshClock);
+    };
+  }, []);
+
+  useEffect(() => {
+    let refreshing = false;
+    const refreshForUpdate = () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    };
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("controllerchange", refreshForUpdate);
+      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+
+    fetch("/data/croatia-coastline.json")
+      .then((response) => {
+        if (!response.ok) throw new Error("Coastline pack could not be loaded.");
+        return response.json() as Promise<CoastlinePack>;
+      })
+      .then((data) => setPack(data))
+      .catch((error: unknown) => setPackError(error instanceof Error ? error.message : "Coastline pack could not be loaded."));
+
+    fetch("/data/croatia-map-features.json")
+      .then((response) => {
+        if (!response.ok) throw new Error("Map feature pack could not be loaded.");
+        return response.json() as Promise<MapFeaturePack>;
+      })
+      .then((data) => setMapFeaturePack(data))
+      .catch((error: unknown) => setMapFeatureError(error instanceof Error ? error.message : "Map feature pack could not be loaded."));
+
+    return () => navigator.serviceWorker?.removeEventListener("controllerchange", refreshForUpdate);
+  }, []);
+
+  const nearest = useMemo<NearestShore | null>(() => {
+    if (!pack || !fix) return null;
+    return findNearestShore(pack, fix.longitude, fix.latitude);
+  }, [pack, fix]);
+
+  const gpsSignalState = getGpsSignalState(
+    mode === "live",
+    fix?.timestamp ?? null,
+    trackingStartedAt,
+    clockNow,
+  );
+  const gpsNavigationState = getGpsNavigationState(gpsSignalState, fix?.accuracy);
+  const gpsReliable = gpsNavigationState === "reliable";
+  const gpsAgeSeconds = Math.max(0, Math.floor((clockNow - (fix?.timestamp ?? trackingStartedAt ?? clockNow)) / 1_000));
+  const gpsSignalProblem = gpsSignalState === "stale" || gpsSignalState === "lost";
+  const gpsNavigationProblem = gpsNavigationState !== "reliable";
+  const depthCellKey = fix ? depthSampleCellKey(fix) : null;
+  if (!depthCellKey || !fix) depthQueryPoint.current = null;
+  else if (depthQueryPoint.current?.key !== depthCellKey) {
+    depthQueryPoint.current = { key: depthCellKey, latitude: fix.latitude, longitude: fix.longitude };
+  }
+  const depthLatitude = depthQueryPoint.current?.latitude ?? null;
+  const depthLongitude = depthQueryPoint.current?.longitude ?? null;
+  const sunlightActive = mode !== "idle" && shouldUseSunlightMode(
+    autoSunlight,
+    clockNow,
+    fix?.latitude ?? null,
+    fix?.longitude ?? null,
+  );
+
+  useEffect(() => {
+    if (mode === "idle" || gpsSignalState !== "fresh" || depthLatitude === null || depthLongitude === null) {
+      const timer = window.setTimeout(() => {
+        setCurrentDepthMetres(null);
+        setCurrentDepthState("idle");
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setCurrentDepthMetres(null);
+      setCurrentDepthState("loading");
+      setDepthDebug({ requestedAt: Date.now(), respondedAt: null, error: null });
+      fetchCurrentWaterDepth(
+        { latitude: depthLatitude, longitude: depthLongitude },
+        (input, init) => fetch(input, { ...init, signal: controller.signal }),
+      )
+        .then((depthMetres) => {
+          if (controller.signal.aborted) return;
+          setCurrentDepthMetres(depthMetres);
+          setCurrentDepthState(depthMetres === null ? "unavailable" : "ready");
+          setDepthDebug((current) => ({ ...current, respondedAt: Date.now(), error: null }));
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          setCurrentDepthMetres(null);
+          setCurrentDepthState("error");
+          setDepthDebug((current) => ({ ...current, respondedAt: Date.now(), error: error instanceof Error ? error.message : "unknown" }));
+        });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [depthCellKey, depthLatitude, depthLongitude, gpsSignalState, mode]);
+
+  useEffect(() => {
+    if (!nearest || !fix || mode === "idle") return;
+    const lastSample = distanceSamples.current.at(-1);
+    if (lastSample?.timestamp === fix.timestamp) return;
+    if (lastSample && (fix.timestamp <= lastSample.timestamp || fix.timestamp - lastSample.timestamp > 30_000)) {
+      distanceSamples.current = [];
+    }
+    distanceSamples.current.push({ timestamp: fix.timestamp, distanceMetres: nearest.distance });
+    distanceSamples.current = distanceSamples.current.filter((sample) => sample.timestamp >= fix.timestamp - 20_000).slice(-12);
+    setClosingRateMetresPerSecond(calculateClosingRate(distanceSamples.current));
+  }, [fix, mode, nearest]);
+
+  const viewRangeMetres = getPlotRangeMetres(nearest?.distance ?? null, warningConfig.distanceMetres);
+  const nearbySegments = useMemo(() => {
+    if (!pack || !fix) return [];
+    return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.15);
+  }, [fix, pack, viewRangeMetres]);
+
+  const courseToShore = useMemo(() => {
+    if (!fix || fix.heading === null) return null;
+    return findCourseToShore(nearbySegments, fix.longitude, fix.latitude, fix.heading);
+  }, [fix, nearbySegments]);
+
+  const speedMetresPerSecond = fix?.speed ?? 0;
+  const speedKnots = fix?.speed == null ? null : fix.speed * 1.943844;
+  const conservativeDistance = nearest && fix && Number.isFinite(fix.accuracy) && fix.accuracy >= 0
+    ? Math.max(0, nearest.distance - fix.accuracy)
+    : null;
+  const rawInsideLimit = conservativeDistance !== null && conservativeDistance < warningConfig.distanceMetres;
+  const insideLimit = warningZoneInside ?? rawInsideLimit;
+  const speedViolation = warningConfig.speedWarningEnabled
+    && insideLimit
+    && speedKnots !== null
+    && speedKnots > warningConfig.maxSpeedKnots;
+  const activeSpeedViolation = gpsReliable && speedViolation;
+  const isUnderway = speedMetresPerSecond >= 0.77;
+  const closingTrend = classifyClosingRate(gpsReliable ? closingRateMetresPerSecond : null);
+  const closingMetresPerMinute = closingRateMetresPerSecond === null || !gpsReliable
+    ? null
+    : Math.round(Math.abs(closingRateMetresPerSecond) * 60);
+
+  const courseRisk = useMemo<CourseRisk>(() => {
+    if (!gpsReliable || !courseToShore || !isUnderway) return { level: "none", label: "", detail: "" };
+    const secondsToShore = courseToShore.distance / speedMetresPerSecond;
+    const secondsToMark = Math.max(0, (courseToShore.distance - warningConfig.distanceMetres) / speedMetresPerSecond);
+
+    if (insideLimit && secondsToShore <= 300) {
+      return {
+        level: "danger",
+        label: copy.courseDanger,
+        detail: copy.courseDangerDetail(formatEta(secondsToShore, language)),
+      };
+    }
+    if (!insideLimit && secondsToMark <= 180) {
+      return {
+        level: "warning",
+        label: copy.courseWarning(warningConfig.distanceMetres),
+        detail: copy.courseWarningDetail(formatEta(secondsToMark, language)),
+      };
+    }
+    return { level: "none", label: "", detail: "" };
+  }, [copy, courseToShore, gpsReliable, insideLimit, isUnderway, language, speedMetresPerSecond, warningConfig.distanceMetres]);
+
+  const goNoGoState = getGoNoGoState(
+    conservativeDistance,
+    warningConfig.distanceMetres,
+    gpsReliable,
+    warningZoneInside,
+  );
+  const anchorAlertActive = activeSpeedViolation
+    || courseRisk.level !== "none"
+    || (visualSignal !== null && visualSignal.kind !== "safe");
+  const anchorTimer = getAnchorTimerSnapshot({
+    enabled: warningConfig.powerSaveEnabled,
+    tracking: mode === "live",
+    gpsIsReliable: gpsReliable,
+    lastMovementAt: stationaryState.lastMovementAt,
+    stationaryAfterMinutes: warningConfig.powerSaveStationaryMinutes,
+    alertActive: anchorAlertActive,
+    wakeUntil: powerSaveWakeUntil,
+    now: clockNow,
+  });
+  const anchorDistanceMetres = fix ? distanceFromStationaryReference(stationaryState, fix) : null;
+  const powerSaveReason = getPowerSaveReason({
+    enabled: warningConfig.powerSaveEnabled,
+    tracking: mode === "live",
+    gpsIsReliable: gpsReliable,
+    distanceMetres: nearest?.distance ?? null,
+    farDistanceMetres: warningConfig.powerSaveDistanceMetres,
+    lastMovementAt: stationaryState.lastMovementAt,
+    stationaryAfterMinutes: warningConfig.powerSaveStationaryMinutes,
+    alertActive: anchorAlertActive,
+    wakeUntil: powerSaveWakeUntil,
+    now: clockNow,
+  });
+
+  const wakePowerDisplay = useCallback(() => {
+    setPowerSaveWakeUntil(Date.now() + 30_000);
+  }, []);
+
+  const getAudioContext = useCallback(() => {
+    if (audioContext.current && audioContext.current.state !== "closed") return audioContext.current;
+    const AudioContextClass = window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return null;
+    audioContext.current = new AudioContextClass();
+    return audioContext.current;
+  }, []);
+
+  const ensureAlarmAudioGraph = useCallback(() => {
+    const context = getAudioContext();
+    const audio = alarmAudio.current;
+    if (!context || !audio) return context;
+    if (!alarmMediaSource.current || !alarmGain.current) {
+      try {
+        alarmMediaSource.current = context.createMediaElementSource(audio);
+        alarmGain.current = context.createGain();
+        alarmMediaSource.current.connect(alarmGain.current);
+        alarmGain.current.connect(context.destination);
+      } catch {
+        alarmMediaSource.current = null;
+        alarmGain.current = null;
+      }
+    }
+    if (alarmGain.current) {
+      alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+    } else {
+      audio.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+    }
+    return context;
+  }, [getAudioContext, warningConfig.alertVolumePercent]);
+
+  useEffect(() => {
+    const context = audioContext.current;
+    if (context && alarmGain.current) {
+      alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+    } else if (alarmAudio.current) {
+      alarmAudio.current.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+    }
+  }, [warningConfig.alertVolumePercent]);
+
+  const soundWebAudioFallback = useCallback(async () => {
+    const context = getAudioContext();
+    if (!context) return false;
+    try {
+      if (context.state === "suspended") await context.resume();
+      if (context.state !== "running") return false;
+      const start = context.currentTime + 0.02;
+      scheduleTone(context, start, 880, warningConfig.alertVolumePercent);
+      scheduleTone(context, start + 0.46, 880, warningConfig.alertVolumePercent);
+      scheduleTone(context, start + 0.92, 1_040, warningConfig.alertVolumePercent);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [getAudioContext, warningConfig.alertVolumePercent]);
+
+  const primeAlarm = useCallback(async () => {
+    const audio = alarmAudio.current;
+    if (!audio) return false;
+    try {
+      const context = ensureAlarmAudioGraph();
+      if (context?.state === "suspended") await context.resume();
+      if (context?.state === "running") {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        gain.gain.setValueAtTime(0.0001, context.currentTime);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.02);
+      }
+      audio.muted = false;
+      if (alarmGain.current && context) {
+        alarmGain.current.gain.setValueAtTime(0.0001, context.currentTime);
+      } else {
+        audio.volume = 0;
+      }
+      audio.currentTime = 0;
+      await audio.play();
+      window.setTimeout(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        if (alarmGain.current && context) {
+          alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+        } else {
+          audio.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+        }
+        setAlarmPlayback("ready");
+      }, 70);
+      setAlarmArmed(true);
+      setAlarmError(null);
+      setAlarmPlayback("playing");
+      return true;
+    } catch {
+      setAlarmArmed(false);
+      setAlarmPlayback("blocked");
+      setAlarmError(copy.soundBlocked);
+      return false;
+    }
+  }, [copy.soundBlocked, ensureAlarmAudioGraph, warningConfig.alertVolumePercent]);
+
+  const soundAlarm = useCallback(async () => {
+    const audio = alarmAudio.current;
+    if (!audio) {
+      setAlarmError(copy.soundMissing);
+      return false;
+    }
+    try {
+      const context = ensureAlarmAudioGraph();
+      if (context?.state === "suspended") await context.resume();
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      if (alarmGain.current && context) {
+        alarmGain.current.gain.setValueAtTime(warningConfig.alertVolumePercent / 100, context.currentTime);
+      } else {
+        audio.volume = Math.min(1, warningConfig.alertVolumePercent / 100);
+      }
+      setAlarmPlayback("starting");
+      await audio.play();
+      setAlarmArmed(true);
+      setAlarmError(null);
+      setAlarmPlayback("playing");
+      setAlarmPlayCount((count) => count + 1);
+      return true;
+    } catch {
+      const fallbackWorked = await soundWebAudioFallback();
+      if (fallbackWorked) {
+        setAlarmArmed(true);
+        setAlarmError(null);
+        setAlarmPlayback("playing");
+        setAlarmPlayCount((count) => count + 1);
+        return true;
+      }
+      setAlarmArmed(false);
+      setAlarmPlayback("blocked");
+      setAlarmError(copy.soundBlocked);
+      return false;
+    }
+  }, [copy.soundBlocked, copy.soundMissing, ensureAlarmAudioGraph, soundWebAudioFallback, warningConfig.alertVolumePercent]);
+
+  const soundSafeChime = useCallback(async () => {
+    const context = getAudioContext();
+    if (!context) return false;
+    try {
+      if (context.state === "suspended") await context.resume();
+      if (context.state !== "running") return false;
+      const start = context.currentTime + 0.02;
+      scheduleChimeTone(context, start, 523.25, warningConfig.alertVolumePercent, 0.26);
+      scheduleChimeTone(context, start + 0.3, 659.25, warningConfig.alertVolumePercent, 0.26);
+      scheduleChimeTone(context, start + 0.6, 783.99, warningConfig.alertVolumePercent, 0.38);
+      setAlarmError(null);
+      setAlarmPlayback("playing");
+      window.setTimeout(() => setAlarmPlayback("ready"), 1_050);
+      return true;
+    } catch {
+      setAlarmPlayback("blocked");
+      setAlarmError(copy.soundBlocked);
+      return false;
+    }
+  }, [copy.soundBlocked, getAudioContext, warningConfig.alertVolumePercent]);
+
+  const triggerVisualSignal = useCallback((kind: VisualSignalKind) => {
+    if (!warningConfig.visualAlertsEnabled) return;
+    visualSignalSequence.current += 1;
+    const sequence = visualSignalSequence.current;
+    setVisualSignal({ kind, sequence });
+    if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
+    visualSignalTimer.current = window.setTimeout(() => {
+      setVisualSignal((current) => current?.sequence === sequence ? null : current);
+      visualSignalTimer.current = null;
+    }, kind === "safe" ? 2_000 : 2_400);
+  }, [warningConfig.visualAlertsEnabled]);
+
+  const triggerVibration = useCallback((kind: "danger" | "safe") => {
+    if (!warningConfig.vibrationEnabled || !("vibrate" in navigator)) return;
+    navigator.vibrate(kind === "danger" ? [300, 120, 300, 120, 600] : [90, 70, 160]);
+  }, [warningConfig.vibrationEnabled]);
+
+  const testWarningOutputs = useCallback(() => {
+    triggerVisualSignal("distance");
+    triggerVibration("danger");
+    if (warningConfig.warningSoundEnabled && warningConfig.alertVolumePercent > 0) void soundAlarm();
+  }, [soundAlarm, triggerVibration, triggerVisualSignal, warningConfig.alertVolumePercent, warningConfig.warningSoundEnabled]);
+
+  useEffect(() => {
+    if (mode === "idle" || conservativeDistance === null || !gpsReliable) return;
+    const wasInside = previousInsideLimit.current;
+    const wasSpeedViolation = previousSpeedViolation.current;
+    const nextInside = classifyWarningZone(wasInside, conservativeDistance, warningConfig.distanceMetres);
+    const nextSpeedViolation = warningConfig.speedWarningEnabled
+      && nextInside
+      && speedKnots !== null
+      && speedKnots > warningConfig.maxSpeedKnots;
+    const transition = getWarningTransition(wasInside, nextInside, wasSpeedViolation, nextSpeedViolation);
+    const outputPlan = getWarningOutputPlan(transition, {
+      ...warningConfig,
+      speedKnown: speedKnots !== null,
+      speedViolation: nextSpeedViolation,
+    });
+    const gatedSound = gateWarningSoundForDangerEpisode(
+      outputPlan.sound,
+      transition,
+      warningSoundAvailableForDangerEpisode.current,
+      wasInside,
+      nextInside,
+    );
+    warningSoundAvailableForDangerEpisode.current = gatedSound.availableForDangerEpisode;
+    if (outputPlan.visual) triggerVisualSignal(outputPlan.visual);
+    if (outputPlan.vibration) triggerVibration(outputPlan.vibration);
+    if (gatedSound.sound === "warning") void soundAlarm();
+    if (gatedSound.sound === "safe") void soundSafeChime();
+    previousInsideLimit.current = nextInside;
+    previousSpeedViolation.current = nextSpeedViolation;
+    setWarningZoneInside(nextInside);
+  }, [conservativeDistance, gpsReliable, mode, soundAlarm, soundSafeChime, speedKnots, triggerVibration, triggerVisualSignal, warningConfig]);
+
+  const requestWakeLock = useCallback(async function acquireWakeLock() {
+    const wakeNavigator = navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<ScreenWakeLock> };
+    };
+    if (modeRef.current !== "live"
+      || document.visibilityState !== "visible"
+      || wakeLock.current
+      || wakeLockRequestPending.current) return;
+    wakeLockRequestPending.current = true;
+    try {
+      const sentinel = (await wakeNavigator.wakeLock?.request("screen")) ?? null;
+      if (!sentinel) return;
+      if (modeRef.current !== "live" || document.visibilityState !== "visible") {
+        await sentinel.release().catch(() => undefined);
+        return;
+      }
+      wakeLock.current = sentinel;
+      sentinel.addEventListener("release", () => {
+        if (wakeLock.current === sentinel) wakeLock.current = null;
+        if (modeRef.current !== "live" || document.visibilityState !== "visible") return;
+        if (wakeLockRetryTimer.current !== null) window.clearTimeout(wakeLockRetryTimer.current);
+        wakeLockRetryTimer.current = window.setTimeout(() => {
+          wakeLockRetryTimer.current = null;
+          void acquireWakeLock();
+        }, 1_000);
+      }, { once: true });
+    } catch {
+      wakeLock.current = null;
+    } finally {
+      wakeLockRequestPending.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && modeRef.current === "live") void requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [requestWakeLock]);
+
+  const stopTracking = useCallback(() => {
+    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
+    watchId.current = null;
+    modeRef.current = "idle";
+    if (wakeLockRetryTimer.current !== null) window.clearTimeout(wakeLockRetryTimer.current);
+    wakeLockRetryTimer.current = null;
+    wakeLock.current?.release().catch(() => undefined);
+    wakeLock.current = null;
+    alarmAudio.current?.pause();
+    setFix(null);
+    setTrackingError(null);
+    setAlarmError(null);
+    setAlarmArmed(false);
+    setAlarmPlayback("idle");
+    setVisualSignal(null);
+    if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
+    visualSignalTimer.current = null;
+    setMode("idle");
+    setDemoIndex(0);
+    setTrackingStartedAt(null);
+    setClosingRateMetresPerSecond(null);
+    distanceSamples.current = [];
+    previousInsideLimit.current = null;
+    previousSpeedViolation.current = null;
+    warningSoundAvailableForDangerEpisode.current = false;
+    setWarningZoneInside(null);
+    setPowerSaveWakeUntil(0);
+    setStationaryState(createStationaryState());
+    setTrackerTab("distance");
+  }, []);
+
+  useEffect(() => () => {
+    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
+    modeRef.current = "idle";
+    if (wakeLockRetryTimer.current !== null) window.clearTimeout(wakeLockRetryTimer.current);
+    wakeLock.current?.release().catch(() => undefined);
+    audioContext.current?.close().catch(() => undefined);
+    if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
+  }, []);
+
+  const startLive = useCallback(async () => {
+    if (!pack || !navigator.geolocation) {
+      setTrackingError(copy.locationUnavailable);
+      return;
+    }
+    if ((warningConfig.warningSoundEnabled || warningConfig.safeSoundEnabled) && warningConfig.alertVolumePercent > 0) {
+      void primeAlarm();
+    } else {
+      setAlarmArmed(false);
+      setAlarmPlayback("idle");
+      setAlarmError(null);
+    }
+    previousInsideLimit.current = null;
+    previousSpeedViolation.current = null;
+    warningSoundAvailableForDangerEpisode.current = false;
+    setWarningZoneInside(null);
+    const startedAt = Date.now();
+    setStationaryState(createStationaryState(startedAt));
+    setPowerSaveWakeUntil(0);
+    setClockNow(startedAt);
+    setTrackingStartedAt(startedAt);
+    setClosingRateMetresPerSecond(null);
+    distanceSamples.current = [];
+    modeRef.current = "live";
+    setMode("live");
+    setTrackerTab("distance");
+    setTrackingError(null);
+    await requestWakeLock();
+    navigator.storage?.persist?.().catch(() => false);
+    watchId.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const observedAt = Date.now();
+        const nextFix: Fix = {
+          longitude: position.coords.longitude,
+          latitude: position.coords.latitude,
+          accuracy: position.coords.accuracy,
+          speed: position.coords.speed,
+          heading: position.coords.heading,
+          timestamp: position.timestamp,
+        };
+        setClockNow(observedAt);
+        setStationaryState((current) => updateStationaryState(current, nextFix, warningConfig.powerSaveAnchorRadiusMetres, observedAt));
+        setFix(nextFix);
+        setTrackingError(null);
+      },
+      (error) => {
+        const messages: Record<number, string> = {
+          1: copy.locationDenied,
+          2: copy.locationUnknown,
+          3: copy.locationTimeout,
+        };
+        setTrackingError(messages[error.code] ?? copy.locationUnavailable);
+      },
+      { enableHighAccuracy: true, maximumAge: 1_000, timeout: 15_000 },
+    );
+  }, [copy, pack, primeAlarm, requestWakeLock, warningConfig.alertVolumePercent, warningConfig.powerSaveAnchorRadiusMetres, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
+
+  const setDemoFix = useCallback((index: number, timestamp = Date.now()) => {
+    if (!pack) return;
+    const anchorShore = findNearestShore(pack, DEMO_ANCHOR.longitude, DEMO_ANCHOR.latitude);
+    if (!anchorShore) return;
+    const bearingFromShore = (anchorShore.bearing + 180) % 360;
+    const point = offsetFromShore(anchorShore, bearingFromShore, warningConfig.distanceMetres * DEMO_DISTANCE_FACTORS[index]);
+    setFix({
+      ...point,
+      accuracy: 6,
+      speed: DEMO_SPEEDS[index] / 1.943844,
+      heading: (anchorShore.bearing + (index === 4 ? 180 : 0)) % 360,
+      timestamp,
+    });
+  }, [pack, warningConfig.distanceMetres]);
+
+  const startDemo = useCallback(() => {
+    if ((warningConfig.warningSoundEnabled || warningConfig.safeSoundEnabled) && warningConfig.alertVolumePercent > 0) {
+      void primeAlarm();
+    } else {
+      setAlarmArmed(false);
+      setAlarmPlayback("idle");
+      setAlarmError(null);
+    }
+    previousInsideLimit.current = null;
+    previousSpeedViolation.current = null;
+    warningSoundAvailableForDangerEpisode.current = false;
+    setWarningZoneInside(null);
+    demoTimestamp.current = Date.now();
+    setClockNow(demoTimestamp.current);
+    setTrackingStartedAt(demoTimestamp.current);
+    setClosingRateMetresPerSecond(null);
+    distanceSamples.current = [];
+    setMode("demo");
+    setTrackerTab("distance");
+    setTrackingError(null);
+    setDemoIndex(0);
+    setDemoFix(0, demoTimestamp.current);
+  }, [primeAlarm, setDemoFix, warningConfig.alertVolumePercent, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
+
+  const advanceDemo = useCallback(() => {
+    const next = (demoIndex + 1) % DEMO_DISTANCE_FACTORS.length;
+    demoTimestamp.current += 20_000;
+    setDemoIndex(next);
+    setDemoFix(next, demoTimestamp.current);
+  }, [demoIndex, setDemoFix]);
+
+  const distanceUnit = nearest && nearest.distance >= 1_000 ? copy.kilometres : copy.metres;
+  const statusLabel = gpsNavigationState === "lost"
+    ? copy.gpsLost
+    : gpsNavigationState === "stale"
+      ? copy.gpsStale
+      : gpsNavigationState === "waiting" || !nearest
+        ? copy.waitingGps
+        : gpsNavigationState === "inaccurate"
+          ? copy.weakGps
+          : activeSpeedViolation
+            ? copy.speedDanger
+            : insideLimit
+              ? copy.insideLimit(warningConfig.distanceMetres)
+              : copy.clearLimit(warningConfig.distanceMetres);
+  const gpsAccuracyLabel = fix && Number.isFinite(fix.accuracy) ? Math.round(fix.accuracy).toString() : "—";
+  const gpsNavigationDetail = gpsNavigationState === "inaccurate"
+    ? copy.weakGpsDetail(gpsAccuracyLabel, MAXIMUM_NAVIGATION_ACCURACY_METRES)
+    : gpsNavigationState === "stale"
+      ? copy.gpsStaleDetail(gpsAgeSeconds)
+      : copy.gpsLostDetail(gpsAgeSeconds);
+  const closingDisplay = closingTrend === "approaching"
+    ? `↓${closingMetresPerMinute}`
+    : closingTrend === "receding"
+      ? `↑${closingMetresPerMinute}`
+      : closingTrend === "steady"
+        ? "≈0"
+        : "—";
+  const warningSoundMuted = !warningConfig.warningSoundEnabled || warningConfig.alertVolumePercent === 0;
+  const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
+  const currentDepthLabel = currentDepthState === "loading"
+    ? copy.depthLoading
+    : currentDepthState === "unavailable"
+      ? copy.depthUnavailable
+      : currentDepthState === "error"
+        ? copy.depthError
+        : currentDepthState === "ready"
+          ? `${copy.chartDepth} ${currentDepthDisplay} m`
+          : copy.depthWaiting;
+  const debugSnapshot = {
+    schemaVersion: 1,
+    appVersion: APP_VERSION,
+    generatedAt: new Date(clockNow).toISOString(),
+    environment: {
+      online,
+      visibility: typeof document === "undefined" ? "unknown" : document.visibilityState,
+      serviceWorkerControlled: typeof navigator !== "undefined" && Boolean(navigator.serviceWorker?.controller),
+      wakeLockActive: wakeLock.current !== null,
+    },
+    session: {
+      mode,
+      tab: trackerTab,
+      trackingStartedAt,
+      elapsedMs: trackingStartedAt === null ? 0 : Math.max(0, clockNow - trackingStartedAt),
+    },
+    gps: {
+      watchActive: watchId.current !== null,
+      signalState: gpsSignalState,
+      navigationState: gpsNavigationState,
+      reliable: gpsReliable,
+      ageSeconds: gpsAgeSeconds,
+      fix,
+      trackingError,
+    },
+    anchor: {
+      radiusMetres: warningConfig.powerSaveAnchorRadiusMetres,
+      reference: stationaryState.reference,
+      distanceFromReferenceMetres: anchorDistanceMetres,
+      lastFixTimestamp: stationaryState.lastFixTimestamp,
+      lastMovementAt: stationaryState.lastMovementAt,
+      movingCandidateSince: stationaryState.movingCandidateSince,
+      ...anchorTimer,
+      powerSaveReason,
+      wakeUntil: powerSaveWakeUntil,
+    },
+    shore: {
+      rawDistanceMetres: nearest?.distance ?? null,
+      conservativeDistanceMetres: conservativeDistance,
+      insideLimit,
+      warningZoneInside,
+      goNoGoState,
+      nearestPoint: nearest ? { latitude: nearest.latitude, longitude: nearest.longitude, bearing: nearest.bearing } : null,
+    },
+    depth: {
+      cellKey: depthCellKey,
+      queryPoint: depthLatitude === null || depthLongitude === null ? null : { latitude: depthLatitude, longitude: depthLongitude },
+      state: currentDepthState,
+      valueMetres: currentDepthMetres,
+      ...depthDebug,
+    },
+    warning: {
+      config: warningConfig,
+      speedViolation: activeSpeedViolation,
+      courseRisk,
+      closingRateMetresPerSecond,
+    },
+    alarm: {
+      armed: alarmArmed,
+      playback: alarmPlayback,
+      playCount: alarmPlayCount,
+      error: alarmError,
+      dangerEpisodeSoundAvailable: warningSoundAvailableForDangerEpisode.current,
+    },
+    mapData: {
+      coastlineReady: pack !== null,
+      coastlineError: packError,
+      featureCatalogReady: mapFeaturePack !== null,
+      featureCatalogStats: mapFeaturePack?.stats ?? null,
+      featureCatalogError: mapFeatureError,
+    },
+  };
+  const alarmLabel = warningSoundMuted
+    ? copy.muted
+    : alarmPlayback === "playing" || alarmPlayback === "starting"
+      ? copy.playing
+      : alarmPlayback === "blocked"
+        ? copy.blocked
+        : alarmArmed
+          ? copy.ready
+          : copy.notReady;
+  const visualSignalCopy = visualSignal?.kind === "speed"
+    ? { title: copy.visualSpeed, detail: copy.visualSpeedDetail(warningConfig.maxSpeedKnots) }
+    : visualSignal?.kind === "safe"
+      ? { title: copy.visualSafe, detail: copy.visualSafeDetail(warningConfig.distanceMetres) }
+      : { title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) };
+
+  return (
+    <main className={`app-shell theme-${theme} ${mode !== "idle" ? "is-tracking" : ""} ${sunlightActive ? "sunlight-mode" : ""} ${powerSaveReason ? "power-save-active" : ""}`}>
+      <audio
+        className="alarm-audio"
+        ref={alarmAudio}
+        src="/audio/shoreline-alarm.wav"
+        preload="auto"
+        playsInline
+        onPlaying={() => setAlarmPlayback("playing")}
+        onEnded={() => setAlarmPlayback("ready")}
+        onError={() => {
+          setAlarmPlayback("blocked");
+          setAlarmError(copy.soundMissing);
+        }}
+      />
+
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark"><BoatIcon /></span>
+          <span>Shoreline Watch</span>
+          <span className="app-version">v{APP_VERSION}</span>
+        </div>
+        <div className="connection" aria-live="polite">
+          <span className={`connection-dot ${online ? "" : "offline"}`} />
+          {online ? copy.online : copy.offline}
+        </div>
+      </header>
+
+      {mode === "idle" ? (
+        <>
+          <section className="intro">
+            <p className="eyebrow">{copy.eyebrow}</p>
+            <h1>{copy.heroTitle}</h1>
+            <p className="intro-copy">{copy.intro(warningConfig.distanceMetres)}</p>
+          </section>
+
+          <section className="launch-panel" aria-label={copy.startAria}>
+            <div className={`readiness ${packError ? "failed" : ""}`}>
+              <span className="readiness-dot" />
+              {packError ? copy.coastError : pack ? copy.coastReady : copy.coastLoading}
+            </div>
+            <div className="preferences">
+              <label className="preference-field">
+                <span>{copy.language}</span>
+                <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>
+                  <option value="de">Deutsch</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+              <label className="preference-field">
+                <span>{copy.theme}</span>
+                <select value={theme} onChange={(event) => setTheme(event.target.value as Theme)}>
+                  <option value="ocean">{copy.themeOcean}</option>
+                  <option value="xp">{copy.themeXp}</option>
+                  <option value="dark">{copy.themeDark}</option>
+                  <option value="nautical">{copy.themeNautical}</option>
+                </select>
+              </label>
+            </div>
+            <label className="sunlight-setting">
+              <span><strong>{copy.autoSunlight}</strong><small>{copy.autoSunlightHint}</small></span>
+              <input type="checkbox" checked={autoSunlight} onChange={(event) => setAutoSunlight(event.target.checked)} />
+            </label>
+            <details className="warning-settings">
+              <summary>
+                <span>{copy.settings}</span>
+                <strong>{copy.settingsSummary(warningConfig.distanceMetres, warningConfig.speedWarningEnabled, warningConfig.maxSpeedKnots, warningConfig.alertVolumePercent)}</strong>
+              </summary>
+              <div className="settings-content">
+                <label className="setting-row" htmlFor="warning-distance">
+                  <span>{copy.distanceWarning}</span>
+                  <span className="number-field"><input id="warning-distance" type="number" inputMode="numeric" min="50" max="2000" step="10" value={warningConfig.distanceMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, distanceMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
+                </label>
+                <p className="setting-note">{copy.hysteresisHint(getWarningHysteresisMetres(warningConfig.distanceMetres))}</p>
+                <label className="volume-setting display-size-setting" htmlFor="distance-text-size">
+                  <span><strong>{copy.distanceTextSize}</strong><small>{copy.distanceTextSizeHint}</small></span>
+                  <output htmlFor="distance-text-size">{warningConfig.distanceTextScalePercent}%</output>
+                  <input id="distance-text-size" type="range" min="80" max="150" step="5" value={warningConfig.distanceTextScalePercent} onChange={(event) => setWarningConfig((current) => sanitizeWarningConfig({ ...current, distanceTextScalePercent: event.target.valueAsNumber }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.speedWarning}</strong><small>{copy.speedWarningHint(warningConfig.distanceMetres)}</small></span>
+                  <input type="checkbox" checked={warningConfig.speedWarningEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, speedWarningEnabled: event.target.checked }))} />
+                </label>
+                {warningConfig.speedWarningEnabled && (
+                  <>
+                    <label className="setting-row" htmlFor="speed-limit">
+                      <span>{copy.speedLimit}</span>
+                      <span className="number-field"><input id="speed-limit" type="number" inputMode="decimal" min="1" max="40" step="0.5" value={warningConfig.maxSpeedKnots} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, maxSpeedKnots: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>kn</b></span>
+                    </label>
+                    <label className="toggle-row">
+                      <span><strong>{copy.quietAtSafeSpeed}</strong><small>{copy.quietAtSafeSpeedHint(warningConfig.maxSpeedKnots)}</small></span>
+                      <input type="checkbox" checked={warningConfig.suppressDistanceSoundAtSafeSpeed} onChange={(event) => setWarningConfig((current) => ({ ...current, suppressDistanceSoundAtSafeSpeed: event.target.checked }))} />
+                    </label>
+                  </>
+                )}
+                <p className="settings-section-label">{copy.alertOutputs}</p>
+                <label className="volume-setting" htmlFor="alert-volume">
+                  <span><strong>{copy.alertVolume}</strong><small>{copy.volumeBoostHint}</small></span>
+                  <output htmlFor="alert-volume">{warningConfig.alertVolumePercent}%</output>
+                  <input id="alert-volume" type="range" min="0" max="200" step="5" value={warningConfig.alertVolumePercent} onChange={(event) => setWarningConfig((current) => sanitizeWarningConfig({ ...current, alertVolumePercent: event.target.valueAsNumber }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.warningSound}</strong><small>{copy.warningSoundHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.warningSoundEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, warningSoundEnabled: event.target.checked }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.safeSound}</strong><small>{copy.safeSoundHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.safeSoundEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, safeSoundEnabled: event.target.checked }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.visualAlerts}</strong><small>{copy.visualAlertsHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.visualAlertsEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, visualAlertsEnabled: event.target.checked }))} />
+                </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.vibration}</strong><small>{copy.vibrationHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.vibrationEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, vibrationEnabled: event.target.checked }))} />
+                </label>
+                <p className="settings-section-label">{copy.energySection}</p>
+                <label className="toggle-row">
+                  <span><strong>{copy.energySaving}</strong><small>{copy.energySavingHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.powerSaveEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, powerSaveEnabled: event.target.checked }))} />
+                </label>
+                {warningConfig.powerSaveEnabled && (
+                  <>
+                    <label className="setting-row" htmlFor="power-distance">
+                      <span>{copy.energyDistance}</span>
+                      <span className="number-field"><input id="power-distance" type="number" inputMode="numeric" min="500" max="20000" step="100" value={warningConfig.powerSaveDistanceMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveDistanceMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
+                    </label>
+                    <label className="setting-row" htmlFor="power-stationary">
+                      <span>{copy.energyStationary}</span>
+                      <span className="number-field"><input id="power-stationary" type="number" inputMode="numeric" min="1" max="30" step="1" value={warningConfig.powerSaveStationaryMinutes} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveStationaryMinutes: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>min</b></span>
+                    </label>
+                    <label className="setting-row setting-row-with-hint" htmlFor="power-anchor-radius">
+                      <span><strong>{copy.energyAnchorRadius}</strong><small>{copy.energyAnchorRadiusHint}</small></span>
+                      <span className="number-field"><input id="power-anchor-radius" type="number" inputMode="numeric" min="10" max="200" step="5" value={warningConfig.powerSaveAnchorRadiusMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, powerSaveAnchorRadiusMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
+                    </label>
+                  </>
+                )}
+                <p className="settings-section-label">{copy.diagnosticsSection}</p>
+                <label className="toggle-row">
+                  <span><strong>{copy.debugMode}</strong><small>{copy.debugModeHint}</small></span>
+                  <input type="checkbox" checked={debugEnabled} onChange={(event) => setDebugEnabled(event.target.checked)} />
+                </label>
+                <div className="preset-row">
+                  <p>{copy.croatiaRule}</p>
+                  <button type="button" onClick={() => setWarningConfig((current) => ({ ...current, distanceMetres: CROATIA_WARNING_CONFIG.distanceMetres, speedWarningEnabled: CROATIA_WARNING_CONFIG.speedWarningEnabled, maxSpeedKnots: CROATIA_WARNING_CONFIG.maxSpeedKnots }))}>{copy.croatiaPreset}</button>
+                </div>
+              </div>
+            </details>
+            <div className="launch-actions">
+              <button className="primary-button" disabled={!pack} onClick={startLive}>{copy.startLive}</button>
+              <button className="secondary-button" disabled={!pack} onClick={startDemo}>{copy.demo}</button>
+            </div>
+            <p className="fine-print">{copy.finePrint}</p>
+          </section>
+        </>
+      ) : (
+        <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
+          <div className="tracker-head">
+            <span className="trip-mode-group">
+              <span className="trip-mode">{mode === "live" ? copy.live : `${copy.demo} ${demoIndex + 1}/${DEMO_DISTANCE_FACTORS.length}`}</span>
+              {sunlightActive && <span className="sunlight-badge">☀ {copy.sunlightActive}</span>}
+            </span>
+            <button className="text-button" onClick={stopTracking}>{copy.end}</button>
+          </div>
+
+          <div className="tracker-content">
+          <section hidden={trackerTab !== "distance"} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties} className={`instrument ${insideLimit && gpsReliable ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsNavigationProblem ? `gps-${gpsNavigationState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
+            <div className={`status-pill ${gpsNavigationState === "lost" || (gpsReliable && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsNavigationState === "stale" || gpsNavigationState === "inaccurate" ? "stale" : ""} ${gpsNavigationState === "waiting" || (!nearest && gpsReliable) ? "waiting" : ""}`} aria-live="assertive">
+              <span />{statusLabel}
+            </div>
+            <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""} ${warningSoundMuted ? "muted" : ""}`}>
+              <span />{alarmLabel}
+            </div>
+
+            {visualSignal && (
+              <div key={visualSignal.sequence} className={`visual-signal ${visualSignal.kind}`} role="status" aria-live={visualSignal.kind === "safe" ? "polite" : "assertive"}>
+                <span className="visual-signal-card"><strong>{visualSignalCopy.title}</strong><small>{visualSignalCopy.detail}</small></span>
+              </div>
+            )}
+
+            <div className="distance-readout">
+              <span>{copy.nearestShore}</span>
+              <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
+              <small>{gpsSignalProblem && nearest ? `${copy.lastKnown} · ${distanceUnit}` : nearest ? distanceUnit : copy.acquiring}</small>
+              <div className={`current-depth-chip ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}>
+                <span aria-hidden="true">≈</span><b>{currentDepthDisplay}</b><em>m · {copy.chartDepth}</em>
+              </div>
+              {mode === "live" && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
+                <small>{copy.anchorTimer}</small>
+                <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
+                <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
+              </div>}
+              <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+                <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+                <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
+              </div>
+            </div>
+
+            <ProximityPlot
+              pack={pack}
+              mapFeaturePack={mapFeaturePack}
+              fix={fix}
+              nearest={nearest}
+              segments={nearbySegments}
+              courseToShore={courseToShore}
+              courseRisk={courseRisk}
+              rangeMetres={viewRangeMetres}
+              warningDistanceMetres={warningConfig.distanceMetres}
+              language={language}
+            />
+
+            <div className="instrument-footer">
+              {gpsSignalProblem || gpsNavigationState === "inaccurate" ? (
+                <div className={`course-alert gps-alert ${gpsNavigationState}`} aria-live="assertive">
+                  <span className="course-symbol">!</span>
+                  <span><strong>{gpsNavigationState === "lost" ? copy.gpsLost : gpsNavigationState === "stale" ? copy.gpsStale : copy.weakGps}</strong><small>{gpsNavigationDetail}</small></span>
+                </div>
+              ) : activeSpeedViolation ? (
+                <div className="course-alert danger speed-alert" aria-live="assertive">
+                  <span className="course-symbol">↓</span>
+                  <span><strong>{copy.speedDanger}</strong><small>{copy.speedDangerDetail(speedKnots?.toFixed(1) ?? "—", warningConfig.maxSpeedKnots.toFixed(1), warningConfig.distanceMetres)}</small></span>
+                </div>
+              ) : courseRisk.level !== "none" ? (
+                <div className={`course-alert ${courseRisk.level}`} aria-live="assertive">
+                  <span className="course-symbol">↗</span>
+                  <span><strong>{courseRisk.label}</strong><small>{courseRisk.detail}</small></span>
+                </div>
+              ) : (
+                <div className="instrument-meta">
+                  <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn</span>
+                  <span><strong>{fix ? `±${Math.round(fix.accuracy)}` : "—"}</strong> m GPS</span>
+                  <span className={`closing-rate ${closingTrend}`} aria-label={copy.closingRate(closingTrend, closingMetresPerMinute)} title={copy.closing}><strong>{closingDisplay}</strong> m/min</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <div hidden={trackerTab !== "route"} className="route-tab-panel">
+            <RoutePlanner
+              pack={pack}
+              fix={fix}
+              warningConfig={warningConfig}
+              language={language}
+              gpsNavigationState={gpsNavigationState}
+              shoreDistanceMetres={nearest?.distance ?? null}
+              proximityRangeMetres={viewRangeMetres}
+              currentDepthMetres={currentDepthMetres}
+              currentDepthState={currentDepthState}
+              mapFeaturePack={mapFeaturePack}
+            />
+          </div>
+          </div>
+
+          {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
+
+          {debugEnabled && <details className="debug-panel">
+            <summary><span>{copy.diagnosticsSection}</span><b>{copy.debugMode}</b></summary>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(debugSnapshot, null, 2)).catch(() => undefined)}>{copy.debugCopy}</button>
+            <pre>{JSON.stringify(debugSnapshot, null, 2)}</pre>
+          </details>}
+
+          <nav className="tracker-tabs" aria-label={language === "de" ? "Ansicht" : "View"}>
+            <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => { setTrackerTab("distance"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
+            <button type="button" className={trackerTab === "route" ? "active" : ""} aria-current={trackerTab === "route" ? "page" : undefined} onClick={() => { setTrackerTab("route"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">↗</span>{copy.routeTab}</button>
+          </nav>
+
+          {mode === "demo" && trackerTab === "distance" && (
+            <div className="tracker-actions">
+              <button className="sound-button" onClick={testWarningOutputs}>
+                <SoundIcon />
+                <span><strong>{copy.testAlarm}</strong><small>{warningSoundMuted ? copy.muted : `${warningConfig.alertVolumePercent}%`}</small></span>
+              </button>
+              <button className="next-button" onClick={advanceDemo}>{copy.nextPosition}</button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {powerSaveReason && (
+        <button className="power-save-screen" type="button" onClick={wakePowerDisplay} aria-label={copy.tapToWake}>
+          <span className="power-save-mode">{copy.powerSavingActive}</span>
+          <span className={`power-save-go ${goNoGoState}`}><i aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</i> {goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</span>
+          <span className="power-save-scope">{copy.powerNavigationScope}</span>
+          <strong>{formatDistance(nearest?.distance ?? null, language)}</strong>
+          <small>{distanceUnit}</small>
+          <em>{powerSaveReason === "far-shore" ? copy.powerFar : copy.powerStationary}</em>
+          <span className="power-save-wake">{copy.tapToWake}</span>
+        </button>
+      )}
+    </main>
+  );
+}
