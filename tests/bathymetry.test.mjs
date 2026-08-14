@@ -49,6 +49,7 @@ test("current depth uses a same-origin proxy while the server queries EMODnet RE
   assert.equal(proxy.pathname, "/api/depth");
   assert.equal(proxy.searchParams.get("latitude"), "43.6946");
   assert.equal(proxy.searchParams.get("longitude"), "15.8074");
+  assert.equal(proxy.searchParams.get("v"), "2");
 
   const upstream = new URL(buildEmodnetDepthSampleUrl(point));
   assert.equal(upstream.origin, "https://rest.emodnet-bathymetry.eu");
@@ -57,10 +58,11 @@ test("current depth uses a same-origin proxy while the server queries EMODnet RE
 });
 
 test("depth proxy payloads accept only finite non-negative metre values", () => {
-  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: 56.355 }), 56.355);
-  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: null }), null);
-  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: "56.355" }), null);
-  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: -2 }), null);
+  assert.deepEqual(parseCurrentDepthProxyPayload({ depthMetres: 56.355, state: "ready" }), { depthMetres: 56.355, state: "ready" });
+  assert.deepEqual(parseCurrentDepthProxyPayload({ depthMetres: null, state: "unavailable" }), { depthMetres: null, state: "unavailable" });
+  assert.deepEqual(parseCurrentDepthProxyPayload({ depthMetres: null, state: "error" }), { depthMetres: null, state: "error" });
+  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: "56.355", state: "ready" }), null);
+  assert.equal(parseCurrentDepthProxyPayload({ depthMetres: -2, state: "ready" }), null);
   assert.equal(parseCurrentDepthProxyPayload(null), null);
 });
 
@@ -86,16 +88,19 @@ test("server-side depth lookup prefers REST and falls back to WMS", async () => 
   assert.match(fallbackCalls[1], /ows\.emodnet-bathymetry\.eu/);
 });
 
-test("browser depth lookup races the same-origin proxy with the CORS WMS fallback", async () => {
+test("browser depth lookup uses an uncached same-origin request and preserves unavailable", async () => {
   const point = { longitude: 15.8074, latitude: 43.6946 };
   const calls = [];
-  const depth = await fetchCurrentWaterDepth(point, async (url) => {
-    calls.push(String(url));
-    if (String(url).startsWith("/api/depth")) return new Response("proxy unavailable", { status: 502 });
-    return Response.json({ features: [{ properties: { Depth: -56.355 } }] });
+  const depth = await fetchCurrentWaterDepth(point, async (url, init) => {
+    calls.push({ url: String(url), init });
+    return Response.json({ depthMetres: 56.355, state: "ready" });
   });
   assert.equal(depth, 56.355);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /^\/api\/depth\?/);
+  assert.equal(calls[0].init.cache, "no-store");
+
+  assert.equal(await fetchCurrentWaterDepth(point, async () => Response.json({ depthMetres: null, state: "unavailable" })), null);
 });
 
 test("current chart depth is formatted compactly for both languages", () => {

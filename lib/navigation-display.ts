@@ -10,9 +10,14 @@ export type StationaryPosition = {
 export type StationaryState = {
   reference: StationaryPosition | null;
   lastMovementAt: number;
+  lastFixTimestamp: number;
+  movingCandidateSince: number | null;
 };
 
-const MOVING_SPEED_METRES_PER_SECOND = 0.5;
+export type AnchorTimerBlocker = "disabled" | "not-live" | "gps" | "alert" | "wake-window" | null;
+
+const MOVING_SPEED_METRES_PER_SECOND = 0.8;
+const MOVING_CONFIRMATION_MS = 3_000;
 
 function distanceBetweenMetres(left: StationaryPosition, right: StationaryPosition) {
   const earthRadiusMetres = 6_371_000;
@@ -25,22 +30,89 @@ function distanceBetweenMetres(left: StationaryPosition, right: StationaryPositi
   return earthRadiusMetres * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+export function createStationaryState(now = 0): StationaryState {
+  return { reference: null, lastMovementAt: now, lastFixTimestamp: 0, movingCandidateSince: null };
+}
+
+export function distanceFromStationaryReference(state: StationaryState, position: StationaryPosition) {
+  return state.reference ? distanceBetweenMetres(state.reference, position) : null;
+}
+
 export function updateStationaryState(
   state: StationaryState,
   position: StationaryPosition,
   anchorRadiusMetres: number,
+  observedAt = position.timestamp,
 ): StationaryState {
-  if (!state.reference) return { reference: position, lastMovementAt: position.timestamp };
-  if (position.timestamp <= state.reference.timestamp) return state;
+  if (position.timestamp <= state.lastFixTimestamp) return state;
+  if (!state.reference) return {
+    reference: position,
+    lastMovementAt: observedAt,
+    lastFixTimestamp: position.timestamp,
+    movingCandidateSince: null,
+  };
 
-  const accuracyAllowance = Math.max(0, state.reference.accuracy, position.accuracy);
+  const accuracyAllowance = Math.max(0, state.reference.accuracy) + Math.max(0, position.accuracy);
   const outsideAnchorCircle = distanceBetweenMetres(state.reference, position)
     > Math.max(0, anchorRadiusMetres) + accuracyAllowance;
   const movingBySpeed = position.speed !== null && position.speed >= MOVING_SPEED_METRES_PER_SECOND;
+  const movingCandidateSince = movingBySpeed
+    ? state.movingCandidateSince ?? observedAt
+    : null;
+  const sustainedMovement = movingCandidateSince !== null
+    && observedAt - movingCandidateSince >= MOVING_CONFIRMATION_MS;
 
-  return outsideAnchorCircle || movingBySpeed
-    ? { reference: position, lastMovementAt: position.timestamp }
-    : state;
+  return outsideAnchorCircle || sustainedMovement
+    ? {
+        reference: position,
+        lastMovementAt: observedAt,
+        lastFixTimestamp: position.timestamp,
+        movingCandidateSince: null,
+      }
+    : { ...state, lastFixTimestamp: position.timestamp, movingCandidateSince };
+}
+
+export function getAnchorTimerSnapshot({
+  enabled,
+  tracking,
+  gpsIsReliable,
+  lastMovementAt,
+  stationaryAfterMinutes,
+  alertActive,
+  wakeUntil,
+  now,
+}: {
+  enabled: boolean;
+  tracking: boolean;
+  gpsIsReliable: boolean;
+  lastMovementAt: number;
+  stationaryAfterMinutes: number;
+  alertActive: boolean;
+  wakeUntil: number;
+  now: number;
+}) {
+  const thresholdMs = Math.max(0, stationaryAfterMinutes) * 60_000;
+  const elapsedMs = Math.max(0, now - lastMovementAt);
+  const remainingMs = Math.max(0, thresholdMs - elapsedMs);
+  const blocker: AnchorTimerBlocker = !enabled
+    ? "disabled"
+    : !tracking
+      ? "not-live"
+      : !gpsIsReliable
+        ? "gps"
+        : alertActive
+          ? "alert"
+          : wakeUntil > now
+            ? "wake-window"
+            : null;
+  return {
+    thresholdMs,
+    elapsedMs,
+    remainingMs,
+    blocker,
+    eligible: blocker === null,
+    active: blocker === null && remainingMs === 0,
+  };
 }
 
 export function getGoNoGoState(
@@ -83,8 +155,18 @@ export function getPowerSaveReason({
   wakeUntil: number;
   now: number;
 }): PowerSaveReason {
-  if (!enabled || !tracking || !gpsIsReliable || distanceMetres === null || alertActive || wakeUntil > now) return null;
+  if (distanceMetres === null) return null;
+  const anchorTimer = getAnchorTimerSnapshot({
+    enabled,
+    tracking,
+    gpsIsReliable,
+    lastMovementAt,
+    stationaryAfterMinutes,
+    alertActive,
+    wakeUntil,
+    now,
+  });
+  if (!anchorTimer.eligible) return null;
   if (distanceMetres >= farDistanceMetres) return "far-shore";
-  const stationaryLongEnough = now - lastMovementAt >= stationaryAfterMinutes * 60_000;
-  return stationaryLongEnough ? "stationary" : null;
+  return anchorTimer.active ? "stationary" : null;
 }

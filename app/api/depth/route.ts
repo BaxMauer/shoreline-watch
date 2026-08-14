@@ -10,7 +10,9 @@ function response(depthMetres: number | null, state: CurrentDepthState, status =
   return Response.json({ depthMetres, state }, {
     status,
     headers: {
-      "Cache-Control": status === 200 ? "public, max-age=3600, stale-while-revalidate=86400" : "no-store",
+      "Cache-Control": status === 200 && state === "ready"
+        ? "public, max-age=3600, stale-while-revalidate=86400"
+        : "no-store",
     },
   });
 }
@@ -26,10 +28,9 @@ export async function GET(request: Request) {
   if (!routeCoordinateIsValid(point)) return response(null, "error", 400);
 
   try {
-    const signal = AbortSignal.timeout(6_500);
     const depthMetres = await fetchEmodnetWaterDepth(point, (input, init) => fetch(input, {
       ...init,
-      signal,
+      signal: AbortSignal.timeout(6_500),
     }));
     return response(depthMetres, depthMetres === null ? "unavailable" : "ready");
   } catch {
