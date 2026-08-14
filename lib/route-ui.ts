@@ -1,8 +1,10 @@
 import { geoDistanceMetres, type GeoPoint } from "./route-planning.ts";
 import type { GpsNavigationState } from "./navigation-metrics.ts";
 
-export const MINIMUM_ROUTE_VIEW_METRES = 2_500;
+export const MINIMUM_ROUTE_VIEW_METRES = 500;
 export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
+export const MINIMUM_ACTIVE_ROUTE_VIEW_METRES = 550;
+export const MAXIMUM_ACTIVE_ROUTE_VIEW_METRES = 2_500;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
 export const ROUTE_ARRIVAL_RADIUS_METRES = 75;
@@ -166,6 +168,12 @@ export function formatRouteClearance(distance: number) {
 
 export function clampRouteViewRange(value: number) {
   return Math.max(MINIMUM_ROUTE_VIEW_METRES, Math.min(MAXIMUM_ROUTE_VIEW_METRES, value));
+}
+
+export function getActiveRouteViewRange(proximityRangeMetres: number, warningDistanceMetres: number) {
+  const fallback = Math.max(1, Number.isFinite(warningDistanceMetres) ? warningDistanceMetres : 300) * 1.35;
+  const requested = Number.isFinite(proximityRangeMetres) ? proximityRangeMetres : fallback;
+  return Math.max(MINIMUM_ACTIVE_ROUTE_VIEW_METRES, Math.min(MAXIMUM_ACTIVE_ROUTE_VIEW_METRES, requested));
 }
 
 export function routeViewRangeForTarget(current: number, start: GeoPoint, destination: GeoPoint) {
