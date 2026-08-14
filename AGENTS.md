@@ -28,6 +28,16 @@ Never claim a check passed unless it was executed successfully. If a check canno
 - Changes to routing, shoreline distance, warning thresholds, startup behavior, hysteresis, speed rules, or geolocation recovery should include focused boundary/failure tests.
 - Do not remove existing tests merely to make a change pass.
 
+## Release versioning
+
+- `package.json` is the single source of truth for the user-facing Shoreline Watch release version.
+- Use stable semantic versions in `major.minor.patch` form.
+- Every pull request with production-affecting source, asset, build, or runtime changes must increase the release version above the pull request's current `main` base version.
+- Documentation, GitHub workflow, and test-only changes do not require a release version bump.
+- Choose the SemVer increment intentionally: patch for compatible fixes, minor for compatible user-facing functionality, and major for incompatible changes.
+- Do not hard-code a second release number in application code. The build injects the package version into the user-facing app.
+- Treat a failed release-version check as a blocking CI failure rather than bypassing it.
+
 ## Implementation
 
 - Read the relevant implementation and existing tests before editing behavior.
