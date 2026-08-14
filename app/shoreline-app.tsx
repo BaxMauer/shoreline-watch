@@ -1487,15 +1487,39 @@ export default function ShorelineApp() {
       />
 
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark"><BoatIcon /></span>
-          <span>Shoreline Watch</span>
-          <span className="app-version">v{APP_VERSION}</span>
-        </div>
-        <div className="connection" aria-live="polite">
-          <span className={`connection-dot ${online ? "" : "offline"}`} />
-          {online ? copy.online : copy.offline}
-        </div>
+        {mode === "idle" ? (
+          <>
+            <div className="brand">
+              <span className="brand-mark"><BoatIcon /></span>
+              <span>Shoreline Watch</span>
+              <span className="app-version">v{APP_VERSION}</span>
+            </div>
+            <div className="connection" aria-live="polite">
+              <span className={`connection-dot ${online ? "" : "offline"}`} />
+              {online ? copy.online : copy.offline}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="tracking-brand">
+              <span className="brand-mark"><BoatIcon /></span>
+              <span className="trip-mode">{mode === "live" ? copy.live : `${copy.demo} ${demoIndex + 1}/${DEMO_DISTANCE_FACTORS.length}`}</span>
+              {sunlightActive && <span className="sunlight-badge">☀ {copy.sunlightActive}</span>}
+            </div>
+            <div className="tracking-controls">
+              {debugEnabled && <details className="debug-panel">
+                <summary title={copy.debugMode} aria-label={copy.debugMode}><span aria-hidden="true">⌁</span><b>{copy.diagnosticsSection}</b></summary>
+                <button type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(debugSnapshot, null, 2)).catch(() => undefined)}>{copy.debugCopy}</button>
+                <pre>{JSON.stringify(debugSnapshot, null, 2)}</pre>
+              </details>}
+              <div className="connection" aria-live="polite">
+                <span className={`connection-dot ${online ? "" : "offline"}`} />
+                {online ? copy.online : copy.offline}
+              </div>
+              <button className="text-button" onClick={stopTracking}>{copy.end}</button>
+            </div>
+          </>
+        )}
       </header>
 
       {mode === "idle" ? (
@@ -1632,33 +1656,36 @@ export default function ShorelineApp() {
         </>
       ) : (
         <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
-          <div className="tracker-head">
-            <span className="trip-mode-group">
-              <span className="trip-mode">{mode === "live" ? copy.live : `${copy.demo} ${demoIndex + 1}/${DEMO_DISTANCE_FACTORS.length}`}</span>
-              {sunlightActive && <span className="sunlight-badge">☀ {copy.sunlightActive}</span>}
-            </span>
-            <button className="text-button" onClick={stopTracking}>{copy.end}</button>
-          </div>
-
           <div className="tracker-content">
           <section hidden={trackerTab !== "distance"} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties} className={`instrument ${insideLimit && gpsReliable ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsNavigationProblem ? `gps-${gpsNavigationState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
-            <div className={`status-pill ${gpsNavigationState === "lost" || (gpsReliable && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsNavigationState === "stale" || gpsNavigationState === "inaccurate" ? "stale" : ""} ${gpsNavigationState === "waiting" || (!nearest && gpsReliable) ? "waiting" : ""}`} aria-live="assertive">
-              <span />{statusLabel}
-            </div>
-            <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""} ${warningSoundMuted ? "muted" : ""}`}>
-              <span />{alarmLabel}
-            </div>
-
             {visualSignal && (
               <div key={visualSignal.sequence} className={`visual-signal ${visualSignal.kind}`} role="status" aria-live={visualSignal.kind === "safe" ? "polite" : "assertive"}>
                 <span className="visual-signal-card"><strong>{visualSignalCopy.title}</strong><small>{visualSignalCopy.detail}</small></span>
               </div>
             )}
 
-            <div className="distance-readout">
-              <span>{copy.nearestShore}</span>
-              <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
-              <small>{gpsSignalProblem && nearest ? `${copy.lastKnown} · ${distanceUnit}` : nearest ? distanceUnit : copy.acquiring}</small>
+            <div className="instrument-summary">
+              <div className="summary-status-row">
+                <div className={`status-pill ${gpsNavigationState === "lost" || (gpsReliable && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsNavigationState === "stale" || gpsNavigationState === "inaccurate" ? "stale" : ""} ${gpsNavigationState === "waiting" || (!nearest && gpsReliable) ? "waiting" : ""}`} aria-live="assertive">
+                  <span />{statusLabel}
+                </div>
+                <div className={`sound-state ${alarmPlayback === "blocked" ? "blocked" : ""} ${warningSoundMuted ? "muted" : ""}`}>
+                  <span />{alarmLabel}
+                </div>
+              </div>
+              <div className="summary-primary-row">
+                <div className="distance-readout">
+                  <span>{copy.nearestShore}</span>
+                  <span className="distance-value">
+                    <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
+                    <small>{gpsSignalProblem && nearest ? copy.lastKnown : nearest ? distanceUnit : copy.acquiring}</small>
+                  </span>
+                </div>
+                <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+                  <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+                  <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
+                </div>
+              </div>
               <div className="live-readouts">
                 <div className={`speed-readout ${activeSpeedViolation ? "danger" : ""}`} role="status" aria-label={`${copy.currentSpeed}: ${speedKnots === null ? "—" : speedKnots.toFixed(1)} kn`}>
                   <span aria-hidden="true">↗</span><b>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</b><em>kn · {copy.currentSpeed}</em>
@@ -1672,24 +1699,22 @@ export default function ShorelineApp() {
                 <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
                 <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
               </div>}
-              <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
-                <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
-                <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
-              </div>
             </div>
 
-            <ProximityPlot
-              pack={pack}
-              mapFeaturePack={mapFeaturePack}
-              fix={fix}
-              nearest={nearest}
-              segments={nearbySegments}
-              courseToShore={courseToShore}
-              courseRisk={courseRisk}
-              rangeMetres={viewRangeMetres}
-              warningDistanceMetres={warningConfig.distanceMetres}
-              language={language}
-            />
+            <div className="map-stage">
+              <ProximityPlot
+                pack={pack}
+                mapFeaturePack={mapFeaturePack}
+                fix={fix}
+                nearest={nearest}
+                segments={nearbySegments}
+                courseToShore={courseToShore}
+                courseRisk={courseRisk}
+                rangeMetres={viewRangeMetres}
+                warningDistanceMetres={warningConfig.distanceMetres}
+                language={language}
+              />
+            </div>
 
             <div className="instrument-footer">
               {gpsSignalProblem || gpsNavigationState === "inaccurate" ? (
@@ -1733,12 +1758,6 @@ export default function ShorelineApp() {
           </div>
 
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
-
-          {debugEnabled && <details className="debug-panel">
-            <summary title={copy.debugMode} aria-label={copy.debugMode}><span aria-hidden="true">⌁</span><b>{copy.diagnosticsSection}</b></summary>
-            <button type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(debugSnapshot, null, 2)).catch(() => undefined)}>{copy.debugCopy}</button>
-            <pre>{JSON.stringify(debugSnapshot, null, 2)}</pre>
-          </details>}
 
           <nav className="tracker-tabs" aria-label={language === "de" ? "Ansicht" : "View"}>
             <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => { setTrackerTab("distance"); setPowerSaveWakeUntil(Date.now() + 30_000); }}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>

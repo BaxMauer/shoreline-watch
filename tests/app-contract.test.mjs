@@ -115,6 +115,16 @@ test("live overview keeps speed visible and collision prediction is opt-in", () 
   assert.match(app, /if \(!warningConfig\.courseWarningEnabled \|\| !gpsReliable/);
 });
 
+test("live overview keeps persistent readouts outside the map stage", () => {
+  const summary = app.indexOf('className="instrument-summary"');
+  const mapStage = app.indexOf('className="map-stage"');
+  const proximityPlot = app.indexOf("<ProximityPlot", mapStage);
+  const footer = app.indexOf('className="instrument-footer"');
+  assert.ok(summary >= 0 && mapStage > summary && proximityPlot > mapStage && footer > proximityPlot);
+  assert.doesNotMatch(app, /className="tracker-head"/);
+  assert.match(app, /className="tracking-controls"/);
+});
+
 test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {
   assert.match(app, /localStorage\.getItem\(DEBUG_STORAGE_KEY\)/);
   assert.match(app, /localStorage\.setItem\(DEBUG_STORAGE_KEY, String\(debugEnabled\)\)/);
