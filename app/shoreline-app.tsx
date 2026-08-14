@@ -126,7 +126,6 @@ const COPY = {
     go: "GO",
     noGo: "NO GO",
     goUnknown: "PRÜFEN",
-    navigationScope: "Nur Küstengeometrie & Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften.",
     powerNavigationScope: "GO bewertet nur Küstenabstand",
     powerSavingActive: "Energiesparmodus aktiv",
     powerFar: "Küste weit entfernt",
@@ -241,7 +240,6 @@ const COPY = {
     go: "GO",
     noGo: "NO GO",
     goUnknown: "CHECK",
-    navigationScope: "Shoreline geometry & clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks.",
     powerNavigationScope: "GO measures shoreline clearance only",
     powerSavingActive: "Power-saving mode active",
     powerFar: "Shoreline is far away",
@@ -1389,7 +1387,6 @@ export default function ShorelineApp() {
                 <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
                 <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
               </div>
-              <p className="navigation-scope">{copy.navigationScope}</p>
             </div>
 
             <ProximityPlot

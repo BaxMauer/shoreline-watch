@@ -430,6 +430,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-metrics strong { color: var(--foam); font-size: .76rem; font-variant-numeric: tabular-nums; }
 .route-detail { margin: 7px 0 0; color: var(--aqua); font-size: .61rem; line-height: 1.3; text-align: center; }
 .route-detail.restricted { color: var(--danger); }
+.route-passage-warning { margin: 7px 0 0; color: var(--danger); font-size: .62rem; font-weight: 700; line-height: 1.35; text-align: center; }
 .route-scope { max-width: none; margin-top: 7px; text-align: center; }
 
 .route-controls { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
