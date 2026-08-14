@@ -89,6 +89,7 @@ test("distance mode samples and displays the current EMODnet chart depth", async
   assert.match(app, /\(input, init\) => fetch\(input, \{ \.\.\.init, signal: controller\.signal \}\)/);
   assert.match(depthRoute, /fetchEmodnetWaterDepth\(point/);
   assert.match(depthRoute, /AbortSignal\.timeout\(6_500\)/);
+  assert.match(await readFile(new URL("../lib/bathymetry.ts", import.meta.url), "utf8"), /const restDepth = finiteNumber\(sample\.avg\) \?\? finiteNumber\(sample\.smoothed\)/);
   assert.match(app, /className=\{`current-depth-chip \$\{currentDepthState\}`\}/);
   assert.match(app, /copy\.chartDepth/);
   assert.match(app, /currentDepthState=\{currentDepthState\}/);
@@ -116,7 +117,7 @@ test("nearest shore, warning ring, collision course, and boat remain separate SV
   }
 });
 
-test("tracking exposes persistent distance and offline route-planning tabs", async () => {
+test("tracking exposes persistent distance and offline route calculations", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(app, /type TrackerTab = "distance" \| "route"/);
   assert.match(app, /<nav className="tracker-tabs"/);
@@ -125,7 +126,9 @@ test("tracking exposes persistent distance and offline route-planning tabs", asy
   assert.match(planner, /route-planning\.worker\.ts/);
   assert.doesNotMatch(planner, /planWaterRoute\(/);
   assert.match(planner, /getNearbyShorelineSegments/);
-  assert.doesNotMatch(planner, /fetch\(|XMLHttpRequest|WebSocket/);
+  assert.equal((planner.match(/fetch\(/g) ?? []).length, 1);
+  assert.match(planner, /fetch\(`\/api\/places/);
+  assert.doesNotMatch(planner, /XMLHttpRequest|WebSocket/);
 });
 
 test("route planning applies warning distance and near-shore speed settings", async () => {
@@ -138,11 +141,13 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
 
-test("route destination can be selected by map tap or entered coordinates", async () => {
+test("route destination requires a stationary long press or entered coordinates", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /onPointerUp=\{handlePointerUp\}/);
-  assert.match(planner, /const selected = routeMapPixelToGeo\(mapCentre, viewRangeMetres, size, x, y\)/);
-  assert.match(planner, /if \(mapEditMode === "start"\) selectStart\(selected\);[\s\S]*else selectTarget\(selected\);/);
+  assert.match(planner, /longPressTimer\.current = window\.setTimeout/);
+  assert.match(planner, /shouldCommitRouteMapLongPress\(\{/);
+  assert.match(planner, /elapsedMs: Date\.now\(\) - activeCandidate\.startedAt/);
+  assert.match(planner, /if \(mapEditMode === "start"\) selectStart\(activeCandidate\.point\);[\s\S]*else selectTarget\(activeCandidate\.point\);/);
+  assert.doesNotMatch(planner, /wasSinglePointer && !gesture\?\.moved/);
   assert.match(planner, /inputMode="decimal"/);
   assert.match(planner, /const destination = \{ latitude: parsedTargetLatitude, longitude: parsedTargetLongitude \}/);
 });
@@ -172,18 +177,19 @@ test("route planning keeps a pending movement reroute across high-frequency GPS 
 test("route planning cancels pending reroutes only when navigation becomes unsafe or the route is reset", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /if \(\(journeyState !== "active" && startMode !== "gps"\) \|\| gpsReliable\) return;\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
-  assert.match(planner, /const reset = \(\) => \{\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
+  assert.match(planner, /const reset = \(\) => \{\n    cancelLongPress\(\);\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
   assert.match(planner, /useEffect\(\(\) => \(\) => clearPendingReroute\(\), \[clearPendingReroute\]\);/);
   assert.match(planner, /\[conditionalPassagesEnabled, cruiseSpeedKnots, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
 });
 
 test("route map controls are bounded and can edit either route point", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /aria-disabled=\{journeyState !== "planning" \|\| planning\}/);
-  assert.match(planner, /wasSinglePointer && !gesture\?\.moved && !planning/);
+  assert.match(planner, /aria-disabled=\{planning\}/);
+  assert.match(planner, /ROUTE_MAP_LONG_PRESS_MS/);
+  assert.match(planner, /ROUTE_MAP_MOVE_TOLERANCE_PX/);
   assert.match(planner, /mapEditMode === "start"/);
-  assert.match(planner, /clampRouteViewRange\(value \/ 1\.7\)/);
-  assert.match(planner, /clampRouteViewRange\(value \* 1\.7\)/);
+  assert.match(planner, /clampMapRange\(value \/ 1\.7\)/);
+  assert.match(planner, /clampMapRange\(value \* 1\.7\)/);
   assert.match(planner, /routeViewRangeForTarget\(2_500, start, destination\)/);
 });
 
@@ -192,9 +198,24 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
   for (const handler of ["handlePointerDown", "handlePointerMove", "handlePointerUp", "handlePointerCancel", "handleWheel", "handleMapKey"]) {
     assert.match(planner, new RegExp(`on(?:PointerDown|PointerMove|PointerUp|PointerCancel|Wheel|KeyDown)=\\{${handler}\\}`));
   }
-  assert.match(planner, /pinchRouteViewRange\(gesture\.range, gesture\.distance, metrics\.distance\)/);
-  assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, deltaX, deltaY\)/);
+  assert.match(planner, /pinchRouteViewRange\(gesture\.range, gesture\.distance, metrics\.distance, clampMapRange\)/);
+  assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, deltaX, deltaY, clampMapRange\)/);
   assert.match(planner, /className="route-recenter"[\s\S]*onClick=\{recenterMap\}/);
+  assert.match(planner, /journeyState === "planning" \? clampRouteViewRange : clampActiveRouteViewRange/);
+  assert.doesNotMatch(planner, /journeyState === "planning" && <button type="button" aria-label=\{copy\.zoomIn\}/);
+});
+
+test("Croatian place search combines local fuzzy matching with bounded Photon results", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  const placeRoute = await readFile(new URL("../app/api/places/route.ts", import.meta.url), "utf8");
+  assert.match(planner, /searchLocalCroatianPlaces\(placeQuery\)/);
+  assert.match(planner, /fetch\(`\/api\/places\?q=\$\{encodeURIComponent\(query\)\}&lang=\$\{language\}`/);
+  assert.match(planner, /focusPlaceResult\(result\)/);
+  assert.match(planner, /setViewCentre\(\{ longitude: result\.longitude, latitude: result\.latitude \}\)/);
+  assert.doesNotMatch(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(/);
+  assert.match(placeRoute, /buildPhotonPlaceSearchUrl\(query, language\)/);
+  assert.match(placeRoute, /AbortSignal\.timeout\(5_500\)/);
+  assert.match(placeRoute, /User-Agent": "Shoreline-Watch\/1\.9 place-search"/);
 });
 
 test("warning display uses hysteresis, suppresses the initial alarm, and exposes text scaling", () => {

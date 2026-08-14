@@ -17,6 +17,7 @@ import {
   EMODNET_BATHYMETRY_ATTRIBUTION,
   buildEmodnetBathymetryTiles,
   canPlanRoute,
+  clampActiveRouteViewRange,
   clampCruiseSpeed,
   clampRouteViewRange,
   formatRouteClearance,
@@ -36,6 +37,18 @@ import {
   shouldRerouteRoute,
 } from "../lib/route-ui";
 import { formatCurrentDepth, type CurrentDepthState } from "../lib/bathymetry";
+import {
+  ROUTE_MAP_LONG_PRESS_MS,
+  ROUTE_MAP_MOVE_TOLERANCE_PX,
+  shouldCommitRouteMapLongPress,
+} from "../lib/map-gesture";
+import {
+  mergePlaceSearchResults,
+  formatPlaceSearchDetail,
+  normalizePlaceSearchText,
+  searchLocalCroatianPlaces,
+  type PlaceSearchResult,
+} from "../lib/place-search";
 import {
   MAXIMUM_NAVIGATION_ACCURACY_METRES,
   type GpsNavigationState,
@@ -90,6 +103,15 @@ const COPY = {
     setTargetOnMap: "Ziel auf Karte setzen",
     tapSetsStart: "Tippen setzt den Start",
     tapSetsTarget: "Tippen setzt das Ziel",
+    holdSetsStart: "Für Start gedrückt halten",
+    holdSetsTarget: "Für Ziel gedrückt halten",
+    holdingPoint: "Weiter gedrückt halten …",
+    placeSearch: "Ort, Bucht oder Insel suchen",
+    search: "Suchen",
+    searchLoading: "Suche in kroatischen Küstenorten …",
+    searchEmpty: "Kein passender Ort gefunden.",
+    searchOffline: "Online-Suche nicht erreichbar – lokale Treffer werden angezeigt.",
+    searchHint: (name: string, point: string) => `${name} zentriert · ${point} im Wasser gedrückt halten`,
     swap: "Start und Ziel tauschen",
     calculateRoute: "Route berechnen",
     invalidCoordinates: "Bitte gültige Breiten- und Längengrade eingeben.",
@@ -167,6 +189,15 @@ const COPY = {
     setTargetOnMap: "Place destination on map",
     tapSetsStart: "Tap places the start",
     tapSetsTarget: "Tap places the destination",
+    holdSetsStart: "Press and hold to place the start",
+    holdSetsTarget: "Press and hold to place the destination",
+    holdingPoint: "Keep holding …",
+    placeSearch: "Search town, bay, or island",
+    search: "Search",
+    searchLoading: "Searching Croatian coastal places …",
+    searchEmpty: "No matching place found.",
+    searchOffline: "Online search unavailable — showing local matches.",
+    searchHint: (name: string, point: string) => `${name} centred · press and hold in the water for ${point}`,
     swap: "Swap start and destination",
     calculateRoute: "Calculate route",
     invalidCoordinates: "Enter valid latitude and longitude values.",
@@ -253,6 +284,12 @@ export default function RoutePlanner({
   const [targetLatitude, setTargetLatitude] = useState("");
   const [targetLongitude, setTargetLongitude] = useState("");
   const [inputError, setInputError] = useState(false);
+  const [longPressActive, setLongPressActive] = useState(false);
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [placeResults, setPlaceResults] = useState<PlaceSearchResult[]>([]);
+  const [placeSearchState, setPlaceSearchState] = useState<"idle" | "loading" | "ready" | "offline">("idle");
+  const [placeSearchOpen, setPlaceSearchOpen] = useState(false);
+  const [focusedPlace, setFocusedPlace] = useState<PlaceSearchResult | null>(null);
   const plannedFrom = useRef<GeoPoint | null>(null);
   const [journeyProgressMetres, setJourneyProgressMetres] = useState(0);
   const rerouteTimer = useRef<number | null>(null);
@@ -260,6 +297,9 @@ export default function RoutePlanner({
   const routeWorker = useRef<RoutePlanningWorkerController | null>(null);
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const mapGesture = useRef<{ centre: GeoPoint; range: number; centroid: { x: number; y: number }; distance: number; moved: boolean } | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const longPressCandidate = useRef<{ pointerId: number; startedAt: number; point: GeoPoint } | null>(null);
+  const placeSearchController = useRef<AbortController | null>(null);
   const depthLoadState = useRef({ key: "", loaded: 0, failed: 0 });
   const routeEditor = useRef<HTMLDetailsElement | null>(null);
 
@@ -271,6 +311,8 @@ export default function RoutePlanner({
   const planningStartAvailable = startMode === "manual"
     ? manualStart !== null || (parsedManualStart?.latitude !== null && parsedManualStart?.longitude !== null)
     : gpsReliable;
+  const localPlaceResults = useMemo(() => searchLocalCroatianPlaces(placeQuery), [placeQuery]);
+  const visiblePlaceResults = placeResults.length > 0 ? placeResults : localPlaceResults;
 
   const clearPendingReroute = useCallback(() => {
     if (rerouteTimer.current === null) return;
@@ -292,6 +334,11 @@ export default function RoutePlanner({
 
   useEffect(() => () => clearPendingReroute(), [clearPendingReroute]);
 
+  useEffect(() => () => {
+    if (longPressTimer.current !== null) window.clearTimeout(longPressTimer.current);
+    placeSearchController.current?.abort();
+  }, []);
+
   useEffect(() => {
     if ((journeyState !== "active" && startMode !== "gps") || gpsReliable) return;
     clearPendingReroute();
@@ -308,6 +355,7 @@ export default function RoutePlanner({
     const controller = routeWorker.current;
     if (!controller || !pack || !start || !routeCoordinateIsValid(start) || !routeCoordinateIsValid(destination)) return;
     if (start === fix && !gpsReliable) return;
+    const wasActiveJourney = journeyState === "active";
     setPlanning(true);
     setFailure(null);
     controller.calculate({
@@ -333,8 +381,10 @@ export default function RoutePlanner({
         if (activateJourney && result.route) {
           setJourneyState("active");
           setStartMode("gps");
-          setViewCentre(null);
-          setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+          if (!wasActiveJourney) {
+            setViewCentre(null);
+            setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+          }
         }
       },
       onError: () => {
@@ -344,7 +394,7 @@ export default function RoutePlanner({
         setStartingJourney(false);
       },
     });
-  }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, pack, proximityRangeMetres, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, journeyState, pack, proximityRangeMetres, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const fitRoute = useCallback((start = effectiveStart, destination = target) => {
     if (!start || !destination) return;
@@ -376,6 +426,42 @@ export default function RoutePlanner({
     }
   }, [calculate, fitRoute, target]);
 
+  const focusPlaceResult = (result: PlaceSearchResult) => {
+    setFocusedPlace(result);
+    setViewCentre({ longitude: result.longitude, latitude: result.latitude });
+    setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
+    setPlaceQuery(result.name);
+    setPlaceSearchOpen(false);
+  };
+
+  const runPlaceSearch = async () => {
+    const query = placeQuery.trim();
+    const localResults = searchLocalCroatianPlaces(query);
+    if (normalizePlaceSearchText(query).length < 2) {
+      setPlaceResults([]);
+      setPlaceSearchOpen(true);
+      return;
+    }
+    placeSearchController.current?.abort();
+    const controller = new AbortController();
+    placeSearchController.current = controller;
+    setPlaceSearchState("loading");
+    setPlaceSearchOpen(true);
+    try {
+      const response = await fetch(`/api/places?q=${encodeURIComponent(query)}&lang=${language}`, { signal: controller.signal });
+      if (!response.ok) throw new Error(`Place search returned ${response.status}`);
+      const payload = await response.json() as { results?: PlaceSearchResult[] };
+      if (controller.signal.aborted) return;
+      const remoteResults = Array.isArray(payload.results) ? payload.results : [];
+      setPlaceResults(mergePlaceSearchResults(query, localResults, remoteResults));
+      setPlaceSearchState("ready");
+    } catch {
+      if (controller.signal.aborted) return;
+      setPlaceResults(localResults);
+      setPlaceSearchState("offline");
+    }
+  };
+
   useEffect(() => {
     latestRerouteFix.current = fix;
     if (journeyState !== "active" || !target || !gpsReliable || planning) {
@@ -398,15 +484,6 @@ export default function RoutePlanner({
   // Re-plan when preferences change; point changes calculate directly.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conditionalPassagesEnabled, cruiseSpeedKnots, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
-
-  useEffect(() => {
-    if (journeyState !== "active" || !gpsReliable) return;
-    const timer = window.setTimeout(() => {
-      setViewCentre(null);
-      setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [gpsReliable, journeyState, proximityRangeMetres, warningConfig.distanceMetres]);
 
   const size = 360;
   const centre = size / 2;
@@ -464,6 +541,7 @@ export default function RoutePlanner({
   const liveDistanceLabel = shoreDistanceMetres === null ? "—" : formatRouteClearance(shoreDistanceMetres);
   const startPoint = startMode === "manual" && manualStart ? point(manualStart) : null;
   const targetPoint = target ? point(target) : null;
+  const focusedPlacePoint = focusedPlace ? point(focusedPlace) : null;
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
@@ -504,11 +582,50 @@ export default function RoutePlanner({
     mapGesture.current = { centre: mapCentre, range: viewRangeMetres, ...metrics, moved: false };
   };
 
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+    longPressCandidate.current = null;
+    setLongPressActive(false);
+  };
+
+  const clampMapRange = journeyState === "planning" ? clampRouteViewRange : clampActiveRouteViewRange;
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (journeyState !== "planning") return;
     event.currentTarget.setPointerCapture(event.pointerId);
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     beginGesture(event.currentTarget);
+    if (journeyState !== "planning" || planning || activePointers.current.size !== 1) {
+      cancelLongPress();
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width * size;
+    const y = (event.clientY - bounds.top) / bounds.height * size;
+    const candidate = {
+      pointerId: event.pointerId,
+      startedAt: Date.now(),
+      point: routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y),
+    };
+    longPressCandidate.current = candidate;
+    setLongPressActive(true);
+    longPressTimer.current = window.setTimeout(() => {
+      const activeCandidate = longPressCandidate.current;
+      if (!activeCandidate || activeCandidate.pointerId !== candidate.pointerId) return;
+      const commit = shouldCommitRouteMapLongPress({
+        elapsedMs: Date.now() - activeCandidate.startedAt,
+        moved: mapGesture.current?.moved ?? true,
+        pointerCount: activePointers.current.size,
+        planning: journeyState === "planning" && !planning,
+      });
+      if (!commit) return;
+      if (mapEditMode === "start") selectStart(activeCandidate.point);
+      else selectTarget(activeCandidate.point);
+      navigator.vibrate?.(25);
+      longPressTimer.current = null;
+      longPressCandidate.current = null;
+      setLongPressActive(false);
+    }, ROUTE_MAP_LONG_PRESS_MS);
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -518,28 +635,23 @@ export default function RoutePlanner({
     const gesture = mapGesture.current;
     const deltaX = metrics.centroid.x - gesture.centroid.x;
     const deltaY = metrics.centroid.y - gesture.centroid.y;
-    if (Math.hypot(deltaX, deltaY) > 4 || Math.abs(metrics.distance - gesture.distance) > 4) gesture.moved = true;
-    setViewCentre(panRouteMapCentre(gesture.centre, gesture.range, size, deltaX, deltaY));
-    if (activePointers.current.size >= 2) setViewRangeMetres(pinchRouteViewRange(gesture.range, gesture.distance, metrics.distance));
+    if (Math.hypot(deltaX, deltaY) > ROUTE_MAP_MOVE_TOLERANCE_PX || Math.abs(metrics.distance - gesture.distance) > ROUTE_MAP_MOVE_TOLERANCE_PX) {
+      gesture.moved = true;
+      cancelLongPress();
+    }
+    setViewCentre(panRouteMapCentre(gesture.centre, gesture.range, size, deltaX, deltaY, clampMapRange));
+    if (activePointers.current.size >= 2) setViewRangeMetres(pinchRouteViewRange(gesture.range, gesture.distance, metrics.distance, clampMapRange));
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    const gesture = mapGesture.current;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / bounds.width * size;
-    const y = (event.clientY - bounds.top) / bounds.height * size;
-    const wasSinglePointer = activePointers.current.size === 1;
+    cancelLongPress();
     activePointers.current.delete(event.pointerId);
-    if (wasSinglePointer && !gesture?.moved && !planning) {
-      const selected = routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y);
-      if (mapEditMode === "start") selectStart(selected);
-      else selectTarget(selected);
-    }
     if (activePointers.current.size > 0) beginGesture(event.currentTarget);
     else mapGesture.current = null;
   };
 
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
+    cancelLongPress();
     activePointers.current.delete(event.pointerId);
     if (activePointers.current.size > 0) beginGesture(event.currentTarget);
     else mapGesture.current = null;
@@ -547,12 +659,12 @@ export default function RoutePlanner({
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
-    setViewRangeMetres((value) => clampRouteViewRange(value * (event.deltaY > 0 ? 1.18 : 1 / 1.18)));
+    setViewRangeMetres((value) => clampMapRange(value * (event.deltaY > 0 ? 1.18 : 1 / 1.18)));
   };
 
   const handleMapKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "+" || event.key === "=") setViewRangeMetres((value) => clampRouteViewRange(value / 1.7));
-    else if (event.key === "-") setViewRangeMetres((value) => clampRouteViewRange(value * 1.7));
+    if (event.key === "+" || event.key === "=") setViewRangeMetres((value) => clampMapRange(value / 1.7));
+    else if (event.key === "-") setViewRangeMetres((value) => clampMapRange(value * 1.7));
     else if ((event.key === "Enter" || event.key === " ") && journeyState === "planning" && !planning) {
       if (mapEditMode === "start") selectStart(mapCentre);
       else selectTarget(mapCentre);
@@ -629,6 +741,7 @@ export default function RoutePlanner({
   };
 
   const endJourney = () => {
+    cancelLongPress();
     setJourneyState("planning");
     setJourneyProgressMetres(0);
     setStartMode("gps");
@@ -637,6 +750,7 @@ export default function RoutePlanner({
   };
 
   const reset = () => {
+    cancelLongPress();
     clearPendingReroute();
     routeWorker.current?.cancel();
     setTarget(null);
@@ -653,12 +767,16 @@ export default function RoutePlanner({
     setTargetLongitude("");
     setInputError(false);
     setJourneyProgressMetres(0);
+    setFocusedPlace(null);
+    setPlaceQuery("");
+    setPlaceResults([]);
+    setPlaceSearchOpen(false);
     plannedFrom.current = null;
   };
 
   const recenterMap = () => {
     setViewCentre(null);
-    if (journeyState === "active") setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+    if (journeyState === "active" || journeyState === "arrived") setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
     else if (fix && target) setViewRangeMetres(clampRouteViewRange(routeViewRangeForTarget(2_500, fix, target) * .62));
   };
 
@@ -666,19 +784,52 @@ export default function RoutePlanner({
   const displayedStartLongitude = startMode === "gps" ? coordinateText(fix?.longitude) : startLongitude;
   const scaleLabel = viewRangeMetres >= 1_000 ? `${Math.round(viewRangeMetres / 1_000)} km` : `${Math.round(viewRangeMetres)} m`;
   const startSummary = startMode === "gps" ? copy.currentGps : effectiveStart ? `${effectiveStart.latitude.toFixed(4)}, ${effectiveStart.longitude.toFixed(4)}` : copy.manualPoint;
-  const targetSummary = target ? `${target.latitude.toFixed(4)}, ${target.longitude.toFixed(4)}` : copy.tapSetsTarget;
+  const targetSummary = target ? `${target.latitude.toFixed(4)}, ${target.longitude.toFixed(4)}` : copy.holdSetsTarget;
   const routeNoticeCount = route ? Number(route.mode === "restricted") + Number(route.passageIds.includes("tisno-murter-bridge")) : 0;
   const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
 
   return (
     <section className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <header className="route-screen-header">
-        <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.tapSetsStart : copy.tapSetsTarget : copy.following}</small></span>
+        <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : copy.following}</small></span>
         <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
       </header>
 
+      {journeyState === "planning" && <div className="route-place-search">
+        <form onSubmit={(event) => { event.preventDefault(); void runPlaceSearch(); }} role="search">
+          <span aria-hidden="true">⌕</span>
+          <input
+            type="search"
+            value={placeQuery}
+            placeholder={copy.placeSearch}
+            aria-label={copy.placeSearch}
+            autoComplete="off"
+            onFocus={() => setPlaceSearchOpen(true)}
+            onChange={(event) => {
+              setPlaceQuery(event.target.value);
+              setPlaceResults([]);
+              setPlaceSearchState("idle");
+              setPlaceSearchOpen(true);
+            }}
+          />
+          <button type="submit" disabled={normalizePlaceSearchText(placeQuery).length < 2 || placeSearchState === "loading"}>{copy.search}</button>
+        </form>
+        {placeSearchOpen && normalizePlaceSearchText(placeQuery).length >= 2 && <div className="route-place-results" role="listbox" aria-label={copy.placeSearch}>
+          {placeSearchState === "loading" && <p>{copy.searchLoading}</p>}
+          {visiblePlaceResults.map((result) => <button key={result.id} type="button" role="option" aria-selected="false" onClick={() => focusPlaceResult(result)}>
+            <i>{result.kind === "bay" ? "≈" : result.kind === "island" ? "◇" : "●"}</i>
+            <span><strong>{result.name}</strong><small>{formatPlaceSearchDetail(result, language)}</small></span>
+            <b>›</b>
+          </button>)}
+          {placeSearchState !== "loading" && visiblePlaceResults.length === 0 && <p>{copy.searchEmpty}</p>}
+          {placeSearchState === "offline" && <p className="route-place-offline">{copy.searchOffline}</p>}
+          <small className="route-place-credit">© OpenStreetMap contributors · Photon</small>
+        </div>}
+        {focusedPlace && <small className="route-place-focus">{copy.searchHint(focusedPlace.name, mapEditMode === "start" ? copy.start : copy.target)}</small>}
+      </div>}
+
       <div className="route-map-wrap">
-        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={journeyState !== "planning" || planning} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onWheel={handleWheel} onKeyDown={handleMapKey}>
+        <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={planning} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onContextMenu={(event) => event.preventDefault()} onWheel={handleWheel} onKeyDown={handleMapKey}>
           <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="none" role="img" aria-hidden="true">
             <defs>
               <filter id="routeBoatGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
@@ -707,6 +858,7 @@ export default function RoutePlanner({
               </>}
             </g>}
             {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
+            {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g>}
             {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><circle r="10" /><text y="3.5">A</text></g>}
             {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="11" /><text y="3.5">B</text></g>}
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${fix?.heading ?? 0})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
@@ -716,6 +868,7 @@ export default function RoutePlanner({
           <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
         </div>}
+        {journeyState === "planning" && <div className={`route-long-press-hint ${longPressActive ? "active" : ""}`} role="status"><span />{longPressActive ? copy.holdingPoint : mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget}</div>}
         {(journeyState === "active" || journeyState === "arrived") && <div className="route-live-readouts" aria-live="polite">
           <span><small>{copy.shore}</small><strong>{liveDistanceLabel}</strong></span>
           <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈ ${currentDepthDisplay} m` : "—"}</strong></span>
@@ -725,8 +878,8 @@ export default function RoutePlanner({
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
         </div>
         <div className="route-zoom" aria-label="Zoom">
-          {journeyState === "planning" && <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value / 1.7))}>+</button>}
-          {journeyState === "planning" && <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampRouteViewRange(value * 1.7))}>−</button>}
+          <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampMapRange(value / 1.7))}>+</button>
+          <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampMapRange(value * 1.7))}>−</button>
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
@@ -749,7 +902,7 @@ export default function RoutePlanner({
           <div className="route-point-row">
             <span className="route-point-badge target">B</span>
             <div className="route-point-fields">
-              <span><strong>{copy.target}</strong><small>{target ? copy.manualPoint : copy.tapSetsTarget}</small></span>
+              <span><strong>{copy.target}</strong><small>{target ? copy.manualPoint : copy.holdSetsTarget}</small></span>
               <label><span>{copy.latitude}</span><input aria-label={`${copy.target} ${copy.latitude}`} inputMode="decimal" value={targetLatitude} onChange={(event) => { setTargetLatitude(event.target.value); setInputError(false); }} /></label>
               <label><span>{copy.longitude}</span><input aria-label={`${copy.target} ${copy.longitude}`} inputMode="decimal" value={targetLongitude} onChange={(event) => { setTargetLongitude(event.target.value); setInputError(false); }} /></label>
             </div>

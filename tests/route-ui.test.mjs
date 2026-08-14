@@ -10,6 +10,7 @@ import {
   ROUTE_ARRIVAL_RADIUS_METRES,
   buildEmodnetBathymetryTiles,
   canPlanRoute,
+  clampActiveRouteViewRange,
   clampCruiseSpeed,
   clampRouteViewRange,
   formatRouteClearance,
@@ -104,6 +105,15 @@ test("active navigation follows the compact distance-tab map range", () => {
   assert.equal(getActiveRouteViewRange(1_230, 300), 1_230);
   assert.equal(getActiveRouteViewRange(20_000, 300), MAXIMUM_ACTIVE_ROUTE_VIEW_METRES);
   assert.equal(getActiveRouteViewRange(Number.NaN, 300), MINIMUM_ACTIVE_ROUTE_VIEW_METRES);
+});
+
+test("active navigation zoom remains useful from close shore detail to route context", () => {
+  assert.equal(clampActiveRouteViewRange(10), 250);
+  assert.equal(clampActiveRouteViewRange(1_200), 1_200);
+  assert.equal(clampActiveRouteViewRange(50_000), 10_000);
+  assert.equal(pinchRouteViewRange(1_000, 100, 200, clampActiveRouteViewRange), 500);
+  assert.equal(pinchRouteViewRange(1_000, 100, 1_000, clampActiveRouteViewRange), 250);
+  assert.equal(pinchRouteViewRange(1_000, 100, 1, clampActiveRouteViewRange), 10_000);
 });
 
 test("selecting a distant target zooms out enough to keep it visible", () => {

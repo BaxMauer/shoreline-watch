@@ -141,8 +141,18 @@ test("active route view exposes compact live shoreline and depth readouts", () =
 
 test("route map declares touch panning and strong focus affordances", () => {
   assert.match(css, /\.route-map\s*\{[^}]*touch-action:\s*none/s);
+  assert.match(css, /\.route-map\s*\{[^}]*-webkit-touch-callout:\s*none/s);
   assert.match(css, /\.route-map:focus-visible\s*\{[^}]*outline:\s*3px/s);
   assert.match(css, /\.route-zoom button\s*\{[^}]*width:\s*36px[^}]*height:\s*36px/s);
+  assert.match(css, /\.journey-active \.route-map, \.journey-arrived \.route-map\s*\{[^}]*cursor:\s*grab/s);
+});
+
+test("place search and long-press confirmation stay legible in normal and sunlight modes", () => {
+  assert.match(css, /\.route-place-search form\s*\{[^}]*min-height:\s*42px/s);
+  assert.match(css, /\.route-place-results\s*\{[^}]*max-height:\s*min\(48svh,340px\)[^}]*overflow:\s*auto/s);
+  assert.match(css, /\.route-long-press-hint\s*\{[^}]*background:\s*rgba\(8,28,32,.8\)[^}]*font-weight:\s*750/s);
+  assert.match(css, /\.route-long-press-hint\.active span\s*\{[^}]*long-press-fill/s);
+  assert.match(css, /\.sunlight-mode \.route-place-results\s*\{[^}]*background:\s*rgba\(250,255,253,.98\)/s);
 });
 
 test("danger, course, and speed states retain visible motion with a reduced-motion fallback", () => {

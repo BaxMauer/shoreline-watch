@@ -18,9 +18,12 @@ export function parseEmodnetWaterDepth(payload: unknown) {
   const properties = firstFeature?.properties && typeof firstFeature.properties === "object"
     ? firstFeature.properties as Record<string, unknown>
     : null;
-  const elevation = finiteNumber(properties?.Depth) ?? finiteNumber(sample.avg) ?? finiteNumber(sample.smoothed);
-  if (elevation === null || elevation >= 0) return null;
-  return Math.abs(elevation);
+  // WMS exposes signed elevation (water is negative), while the official
+  // /depth_sample REST endpoint returns positive depth below chart datum.
+  const wmsElevation = finiteNumber(properties?.Depth);
+  if (wmsElevation !== null) return wmsElevation < 0 ? Math.abs(wmsElevation) : null;
+  const restDepth = finiteNumber(sample.avg) ?? finiteNumber(sample.smoothed);
+  return restDepth === null ? null : Math.abs(restDepth);
 }
 
 export function depthSampleCellKey(point: GeoPoint) {

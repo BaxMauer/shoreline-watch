@@ -5,6 +5,8 @@ export const MINIMUM_ROUTE_VIEW_METRES = 500;
 export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 export const MINIMUM_ACTIVE_ROUTE_VIEW_METRES = 550;
 export const MAXIMUM_ACTIVE_ROUTE_VIEW_METRES = 2_500;
+export const MINIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES = 250;
+export const MAXIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES = 10_000;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
 export const ROUTE_ARRIVAL_RADIUS_METRES = 75;
@@ -170,6 +172,11 @@ export function clampRouteViewRange(value: number) {
   return Math.max(MINIMUM_ROUTE_VIEW_METRES, Math.min(MAXIMUM_ROUTE_VIEW_METRES, value));
 }
 
+export function clampActiveRouteViewRange(value: number) {
+  if (!Number.isFinite(value)) return MINIMUM_ACTIVE_ROUTE_VIEW_METRES;
+  return Math.max(MINIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES, Math.min(MAXIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES, value));
+}
+
 export function getActiveRouteViewRange(proximityRangeMetres: number, warningDistanceMetres: number) {
   const fallback = Math.max(1, Number.isFinite(warningDistanceMetres) ? warningDistanceMetres : 300) * 1.35;
   const requested = Number.isFinite(proximityRangeMetres) ? proximityRangeMetres : fallback;
@@ -285,18 +292,30 @@ export function routeMapPixelToGeo(centre: GeoPoint, rangeMetres: number, size: 
   };
 }
 
-export function panRouteMapCentre(centre: GeoPoint, rangeMetres: number, size: number, deltaX: number, deltaY: number): GeoPoint {
+export function panRouteMapCentre(
+  centre: GeoPoint,
+  rangeMetres: number,
+  size: number,
+  deltaX: number,
+  deltaY: number,
+  clamp: (value: number) => number = clampRouteViewRange,
+): GeoPoint {
   const half = size / 2;
-  const pixelsPerMetre = half / clampRouteViewRange(rangeMetres);
+  const pixelsPerMetre = half / clamp(rangeMetres);
   return {
     longitude: centre.longitude - deltaX / (mapLongitudeScale(centre.latitude) * pixelsPerMetre),
     latitude: centre.latitude + deltaY / (110_540 * pixelsPerMetre),
   };
 }
 
-export function pinchRouteViewRange(startRangeMetres: number, startDistance: number, currentDistance: number) {
+export function pinchRouteViewRange(
+  startRangeMetres: number,
+  startDistance: number,
+  currentDistance: number,
+  clamp: (value: number) => number = clampRouteViewRange,
+) {
   if (!Number.isFinite(startDistance) || !Number.isFinite(currentDistance) || startDistance <= 0 || currentDistance <= 0) {
-    return clampRouteViewRange(startRangeMetres);
+    return clamp(startRangeMetres);
   }
-  return clampRouteViewRange(startRangeMetres * startDistance / currentDistance);
+  return clamp(startRangeMetres * startDistance / currentDistance);
 }
