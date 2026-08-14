@@ -1,4 +1,4 @@
-const CACHE_NAME = "shoreline-watch-v21";
+const CACHE_NAME = "shoreline-watch-v22";
 const CORE = [
   "/",
   "/manifest.webmanifest",
@@ -12,16 +12,19 @@ const CORE = [
 ];
 
 self.addEventListener("install", (event) => {
+  // Keep an updated worker in the normal waiting state while an existing app
+  // session is open. This prevents an update from taking over mid-trip.
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE)));
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
+  // Activation is browser-managed after old controlled clients have closed.
+  // Do not claim already-open clients; they can keep their current app version
+  // until the next navigation or launch.
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim()),
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))),
   );
 });
 
