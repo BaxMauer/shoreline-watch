@@ -197,17 +197,12 @@ test("route bearing follows monotonic projected progress instead of a passed way
   assert.doesNotMatch(planner, /route\.points\.find\(\(candidate, index\)/);
 });
 
-test("navigation claims stay within shoreline geometry and clearance data", async () => {
+test("navigation claims avoid overpromising and omit obsolete scope disclaimers", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  for (const blindSpot of ["Tiefe", "Felsen", "Verkehr", "Bojen", "Fahrwasser", "Wetter", "Vorschriften"]) {
-    assert.match(planner, new RegExp(blindSpot));
-  }
-  for (const blindSpot of ["depth", "rock", "traffic", "buoy", "channel", "weather", "legal"]) {
-    assert.match(planner, new RegExp(blindSpot));
-  }
   assert.doesNotMatch(app, /className="navigation-scope"/);
   assert.match(app, /<span className="power-save-scope">\{copy\.powerNavigationScope\}<\/span>/);
-  assert.match(planner, /<p className="navigation-scope route-scope">\{copy\.navigationScope\}<\/p>/);
+  assert.doesNotMatch(planner, /navigationScope|navigation-scope|route-scope/);
+  assert.doesNotMatch(planner, /Nur Küstengeometrie & Abstand|Shoreline geometry & clearance only/);
   assert.doesNotMatch(app, /Freifahrtton|Safe-water chime/);
   assert.doesNotMatch(planner, /Sichere Wasserroute|safe water route|available Croatia chart/);
 });

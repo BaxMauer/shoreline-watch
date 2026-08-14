@@ -57,7 +57,6 @@ const COPY = {
     clearanceDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie hält den bevorzugten Abstand von ${distance} m ein.`,
     restrictedDetail: (distance: number) => `Die berechnete Küstenlinien-Geometrie unterschreitet stellenweise ${distance} m – besonders Start und Ziel prüfen.`,
     tisnoPassage: "Tisno-Klappbrücke: Nur bei geöffneter Brücke nutzen. Öffnung, Tiefe, Durchfahrtshöhe, Strömung, Verkehr und lokale Signale vor der Fahrt prüfen.",
-    navigationScope: "Nur Küstengeometrie & Abstand. Keine Prüfung von Tiefe, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m Abstand · ${speed} kn küstennah`
       : `${distance} m Abstand · Tempolimit aus`,
@@ -103,7 +102,6 @@ const COPY = {
     clearanceDetail: (distance: number) => `The calculated shoreline geometry maintains the preferred ${distance} m clearance.`,
     restrictedDetail: (distance: number) => `The calculated shoreline geometry is inside ${distance} m in places – check start and destination carefully.`,
     tisnoPassage: "Tisno lift bridge: use only while raised. Verify opening, depth, air draft, current, traffic, and local signals before departure.",
-    navigationScope: "Shoreline geometry & clearance only. No depth, rock, traffic, buoy, channel, weather, or legal checks.",
     rule: (distance: number, speed: number, enabled: boolean) => enabled
       ? `${distance} m clearance · ${speed} kn near shore`
       : `${distance} m clearance · speed rule off`,
@@ -461,7 +459,6 @@ export default function RoutePlanner({
             {route.passageIds.includes("tisno-murter-bridge") && <p className="route-passage-warning" role="alert">{copy.tisnoPassage}</p>}
           </>
         ) : <p className="route-message">{copy.subtitle}</p>}
-        <p className="navigation-scope route-scope">{copy.navigationScope}</p>
       </div>
 
       <div className="route-controls">

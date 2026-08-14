@@ -112,6 +112,8 @@ test("distance digits cannot collide on a narrow phone", () => {
 });
 
 test("GO status and OLED power saver have dedicated high-contrast surfaces", () => {
+  assert.match(css, /\.go-no-go\.go\s*\{[^}]*border-color:\s*#7ff3d1[^}]*background:\s*#075f50[^}]*color:\s*#fff/s);
+  assert.match(css, /\.go-no-go\.go span\s*\{[^}]*background:\s*#8ff5d8[^}]*color:\s*#063f36/s);
   assert.match(css, /\.go-no-go\.no-go\s*\{[^}]*background:\s*rgba\(139,31,23,.96\)[^}]*color:\s*#fff/s);
   assert.match(css, /\.power-save-screen\s*\{[^}]*background:\s*#000/s);
   assert.match(css, /\.power-save-active \*\s*\{[^}]*animation-play-state:\s*paused/s);
@@ -120,10 +122,11 @@ test("GO status and OLED power saver have dedicated high-contrast surfaces", () 
 test("distance, status, GO, and warning cards are sized for viewing from afar", () => {
   assert.match(css, /\.distance-readout strong\s*\{[^}]*--distance-scale/s);
   assert.match(css, /\.status-pill\s*\{[^}]*min-height:\s*42px[^}]*font-size:\s*\.78rem/s);
-  assert.match(css, /\.go-no-go\s*\{[^}]*min-height:\s*50px[^}]*font-size:\s*1rem/s);
+  assert.match(css, /\.go-no-go\s*\{[^}]*min-height:\s*58px[^}]*font-size:\s*1\.12rem/s);
   assert.match(css, /\.course-alert\s*\{[^}]*min-height:\s*76px/s);
   assert.match(css, /\.visual-signal-card strong\s*\{[^}]*font-size:\s*1\.28rem/s);
   assert.match(css, /\.theme-xp \.go-no-go\.no-go, \.theme-nautical \.go-no-go\.no-go, \.sunlight-mode \.go-no-go\.no-go\s*\{[^}]*#9f2d23[^}]*#fff/s);
+  assert.match(css, /\.theme-xp \.go-no-go\.go, \.theme-nautical \.go-no-go\.go, \.sunlight-mode \.go-no-go\.go\s*\{[^}]*#006b54[^}]*#fff/s);
 });
 
 test("route map declares touch panning and strong focus affordances", () => {
