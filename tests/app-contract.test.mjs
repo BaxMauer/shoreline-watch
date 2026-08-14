@@ -132,10 +132,24 @@ test("route calculations use a cancellable worker and reset completely", async (
   assert.match(planner, /const reset = \(\) => \{[\s\S]*routeWorker\.current\?\.cancel\(\);[\s\S]*setTarget\(null\)[\s\S]*setRoute\(null\)[\s\S]*plannedFrom\.current = null;/);
 });
 
-test("route planning automatically recalculates after movement and preference changes", async () => {
+test("route planning keeps a pending movement reroute across high-frequency GPS fixes", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /shouldRerouteRoute\(plannedFrom\.current, fix, warningConfig\.distanceMetres\)/);
-  assert.match(planner, /window\.setTimeout\(\(\) => calculate\(target, fix\), 500\)/);
+  const movementEffect = planner.match(/useEffect\(\(\) => \{\n    latestRerouteFix\.current = fix;[\s\S]*?\n  \}, \[calculate, clearPendingReroute, fix, gpsReliable, planning, target, warningConfig\.distanceMetres\]\);/)?.[0] ?? "";
+
+  assert.notEqual(movementEffect, "");
+  assert.match(movementEffect, /shouldRerouteRoute\(plannedFrom\.current, fix, warningConfig\.distanceMetres\)/);
+  assert.match(movementEffect, /if \(rerouteTimer\.current !== null\) return;/);
+  assert.match(movementEffect, /const rerouteFix = latestRerouteFix\.current;/);
+  assert.match(movementEffect, /shouldRerouteRoute\(plannedFrom\.current, rerouteFix, warningConfig\.distanceMetres\)/);
+  assert.match(movementEffect, /calculate\(target, rerouteFix\)/);
+  assert.doesNotMatch(movementEffect, /return \(\) => window\.clearTimeout/);
+});
+
+test("route planning cancels pending reroutes only when navigation becomes unsafe or the route is reset", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /if \(gpsReliable\) return;\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
+  assert.match(planner, /const reset = \(\) => \{\n    clearPendingReroute\(\);\n    routeWorker\.current\?\.cancel\(\);/);
+  assert.match(planner, /useEffect\(\(\) => \(\) => clearPendingReroute\(\), \[clearPendingReroute\]\);/);
   assert.match(planner, /\[cruiseSpeedKnots, gpsReliable, warningConfig\.distanceMetres, warningConfig\.maxSpeedKnots, warningConfig\.speedWarningEnabled\]/);
 });
 
