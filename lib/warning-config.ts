@@ -1,8 +1,10 @@
 export type WarningConfig = {
+  settingsVersion: 2;
   distanceMetres: number;
   distanceTextScalePercent: number;
   speedWarningEnabled: boolean;
   maxSpeedKnots: number;
+  courseWarningEnabled: boolean;
   suppressDistanceSoundAtSafeSpeed: boolean;
   alertVolumePercent: number;
   warningSoundEnabled: boolean;
@@ -16,10 +18,12 @@ export type WarningConfig = {
 };
 
 export const CROATIA_WARNING_CONFIG: WarningConfig = {
+  settingsVersion: 2,
   distanceMetres: 300,
   distanceTextScalePercent: 110,
   speedWarningEnabled: true,
   maxSpeedKnots: 8,
+  courseWarningEnabled: false,
   suppressDistanceSoundAtSafeSpeed: true,
   alertVolumePercent: 100,
   warningSoundEnabled: true,
@@ -28,7 +32,7 @@ export const CROATIA_WARNING_CONFIG: WarningConfig = {
   vibrationEnabled: true,
   powerSaveEnabled: true,
   powerSaveDistanceMetres: 2_000,
-  powerSaveStationaryMinutes: 5,
+  powerSaveStationaryMinutes: 1,
   powerSaveAnchorRadiusMetres: 30,
 };
 
@@ -58,6 +62,7 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
     : CROATIA_WARNING_CONFIG.powerSaveAnchorRadiusMetres;
 
   return {
+    settingsVersion: 2,
     distanceMetres,
     maxSpeedKnots,
     alertVolumePercent,
@@ -66,11 +71,23 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
     powerSaveStationaryMinutes,
     powerSaveAnchorRadiusMetres,
     speedWarningEnabled: typeof candidate.speedWarningEnabled === "boolean" ? candidate.speedWarningEnabled : CROATIA_WARNING_CONFIG.speedWarningEnabled,
+    courseWarningEnabled: typeof candidate.courseWarningEnabled === "boolean" ? candidate.courseWarningEnabled : CROATIA_WARNING_CONFIG.courseWarningEnabled,
     suppressDistanceSoundAtSafeSpeed: typeof candidate.suppressDistanceSoundAtSafeSpeed === "boolean" ? candidate.suppressDistanceSoundAtSafeSpeed : CROATIA_WARNING_CONFIG.suppressDistanceSoundAtSafeSpeed,
     warningSoundEnabled: typeof candidate.warningSoundEnabled === "boolean" ? candidate.warningSoundEnabled : CROATIA_WARNING_CONFIG.warningSoundEnabled,
     safeSoundEnabled: typeof candidate.safeSoundEnabled === "boolean" ? candidate.safeSoundEnabled : CROATIA_WARNING_CONFIG.safeSoundEnabled,
     visualAlertsEnabled: typeof candidate.visualAlertsEnabled === "boolean" ? candidate.visualAlertsEnabled : CROATIA_WARNING_CONFIG.visualAlertsEnabled,
     vibrationEnabled: typeof candidate.vibrationEnabled === "boolean" ? candidate.vibrationEnabled : CROATIA_WARNING_CONFIG.vibrationEnabled,
     powerSaveEnabled: typeof candidate.powerSaveEnabled === "boolean" ? candidate.powerSaveEnabled : CROATIA_WARNING_CONFIG.powerSaveEnabled,
+  };
+}
+
+export function migrateWarningConfig(value: unknown): WarningConfig {
+  const sanitized = sanitizeWarningConfig(value);
+  if (value && typeof value === "object" && (value as { settingsVersion?: unknown }).settingsVersion === 2) return sanitized;
+
+  return {
+    ...sanitized,
+    courseWarningEnabled: CROATIA_WARNING_CONFIG.courseWarningEnabled,
+    powerSaveStationaryMinutes: CROATIA_WARNING_CONFIG.powerSaveStationaryMinutes,
   };
 }

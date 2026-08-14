@@ -127,7 +127,7 @@ test("distance, status, GO, and warning cards are sized for viewing from afar", 
   assert.match(css, /\.visual-signal-card strong\s*\{[^}]*font-size:\s*1\.28rem/s);
   assert.match(css, /\.theme-xp \.go-no-go\.no-go, \.theme-nautical \.go-no-go\.no-go, \.sunlight-mode \.go-no-go\.no-go\s*\{[^}]*#9f2d23[^}]*#fff/s);
   assert.match(css, /\.theme-xp \.go-no-go\.go, \.theme-nautical \.go-no-go\.go, \.sunlight-mode \.go-no-go\.go\s*\{[^}]*#006b54[^}]*#fff/s);
-  assert.match(css, /\.current-depth-chip\s*\{[^}]*min-height:\s*36px[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(css, /\.speed-readout, \.current-depth-chip\s*\{[^}]*min-height:\s*38px[^}]*font-variant-numeric:\s*tabular-nums/s);
 });
 
 test("active route view exposes compact live shoreline and depth readouts", () => {
@@ -189,5 +189,6 @@ test("anchor timer and debug panel remain compact and readable", () => {
   assert.match(css, /\.anchor-timer-chip\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
   assert.match(css, /\.anchor-timer-chip\.active\s*\{[^}]*background:/s);
   assert.match(css, /\.debug-panel pre\s*\{[^}]*max-height:\s*42svh[^}]*overflow:\s*auto/s);
+  assert.match(css, /\.debug-panel\s*\{[^}]*position:\s*fixed[^}]*width:\s*42px/s);
   assert.match(css, /\.power-save-go\.no-go\s*\{[^}]*#a83229/s);
 });

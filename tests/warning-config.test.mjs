@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CROATIA_WARNING_CONFIG, sanitizeWarningConfig } from "../lib/warning-config.ts";
+import { CROATIA_WARNING_CONFIG, migrateWarningConfig, sanitizeWarningConfig } from "../lib/warning-config.ts";
 
 test("older saved settings receive safe alert-output defaults", () => {
   const config = sanitizeWarningConfig({ distanceMetres: 450, speedWarningEnabled: false, maxSpeedKnots: 6 });
   assert.equal(config.distanceMetres, 450);
+  assert.equal(config.settingsVersion, 2);
   assert.equal(config.warningSoundEnabled, true);
   assert.equal(config.safeSoundEnabled, true);
   assert.equal(config.visualAlertsEnabled, true);
@@ -13,9 +14,10 @@ test("older saved settings receive safe alert-output defaults", () => {
   assert.equal(config.suppressDistanceSoundAtSafeSpeed, true);
   assert.equal(config.powerSaveEnabled, true);
   assert.equal(config.powerSaveDistanceMetres, 2_000);
-  assert.equal(config.powerSaveStationaryMinutes, 5);
+  assert.equal(config.powerSaveStationaryMinutes, 1);
   assert.equal(config.powerSaveAnchorRadiusMetres, 30);
   assert.equal(config.distanceTextScalePercent, 110);
+  assert.equal(config.courseWarningEnabled, false);
 });
 
 test("power-saving thresholds are sanitized to practical ranges", () => {
@@ -94,4 +96,25 @@ test("every boolean setting preserves an explicit false value", () => {
   for (const [key, value] of Object.entries(config)) {
     if (typeof CROATIA_WARNING_CONFIG[key] === "boolean") assert.equal(value, false, key);
   }
+});
+
+test("collision warning is opt-in and anchor mode starts after one minute by default", () => {
+  assert.equal(CROATIA_WARNING_CONFIG.courseWarningEnabled, false);
+  assert.equal(CROATIA_WARNING_CONFIG.powerSaveStationaryMinutes, 1);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, courseWarningEnabled: true }).courseWarningEnabled, true);
+});
+
+test("older saved defaults migrate to the new collision and anchor defaults", () => {
+  const migrated = migrateWarningConfig({
+    distanceMetres: 300,
+    speedWarningEnabled: true,
+    maxSpeedKnots: 8,
+    powerSaveStationaryMinutes: 5,
+  });
+  assert.equal(migrated.courseWarningEnabled, false);
+  assert.equal(migrated.powerSaveStationaryMinutes, 1);
+
+  const current = migrateWarningConfig({ ...CROATIA_WARNING_CONFIG, courseWarningEnabled: true, powerSaveStationaryMinutes: 7 });
+  assert.equal(current.courseWarningEnabled, true);
+  assert.equal(current.powerSaveStationaryMinutes, 7);
 });
