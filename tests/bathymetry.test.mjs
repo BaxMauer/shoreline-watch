@@ -13,12 +13,13 @@ import {
   parseEmodnetWaterDepth,
 } from "../lib/bathymetry.ts";
 
-test("EMODnet elevation samples become positive water depths only below LAT", () => {
+test("EMODnet WMS elevations and official positive REST samples become water depths", () => {
   assert.equal(parseEmodnetWaterDepth({ features: [{ properties: { Depth: -82.60656 } }] }), 82.60656);
+  assert.equal(parseEmodnetWaterDepth({ features: [{ properties: { Depth: 2.75 } }] }), null);
+  assert.equal(parseEmodnetWaterDepth({ avg: 31.25, smoothed: 30.95 }), 31.25);
   assert.equal(parseEmodnetWaterDepth({ avg: -7.376, smoothed: -6.76 }), 7.376);
   assert.equal(parseEmodnetWaterDepth({ smoothed: -31.25 }), 31.25);
-  assert.equal(parseEmodnetWaterDepth({ avg: 2.75 }), null);
-  assert.equal(parseEmodnetWaterDepth({ avg: 0 }), null);
+  assert.equal(parseEmodnetWaterDepth({ avg: 0 }), 0);
   assert.equal(parseEmodnetWaterDepth({ avg: "-5" }), null);
   assert.equal(parseEmodnetWaterDepth(null), null);
 });
@@ -68,7 +69,7 @@ test("server-side depth lookup prefers REST and falls back to WMS", async () => 
   const directCalls = [];
   const direct = await fetchEmodnetWaterDepth(point, async (url) => {
     directCalls.push(String(url));
-    return Response.json({ avg: -56.355 });
+    return Response.json({ avg: 56.355, smoothed: 55.9 });
   });
   assert.equal(direct, 56.355);
   assert.equal(directCalls.length, 1);
