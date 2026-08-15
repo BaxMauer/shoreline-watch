@@ -5,7 +5,7 @@ import { windFlowAngleRadians, type WindSample } from "../lib/wind";
 
 type Particle = { x: number; y: number; age: number; life: number };
 
-export default function WindOverlay({ sample, visible }: { sample: WindSample | null; visible: boolean }) {
+export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }: { sample: WindSample | null; visible: boolean; mapRotationDegrees?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -15,7 +15,7 @@ export default function WindOverlay({ sample, visible }: { sample: WindSample | 
     if (!context) return;
     const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const particles: Particle[] = Array.from({ length: 52 }, (_, index) => ({ x: (index * 73 % 101) / 101, y: (index * 47 % 97) / 97, age: index % 40, life: 45 + index % 35 }));
-    const angle = windFlowAngleRadians(sample.directionDegrees);
+    const angle = windFlowAngleRadians(sample.directionDegrees) + mapRotationDegrees * Math.PI / 180;
     const magnitude = Math.min(2.4, .35 + sample.speedKnots / 14);
     let animation = 0;
 
@@ -63,7 +63,7 @@ export default function WindOverlay({ sample, visible }: { sample: WindSample | 
     const observer = new ResizeObserver(() => { resize(); draw(); });
     observer.observe(canvas);
     return () => { cancelAnimationFrame(animation); observer.disconnect(); context.clearRect(0, 0, canvas.width, canvas.height); };
-  }, [sample, visible]);
+  }, [mapRotationDegrees, sample, visible]);
 
   return <canvas ref={canvasRef} className={`wind-overlay ${visible && sample ? "visible" : ""}`} aria-hidden="true" />;
 }

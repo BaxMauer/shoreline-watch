@@ -163,8 +163,8 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   const windRoute = await readFile(new URL("../app/api/wind/route.ts", import.meta.url), "utf8");
   assert.match(app, /fetch\(buildWindRequestUrl\(\{ latitude: windLatitude, longitude: windLongitude \}\)/);
   assert.match(app, /return parseWindSample\(await response\.json\(\)\)/);
-  assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} \/>/);
-  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} \/>/);
+  assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapOrientation\.mapRotationDegrees\} \/>/);
+  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
   assert.match(overlay, /requestAnimationFrame\(draw\)/);
   assert.match(overlay, /prefers-reduced-motion: reduce/);
   assert.match(windRoute, /AbortSignal\.timeout\(6_500\)/);
@@ -185,7 +185,7 @@ test("OSM feature catalog loads non-blockingly and labels both map modes", async
   assert.match(app, /fetch\("\/data\/croatia-map-features\.json"\)/);
   assert.match(app, /mapFeatureError/);
   assert.match(app, /<ProximityPlot[\s\S]*mapFeaturePack=\{mapFeaturePack\}/);
-  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, renderedCentre, renderedRangeMetres\)\.slice\(0, renderingDetail\.maximumLabels\)/);
+  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, renderedCentre, mapDataRangeMetres\)\.slice\(0, renderingDetail\.maximumLabels\)/);
   assert.match(planner, /© OpenStreetMap contributors/);
   const depthLayer = planner.indexOf("className=\"route-bathymetry-layer\"");
   const landLayer = planner.indexOf("className=\"route-land-area\"");
@@ -350,7 +350,7 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
     assert.match(planner, new RegExp(`on(?:PointerDown|PointerMove|PointerUp|PointerCancel|Wheel|KeyDown)=\\{${handler}\\}`));
   }
   assert.match(planner, /pinchRouteViewRange\(gesture\.range, gesture\.distance, metrics\.distance, clampMapRange\)/);
-  assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, deltaX, deltaY, clampMapRange\)/);
+  assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, northUpDelta\.x, northUpDelta\.y, clampMapRange\)/);
   assert.match(planner, /window\.requestAnimationFrame\(\(\) =>/);
   assert.match(planner, /scheduleMapView\(/);
   assert.match(planner, /setRenderedMapView\(\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\)/);
@@ -359,6 +359,19 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
   assert.match(planner, /className="route-recenter"[\s\S]*onClick=\{recenterMap\}/);
   assert.match(planner, /journeyState === "planning" \? clampRouteViewRange : clampActiveRouteViewRange/);
   assert.doesNotMatch(planner, /journeyState === "planning" && <button type="button" aria-label=\{copy\.zoomIn\}/);
+});
+
+test("distance and route maps share a persisted heading-up compass mode", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  const orientationControl = await readFile(new URL("../app/map-orientation-control.tsx", import.meta.url), "utf8");
+  assert.match(app, /MAP_HEADING_UP_STORAGE_KEY/);
+  assert.match(app, /className="distance-orientation-control"/);
+  assert.match(app, /<RoutePlanner[\s\S]*headingUp=\{headingUp\}[\s\S]*onToggleHeadingUp=/);
+  assert.match(planner, /className="route-oriented-map" transform=\{mapOrientationTransform\}/);
+  assert.match(planner, /rotateMapPoint\(\{ x, y \}, mapRotationPivot, -mapRotationDegrees\)/);
+  assert.match(planner, /rotateMapDelta\(\{ x: deltaX, y: deltaY \}, -mapRotationDegrees\)/);
+  assert.match(planner, /className="route-orientation-control"/);
+  assert.match(orientationControl, /aria-pressed=\{headingUp\}/);
 });
 
 test("Croatian place search combines local fuzzy matching with bounded Photon results", async () => {
@@ -416,7 +429,7 @@ test("route planning keeps secondary controls in compact disclosure panels", asy
 
 test("depth relief is optional, attributed, and excluded from routing options", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /buildEmodnetBathymetryTiles\(renderedCentre, renderedRangeMetres, 720\)/);
+  assert.match(planner, /buildEmodnetBathymetryTiles\(renderedCentre, mapDataRangeMetres, 720\)/);
   assert.match(planner, /className="route-depth-tile"/);
   assert.match(planner, /EMODNET_BATHYMETRY_ATTRIBUTION/);
   assert.match(planner, /route-bathymetry-layer/);
