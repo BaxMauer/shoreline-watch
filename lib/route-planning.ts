@@ -442,6 +442,35 @@ function buildRoute(
   } satisfies PlannedRoute;
 }
 
+function measureInteriorRouteClearance(
+  pack: CoastlinePack,
+  points: GeoPoint[],
+  preferredClearanceMetres: number,
+) {
+  const segmentDistances = points.slice(1).map((point, index) => geoDistanceMetres(points[index], point));
+  const totalDistance = segmentDistances.reduce((sum, distance) => sum + distance, 0);
+  const endpointExclusion = Math.min(totalDistance * 0.2, Math.max(250, preferredClearanceMetres * 1.25));
+  let travelled = 0;
+  let minimumClearance = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const distance = segmentDistances[index - 1];
+    const samples = Math.max(1, Math.ceil(distance / MAXIMUM_ROUTE_VALIDATION_SPACING_METRES));
+    const spacing = distance / samples;
+    for (let sample = 0; sample < samples; sample += 1) {
+      const progress = (sample + 0.5) / samples;
+      const routeDistance = travelled + distance * progress;
+      if (routeDistance <= endpointExclusion || totalDistance - routeDistance <= endpointExclusion) continue;
+      const point = interpolate(start, end, progress);
+      const clearance = shorelineDistanceWithin(pack, point, preferredClearanceMetres * 1.8);
+      minimumClearance = Math.min(minimumClearance, Math.max(0, clearance - spacing / 2));
+    }
+    travelled += distance;
+  }
+  return Number.isFinite(minimumClearance) ? minimumClearance : 0;
+}
+
 export function planWaterRoute(
   pack: CoastlinePack,
   start: GeoPoint,
@@ -729,7 +758,7 @@ export function planWaterRoute(
         // metres of extra clearance into a multi-mile detour.
         const penalty = passageEdge
           ? 1
-          : 1 + configuredShortfall * 0.75 + preferredShortfall * 0.1;
+          : 1 + configuredShortfall * 1.5 + preferredShortfall * 0.35;
         const nextCost = costs[currentEntry.key] + travelSeconds * penalty;
         if (nextCost >= costs[nextKey]) continue;
         costs[nextKey] = nextCost;
@@ -768,6 +797,30 @@ export function planWaterRoute(
         protectedIndices.add(index);
       }
     }
+    const rawCumulativeDistances = new Float64Array(rawPoints.length);
+    for (let index = 1; index < rawPoints.length; index += 1) {
+      rawCumulativeDistances[index] = rawCumulativeDistances[index - 1]
+        + geoDistanceMetres(rawPoints[index - 1], rawPoints[index]);
+    }
+    const rawPointAtProgress = (fromIndex: number, toIndex: number, progress: number) => {
+      const startDistance = rawCumulativeDistances[fromIndex];
+      const targetDistance = startDistance
+        + (rawCumulativeDistances[toIndex] - startDistance) * progress;
+      let low = fromIndex + 1;
+      let high = toIndex;
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if (rawCumulativeDistances[middle] < targetDistance) low = middle + 1;
+        else high = middle;
+      }
+      const segmentEnd = Math.max(fromIndex + 1, low);
+      const segmentStart = segmentEnd - 1;
+      const segmentLength = rawCumulativeDistances[segmentEnd] - rawCumulativeDistances[segmentStart];
+      const segmentProgress = segmentLength <= 0
+        ? 0
+        : (targetDistance - rawCumulativeDistances[segmentStart]) / segmentLength;
+      return interpolate(rawPoints[segmentStart], rawPoints[segmentEnd], segmentProgress);
+    };
     const protectedStops = [...protectedIndices].sort((left, right) => left - right);
     const simplified: GeoPoint[] = [rawPoints[0]];
     const shortcutAllowed = (fromIndex: number, toIndex: number) => {
@@ -777,19 +830,19 @@ export function planWaterRoute(
       const distance = geoDistanceMetres(from, to);
       const samples = Math.max(1, Math.ceil(distance / MAXIMUM_ROUTE_VALIDATION_SPACING_METRES));
       const spacing = distance / samples;
-      const rawClearance = allowRestricted
-        ? rawPoints.slice(fromIndex, toIndex + 1).reduce(
-          (minimum, point) => Math.min(minimum, shorelineDistanceWithin(pack, point, routedClearance * 1.8)),
-          routedClearance,
-        )
-        : routedClearance;
       for (let sample = 0; sample < samples; sample += 1) {
-        const samplePoint = interpolate(from, to, (sample + 0.5) / samples);
+        const progress = (sample + 0.5) / samples;
+        const samplePoint = interpolate(from, to, progress);
         if (nearEndpoint(samplePoint)) continue;
         // A shortcut may never reduce the clearance already achieved by A*.
-        // This keeps the centered medial-axis section of an unavoidable
-        // bottleneck instead of smoothing it back toward either shoreline.
-        const required = Math.max(0, rawClearance - cellSize * 0.35) + spacing / 2;
+        // Compare every shortcut position with the same progress along the
+        // original A* path. A single tight cape must not lower the requirement
+        // for the rest of a channel and pull its centreline toward either shore.
+        const rawPoint = rawPointAtProgress(fromIndex, toIndex, progress);
+        const rawClearance = allowRestricted
+          ? shorelineDistanceWithin(pack, rawPoint, routedClearance * 1.8)
+          : routedClearance;
+        const required = Math.max(0, Math.min(routedClearance, rawClearance) - cellSize * 0.35) + spacing / 2;
         if (shorelineDistanceWithin(pack, samplePoint, required) + 0.01 < required) return false;
       }
       return true;
@@ -831,10 +884,26 @@ export function planWaterRoute(
       - Math.max(packSouth, Math.min(startLocal.y, destinationLocal.y) - margin);
     return { margin, width, height, resolutions: getRouteGridResolutions(width, height, options.clearanceMetres) };
   });
-  type MeasuredCandidate = { geometry: RouteSearchGeometry; route: PlannedRoute };
+  type MeasuredCandidate = { geometry: RouteSearchGeometry; route: PlannedRoute; interiorClearanceMetres: number };
   const measuredCandidates: MeasuredCandidate[] = [];
+  const compareMeasuredCandidates = (left: MeasuredCandidate, right: MeasuredCandidate) => {
+    const shorterDistance = Math.max(1, Math.min(left.route.distanceMetres, right.route.distanceMetres));
+    const sameCorridor = Math.max(left.route.distanceMetres, right.route.distanceMetres) / shorterDistance <= 1.12
+      && left.route.passageIds.slice().sort().join("|") === right.route.passageIds.slice().sort().join("|");
+    const fasterEta = Math.max(1, Math.min(left.route.estimatedSeconds, right.route.estimatedSeconds));
+    const nearEquivalentEta = Math.abs(left.route.estimatedSeconds - right.route.estimatedSeconds)
+      <= Math.max(20, Math.min(90, fasterEta * 0.08));
+    const clearanceDifference = left.interiorClearanceMetres - right.interiorClearanceMetres;
+    // Coarse and fine searches often describe the same corridor. Within a
+    // small ETA tolerance, retain the candidate that stays closest to the
+    // channel's medial axis instead of selecting a shoreline-hugging shortcut.
+    if (sameCorridor && nearEquivalentEta && Math.abs(clearanceDifference) > 10) {
+      return clearanceDifference > 0 ? -1 : 1;
+    }
+    return comparePlannedRoutes(left.route, right.route, options.clearanceMetres);
+  };
   const bestMeasuredCandidate = () => measuredCandidates.reduce<MeasuredCandidate | null>(
-    (best, candidate) => !best || comparePlannedRoutes(candidate.route, best.route, options.clearanceMetres) < 0
+    (best, candidate) => !best || compareMeasuredCandidates(candidate, best) < 0
       ? candidate
       : best,
     null,
@@ -843,7 +912,11 @@ export function planWaterRoute(
     if (!geometry) return;
     const route = buildRoute(pack, geometry.points, options, "restricted", geometry.passageIds);
     route.mode = route.restrictedDistanceMetres > 0 || route.passageIds.length > 0 ? "restricted" : "clearance";
-    measuredCandidates.push({ geometry, route });
+    measuredCandidates.push({
+      geometry,
+      route,
+      interiorClearanceMetres: measureInteriorRouteClearance(pack, geometry.points, preferredClearance),
+    });
   };
 
   // Compare strict and restricted A* candidates instead of returning the
