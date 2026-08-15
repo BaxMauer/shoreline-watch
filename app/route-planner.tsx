@@ -622,7 +622,6 @@ export default function RoutePlanner({
   const liveNearest = useMemo(() => pack && fix ? findNearestShore(pack, fix.longitude, fix.latitude) : null, [fix, pack]);
   const liveNearestPoint = liveNearest ? point(liveNearest) : null;
   const liveWarningRadius = warningConfig.distanceMetres * pixelsPerMetre;
-  const liveDistanceLabel = shoreDistanceMetres === null ? "—" : formatRouteClearance(shoreDistanceMetres);
   const startPoint = useMemo(() => startMode === "manual" && manualStart ? renderedPoint(manualStart) : null, [manualStart, renderedPoint, startMode]);
   const targetPoint = useMemo(() => target ? renderedPoint(target) : null, [renderedPoint, target]);
   const focusedPlacePoint = useMemo(() => focusedPlace ? renderedPoint(focusedPlace) : null, [focusedPlace, renderedPoint]);
@@ -961,7 +960,7 @@ export default function RoutePlanner({
 
       <div className="route-map-wrap">
         <div className="route-map" role="application" tabIndex={0} aria-label={copy.mapLabel} aria-disabled={planning} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onContextMenu={(event) => event.preventDefault()} onWheel={handleWheel} onKeyDown={handleMapKey}>
-          <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="none" role="img" aria-hidden="true">
+          <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="xMidYMid meet" role="img" aria-hidden="true">
             <defs>
               <filter id="routeBoatGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
               <pattern id="routeLandHatch" width="12" height="12" patternUnits="userSpaceOnUse"><rect className="route-land-fill-mark" width="12" height="12" /><path className="route-land-hatch-mark" d="M-3 12 12-3M6 15 15 6" /></pattern>
@@ -975,10 +974,6 @@ export default function RoutePlanner({
               {liveNearestPoint && <>
                 <line className="route-nearest-line" x1={boatPoint.x} y1={boatPoint.y} x2={liveNearestPoint.x} y2={liveNearestPoint.y} />
                 <circle className="route-nearest-point" cx={liveNearestPoint.x} cy={liveNearestPoint.y} r="3.5" />
-                <g className="route-distance-label" transform={`translate(${(boatPoint.x + liveNearestPoint.x) / 2} ${(boatPoint.y + liveNearestPoint.y) / 2})`}>
-                  <rect x="-25" y="-10" width="50" height="18" rx="7" />
-                  <text y="3">{liveDistanceLabel}</text>
-                </g>
               </>}
             </g>}
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${fix?.heading ?? 0})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
@@ -1018,9 +1013,9 @@ export default function RoutePlanner({
       </div>
 
       {activeJourney && <div className="route-live-footer" aria-live="polite">
-        <span className={currentDepthState}><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay}` : "—"}</strong> m · {copy.chartDepth}</span>
-        <span><strong>±{gpsAccuracyLabel}</strong> m GPS</span>
-        <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
+        <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay} m` : "—"}</strong></span>
+        <span><small>GPS</small><strong>±{gpsAccuracyLabel} m</strong></span>
+        <span><small>{copy.currentSpeed}</small><strong>{speedKnots === null ? "—" : `${speedKnots.toFixed(1)} kn`}</strong></span>
       </div>}
 
       {journeyState === "planning" && <details ref={routeEditor} className="route-panel route-editor">

@@ -144,7 +144,8 @@ test("live map keeps the distance instrument as a readable map overlay", () => {
   assert.match(css, /\.instrument-footer\s*\{[^}]*position:\s*relative/s);
   assert.match(css, /\.current-depth-footer strong\s*\{[^}]*var\(--aqua\)/s);
   assert.match(css, /\.current-speed-footer strong\s*\{[^}]*var\(--aqua\)/s);
-  assert.match(css, /\.distance-map-overlay\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s);
+  assert.match(css, /\.distance-map-overlay\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*background:\s*none/s);
+  assert.match(css, /\.distance-map-overlay > \.distance-readout\s*\{[^}]*border-radius:\s*18px[^}]*background:\s*linear-gradient[^}]*backdrop-filter:\s*blur\(14px\)/s);
 });
 
 test("active route view becomes a distance-first navigation cockpit", () => {
@@ -152,10 +153,11 @@ test("active route view becomes a distance-first navigation cockpit", () => {
   assert.match(css, /\.route-live-distance strong\s*\{[^}]*font-size:\s*clamp\(3\.2rem,15vw,4\.8rem\)/s);
   assert.match(css, /\.route-live-go-no-go\.no-go\s*\{[^}]*background:\s*#b43025/s);
   assert.match(css, /\.route-live-guidance\s*\{[^}]*grid-template-columns:\s*1\.05fr 1fr 1fr/s);
-  assert.match(css, /\.route-live-footer\s*\{[^}]*grid-template-columns:\s*1fr \.8fr 1\.15fr/s);
+  assert.match(css, /\.route-live-footer\s*\{[^}]*grid-template-columns:\s*repeat\(3,1fr\)/s);
+  assert.match(css, /\.route-live-footer small\s*\{[^}]*text-transform:\s*uppercase/s);
   assert.match(css, /\.route-warning-ring\s*\{[^}]*stroke-dasharray:[^}]*vector-effect:\s*non-scaling-stroke/s);
   assert.match(css, /\.route-live-proximity\.danger \.route-warning-ring\s*\{[^}]*var\(--danger\)[^}]*ring-breathe/s);
-  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*clamp\(430px,60svh,610px\)/s);
+  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*auto[^}]*aspect-ratio:\s*1 \/ 1/s);
   assert.match(css, /\.route-static-map\s*\{[^}]*will-change:\s*transform/s);
 });
 
