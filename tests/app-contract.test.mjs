@@ -219,11 +219,19 @@ test("nearest shore, warning ring, collision course, and boat remain separate SV
   }
 });
 
-test("tracking exposes persistent distance and offline route calculations", async () => {
+test("tracking exposes distance, route, and nautical weather tabs", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(app, /type TrackerTab = "distance" \| "route"/);
+  const weather = await readFile(new URL("../app/nautical-weather.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(app, /type TrackerTab = "distance" \| "route" \| "weather"/);
   assert.match(app, /<nav className="tracker-tabs"/);
+  assert.match(app, /<NauticalWeather point=\{fix\} active=\{trackerTab === "weather"\}/);
   assert.match(app, /<RoutePlanner[\s\S]*warningConfig=\{warningConfig\}/);
+  assert.match(weather, /Promise\.all\(\[/);
+  assert.match(weather, /forecast\.days\.slice\(0, 2\)/);
+  assert.match(weather, /getBestBoatingWindow\(day\)/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(styles, /weather-wave/);
   assert.match(planner, /new Worker\(/);
   assert.match(planner, /route-planning\.worker\.ts/);
   assert.doesNotMatch(planner, /planWaterRoute\(/);
