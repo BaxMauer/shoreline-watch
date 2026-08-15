@@ -1,8 +1,9 @@
-const CACHE_NAME = "shoreline-watch-v32";
+const CACHE_NAME = "shoreline-watch-v33";
+const OFFLINE_CACHE_PREFIX = "shoreline-watch-offline-";
 const CORE = [
   "/",
   "/manifest.webmanifest",
-  "/manifest.webmanifest?v=15",
+  "/manifest.webmanifest?v=16",
   "/favicon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
@@ -21,7 +22,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME && !key.startsWith(OFFLINE_CACHE_PREFIX)).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });

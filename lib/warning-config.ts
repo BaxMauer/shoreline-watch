@@ -1,5 +1,5 @@
 export type WarningConfig = {
-  settingsVersion: 2;
+  settingsVersion: 3;
   distanceMetres: number;
   distanceTextScalePercent: number;
   speedWarningEnabled: boolean;
@@ -11,6 +11,8 @@ export type WarningConfig = {
   safeSoundEnabled: boolean;
   visualAlertsEnabled: boolean;
   vibrationEnabled: boolean;
+  shallowWaterEnabled: boolean;
+  shallowWaterMetres: number;
   powerSaveEnabled: boolean;
   powerSaveDistanceMetres: number;
   powerSaveStationaryMinutes: number;
@@ -18,7 +20,7 @@ export type WarningConfig = {
 };
 
 export const CROATIA_WARNING_CONFIG: WarningConfig = {
-  settingsVersion: 2,
+  settingsVersion: 3,
   distanceMetres: 300,
   distanceTextScalePercent: 110,
   speedWarningEnabled: true,
@@ -30,6 +32,8 @@ export const CROATIA_WARNING_CONFIG: WarningConfig = {
   safeSoundEnabled: true,
   visualAlertsEnabled: true,
   vibrationEnabled: true,
+  shallowWaterEnabled: true,
+  shallowWaterMetres: 3,
   powerSaveEnabled: true,
   powerSaveDistanceMetres: 2_000,
   powerSaveStationaryMinutes: 1,
@@ -60,9 +64,12 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
   const powerSaveAnchorRadiusMetres = typeof candidate.powerSaveAnchorRadiusMetres === "number" && Number.isFinite(candidate.powerSaveAnchorRadiusMetres)
     ? Math.min(200, Math.max(10, Math.round(candidate.powerSaveAnchorRadiusMetres / 5) * 5))
     : CROATIA_WARNING_CONFIG.powerSaveAnchorRadiusMetres;
+  const shallowWaterMetres = typeof candidate.shallowWaterMetres === "number" && Number.isFinite(candidate.shallowWaterMetres)
+    ? Math.min(20, Math.max(1, Math.round(candidate.shallowWaterMetres * 2) / 2))
+    : CROATIA_WARNING_CONFIG.shallowWaterMetres;
 
   return {
-    settingsVersion: 2,
+    settingsVersion: 3,
     distanceMetres,
     maxSpeedKnots,
     alertVolumePercent,
@@ -70,6 +77,7 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
     powerSaveDistanceMetres,
     powerSaveStationaryMinutes,
     powerSaveAnchorRadiusMetres,
+    shallowWaterMetres,
     speedWarningEnabled: typeof candidate.speedWarningEnabled === "boolean" ? candidate.speedWarningEnabled : CROATIA_WARNING_CONFIG.speedWarningEnabled,
     courseWarningEnabled: typeof candidate.courseWarningEnabled === "boolean" ? candidate.courseWarningEnabled : CROATIA_WARNING_CONFIG.courseWarningEnabled,
     suppressDistanceSoundAtSafeSpeed: typeof candidate.suppressDistanceSoundAtSafeSpeed === "boolean" ? candidate.suppressDistanceSoundAtSafeSpeed : CROATIA_WARNING_CONFIG.suppressDistanceSoundAtSafeSpeed,
@@ -77,13 +85,17 @@ export function sanitizeWarningConfig(value: unknown): WarningConfig {
     safeSoundEnabled: typeof candidate.safeSoundEnabled === "boolean" ? candidate.safeSoundEnabled : CROATIA_WARNING_CONFIG.safeSoundEnabled,
     visualAlertsEnabled: typeof candidate.visualAlertsEnabled === "boolean" ? candidate.visualAlertsEnabled : CROATIA_WARNING_CONFIG.visualAlertsEnabled,
     vibrationEnabled: typeof candidate.vibrationEnabled === "boolean" ? candidate.vibrationEnabled : CROATIA_WARNING_CONFIG.vibrationEnabled,
+    shallowWaterEnabled: typeof candidate.shallowWaterEnabled === "boolean" ? candidate.shallowWaterEnabled : CROATIA_WARNING_CONFIG.shallowWaterEnabled,
     powerSaveEnabled: typeof candidate.powerSaveEnabled === "boolean" ? candidate.powerSaveEnabled : CROATIA_WARNING_CONFIG.powerSaveEnabled,
   };
 }
 
 export function migrateWarningConfig(value: unknown): WarningConfig {
   const sanitized = sanitizeWarningConfig(value);
-  if (value && typeof value === "object" && (value as { settingsVersion?: unknown }).settingsVersion === 2) return sanitized;
+  if (value && typeof value === "object") {
+    const version = (value as { settingsVersion?: unknown }).settingsVersion;
+    if (version === 3 || version === 2) return sanitized;
+  }
 
   return {
     ...sanitized,

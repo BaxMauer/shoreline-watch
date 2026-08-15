@@ -93,7 +93,7 @@ test("distance mode samples and displays the current EMODnet chart depth", async
   assert.match(depthRoute, /fetchEmodnetWaterDepth\(point/);
   assert.match(depthRoute, /AbortSignal\.timeout\(6_500\)/);
   assert.match(await readFile(new URL("../lib/bathymetry.ts", import.meta.url), "utf8"), /const restDepth = finiteNumber\(sample\.avg\) \?\? finiteNumber\(sample\.smoothed\)/);
-  assert.match(app, /className=\{`current-depth-footer \$\{currentDepthState\}`\}/);
+  assert.match(app, /className=\{`current-depth-footer \$\{currentDepthState\} \$\{shallowWaterActive/);
   assert.match(app, /copy\.chartDepth/);
   assert.match(app, /currentDepthState=\{currentDepthState\}/);
   assert.match(app, /depthMetres === null \? "unavailable" : "ready"/);
@@ -135,7 +135,26 @@ test("live overview places the distance instrument over the map", () => {
 test("anchor timer stays in debug data but appears in the overview only after twenty seconds", () => {
   assert.match(app, /const anchorTimerVisible = mode === "live" && shouldShowAnchorTimer\(anchorTimer\.elapsedMs\)/);
   assert.match(app, /visibleInOverview: anchorTimerVisible/);
-  assert.match(app, /\{anchorTimerVisible && <div className=\{`anchor-timer-chip/);
+  assert.match(app, /anchorWatch \? <div className=\{`anchor-watch-card/);
+  assert.match(app, /: anchorTimerVisible \? <div className=\{`anchor-timer-chip/);
+});
+
+test("explicit anchor watch persists and renders anchor, rode, swing circle, and breach state", () => {
+  assert.match(app, /ANCHOR_WATCH_STORAGE_KEY/);
+  assert.match(app, /createAnchorWatch\(fix, Date\.now\(\)\)/);
+  assert.match(app, /getAnchorWatchSnapshot\(anchorWatch, fix/);
+  assert.match(app, /className="anchor-swing-circle"/);
+  assert.match(app, /className="anchor-rode"/);
+  assert.match(app, /anchorWatchSnapshot\.breached \? copy\.anchorDragging/);
+});
+
+test("offline packages and shallow-water marking are exposed as user controls", async () => {
+  const manager = await readFile(new URL("../app/offline-package-manager.tsx", import.meta.url), "utf8");
+  assert.match(app, /<OfflinePackageManager language=\{language\} fix=\{fix\} \/>/);
+  assert.match(manager, /downloadOfflinePackage\(/);
+  assert.match(manager, /removeOfflinePackage\(/);
+  assert.match(app, /checked=\{warningConfig\.shallowWaterEnabled\}/);
+  assert.match(app, /className="shallow-water-zone"/);
 });
 
 test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {
@@ -368,7 +387,7 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /route-live-go-no-go \$\{goNoGoState\}/);
   assert.match(planner, /className="route-live-cockpit"/);
   assert.match(planner, /className="route-live-footer"/);
-  assert.match(planner, /<small>{copy\.chartDepth}<\/small>/);
+  assert.match(planner, /<small>{liveShallow \? copy\.shallow : copy\.chartDepth}<\/small>/);
   assert.match(planner, /<small>{copy\.currentSpeed}<\/small>/);
   assert.match(planner, /goNoGoState: GoNoGoState/);
   assert.match(planner, /shoreDistanceMetres === null/);

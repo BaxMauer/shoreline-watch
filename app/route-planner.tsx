@@ -141,6 +141,7 @@ const COPY = {
     depthLoading: "Tiefen werden geladen",
     depthUnavailable: "Tiefenebene momentan nicht verfügbar",
     depthSource: "EMODnet 2024 · Übersicht",
+    shallow: "SEICHT",
     pointsPanel: "Start & Ziel",
     optionsPanel: "Routenoptionen",
     edit: "Bearbeiten",
@@ -235,6 +236,7 @@ const COPY = {
     depthLoading: "Loading depths",
     depthUnavailable: "Depth layer is currently unavailable",
     depthSource: "EMODnet 2024 · overview",
+    shallow: "SHALLOW",
     pointsPanel: "Start & destination",
     optionsPanel: "Route options",
     edit: "Edit",
@@ -628,6 +630,8 @@ export default function RoutePlanner({
   const liveNearest = useMemo(() => pack && fix ? findNearestShore(pack, fix.longitude, fix.latitude) : null, [fix, pack]);
   const liveNearestPoint = liveNearest ? point(liveNearest) : null;
   const liveWarningRadius = warningConfig.distanceMetres * pixelsPerMetre;
+  const liveShallowRadius = 115 * pixelsPerMetre / 2;
+  const liveShallow = warningConfig.shallowWaterEnabled && currentDepthState === "ready" && currentDepthMetres !== null && currentDepthMetres <= warningConfig.shallowWaterMetres;
   const startPoint = useMemo(() => startMode === "manual" && manualStart ? renderedPoint(manualStart) : null, [manualStart, renderedPoint, startMode]);
   const targetPoint = useMemo(() => target ? renderedPoint(target) : null, [renderedPoint, target]);
   const focusedPlacePoint = useMemo(() => focusedPlace ? renderedPoint(focusedPlace) : null, [focusedPlace, renderedPoint]);
@@ -986,6 +990,7 @@ export default function RoutePlanner({
             <g className="route-static-map" transform={staticMapTransform}>
               {staticMapLayers}
             </g>
+            {activeJourney && boatPoint && liveShallow && <g className="route-shallow-zone" aria-hidden="true"><circle cx={boatPoint.x} cy={boatPoint.y} r={Math.max(10, liveShallowRadius)} /><text x={boatPoint.x} y={boatPoint.y + 25}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text></g>}
             {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
               <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
               {liveNearestPoint && <>
@@ -1021,7 +1026,7 @@ export default function RoutePlanner({
       </div>}
 
       {activeJourney && <div className="route-live-footer" aria-live="polite">
-        <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay} m` : "—"}</strong></span>
+        <span className={`${currentDepthState} ${liveShallow ? "shallow" : ""}`}><small>{liveShallow ? copy.shallow : copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay} m` : "—"}</strong></span>
         <span><small>GPS</small><strong>±{gpsAccuracyLabel} m</strong></span>
         <span><small>{copy.currentSpeed}</small><strong>{speedKnots === null ? "—" : `${speedKnots.toFixed(1)} kn`}</strong></span>
       </div>}
