@@ -95,3 +95,23 @@ test("an island target uses the water-facing side nearest the route start", asyn
   });
   assert.ok(result.route, result.failure);
 });
+
+test("an inland-water target is moved to reachable coastal water", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const start = { latitude: 43.6901, longitude: 15.6916 };
+  const vranskoLake = { latitude: 43.8066, longitude: 15.8748 };
+  assert.equal(isPointOnLand(coastline, vranskoLake.longitude, vranskoLake.latitude), false, "the regression point must remain classified as water");
+
+  const target = resolvePlaceSearchTarget(coastline, vranskoLake, undefined, start);
+  assert.equal(isPointOnLand(coastline, target.longitude, target.latitude), false);
+  assert.ok(geoDistanceMetres(vranskoLake, target) > 5_000, "the target must leave the isolated lake");
+  assert.ok(target.longitude < 15.8, "the target must move to the Adriatic side of the mainland");
+
+  const result = planWaterRoute(coastline, start, target, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  });
+  assert.ok(result.route, result.failure);
+});

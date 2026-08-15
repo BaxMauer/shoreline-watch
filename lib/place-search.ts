@@ -41,6 +41,64 @@ function bearingBetween(origin: GeoPoint, destination: GeoPoint) {
   return (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
 }
 
+function waterLooksEnclosed(pack: CoastlinePack, origin: GeoPoint) {
+  const bearings = Array.from({ length: 24 }, (_, index) => index * 15);
+  return bearings.every((bearing) => {
+    for (let distance = 150; distance <= 6_000; distance += 150) {
+      const sample = pointAtDistance(origin, bearing, distance);
+      if (isPointOnLand(pack, sample.longitude, sample.latitude)) return true;
+    }
+    return false;
+  });
+}
+
+function findWaterBeyondLand(
+  pack: CoastlinePack,
+  origin: GeoPoint,
+  destination: GeoPoint,
+  waterOffsetMetres: number,
+) {
+  const bearing = bearingBetween(origin, destination);
+  const longitudeScale = 111_320 * Math.max(.1, Math.cos((origin.latitude + destination.latitude) / 2 * Math.PI / 180));
+  const maximumDistance = Math.min(50_000, Math.hypot(
+    (destination.longitude - origin.longitude) * longitudeScale,
+    (destination.latitude - origin.latitude) * 110_540,
+  ));
+  let crossedLand = false;
+  let lastLandDistance = 0;
+  for (let distance = 20; distance <= maximumDistance; distance += 20) {
+    const sample = pointAtDistance(origin, bearing, distance);
+    if (isPointOnLand(pack, sample.longitude, sample.latitude)) {
+      crossedLand = true;
+      lastLandDistance = distance;
+      continue;
+    }
+    if (!crossedLand) continue;
+
+    let landDistance = lastLandDistance;
+    let waterDistance = distance;
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+      const middle = (landDistance + waterDistance) / 2;
+      const candidate = pointAtDistance(origin, bearing, middle);
+      if (isPointOnLand(pack, candidate.longitude, candidate.latitude)) landDistance = middle;
+      else waterDistance = middle;
+    }
+    return pointAtDistance(origin, bearing, waterDistance + waterOffsetMetres);
+  }
+  return null;
+}
+
+function findOpenWaterTowards(pack: CoastlinePack, origin: GeoPoint, destination: GeoPoint, waterOffsetMetres: number) {
+  let cursor = origin;
+  for (let transition = 0; transition < 8; transition += 1) {
+    const candidate = findWaterBeyondLand(pack, cursor, destination, waterOffsetMetres);
+    if (!candidate) return null;
+    if (!waterLooksEnclosed(pack, candidate)) return candidate;
+    cursor = candidate;
+  }
+  return null;
+}
+
 function findWaterTowards(
   pack: CoastlinePack,
   origin: GeoPoint,
@@ -83,12 +141,19 @@ export function resolvePlaceSearchTarget(
   approachFrom?: GeoPoint | null,
 ): GeoPoint {
   const original = { latitude: result.latitude, longitude: result.longitude };
-  if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return original;
+  if (!pack) return original;
 
   const offset = Math.max(4, Math.min(40, waterOffsetMetres));
+  const originalOnLand = isPointOnLand(pack, original.longitude, original.latitude);
+  if (!originalOnLand) {
+    if (!approachFrom || !waterLooksEnclosed(pack, original)) return original;
+    return findOpenWaterTowards(pack, original, approachFrom, offset) ?? original;
+  }
+
   if (approachFrom) {
     const approachTarget = findWaterTowards(pack, original, approachFrom, offset);
-    if (approachTarget) return approachTarget;
+    if (approachTarget && !waterLooksEnclosed(pack, approachTarget)) return approachTarget;
+    if (approachTarget) return findOpenWaterTowards(pack, approachTarget, approachFrom, offset) ?? approachTarget;
   }
 
   const shore = findNearestShore(pack, original.longitude, original.latitude);

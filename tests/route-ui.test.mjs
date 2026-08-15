@@ -124,9 +124,10 @@ test("map preview transform follows pan and pinch without rebuilding geometry", 
   assert.ok(panned.translateY > 0);
 });
 
-test("active navigation follows the compact distance-tab map range", () => {
+test("active navigation starts with a wider route context", () => {
   assert.equal(getActiveRouteViewRange(405, 300), MINIMUM_ACTIVE_ROUTE_VIEW_METRES);
-  assert.equal(getActiveRouteViewRange(1_230, 300), 1_230);
+  assert.equal(getActiveRouteViewRange(1_230, 300), MINIMUM_ACTIVE_ROUTE_VIEW_METRES);
+  assert.equal(getActiveRouteViewRange(6_000, 300), 6_000);
   assert.equal(getActiveRouteViewRange(20_000, 300), MAXIMUM_ACTIVE_ROUTE_VIEW_METRES);
   assert.equal(getActiveRouteViewRange(Number.NaN, 300), MINIMUM_ACTIVE_ROUTE_VIEW_METRES);
 });

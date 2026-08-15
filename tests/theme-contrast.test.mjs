@@ -149,8 +149,9 @@ test("live map keeps the distance instrument as a readable map overlay", () => {
 });
 
 test("active route view becomes a distance-first navigation cockpit", () => {
-  assert.match(css, /\.route-live-distance\s*\{[^}]*position:\s*absolute[^}]*background:\s*linear-gradient/s);
-  assert.match(css, /\.route-live-distance strong\s*\{[^}]*font-size:\s*clamp\(3\.2rem,15vw,4\.8rem\)/s);
+  assert.match(css, /\.route-live-cockpit\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\) auto/s);
+  assert.match(css, /\.route-live-distance\s*\{[^}]*display:\s*flex[^}]*background:\s*linear-gradient/s);
+  assert.match(css, /\.route-live-distance strong\s*\{[^}]*font-size:\s*clamp\(1\.7rem,8vw,2\.35rem\)/s);
   assert.match(css, /\.route-live-go-no-go\.no-go\s*\{[^}]*background:\s*#b43025/s);
   assert.match(css, /\.route-live-guidance\s*\{[^}]*grid-template-columns:\s*1\.05fr 1fr 1fr/s);
   assert.match(css, /\.route-live-footer\s*\{[^}]*grid-template-columns:\s*repeat\(3,1fr\)/s);
@@ -159,6 +160,9 @@ test("active route view becomes a distance-first navigation cockpit", () => {
   assert.match(css, /\.route-live-proximity\.danger \.route-warning-ring\s*\{[^}]*var\(--danger\)[^}]*ring-breathe/s);
   assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*auto[^}]*aspect-ratio:\s*1 \/ 1/s);
   assert.match(css, /\.route-static-map\s*\{[^}]*will-change:\s*transform/s);
+  assert.doesNotMatch(css, /\.route-live-(?:distance|guidance|go-no-go)\s*\{[^}]*position:\s*absolute/s);
+  assert.match(css, /\.journey-active \.map-feature-label, \.journey-arrived \.map-feature-label\s*\{[^}]*display:\s*none/s);
+  assert.match(css, /\.journey-active \.route-screen-header, \.journey-arrived \.route-screen-header\s*\{[^}]*display:\s*none/s);
 });
 
 test("route map declares touch panning and strong focus affordances", () => {
