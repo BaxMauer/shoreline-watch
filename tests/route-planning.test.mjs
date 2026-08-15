@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { isPointOnLand } from "../lib/shoreline.ts";
+import { findNearestShore, isPointOnLand } from "../lib/shoreline.ts";
 import { ROUTE_PASSAGE_HINTS } from "../lib/route-passages.ts";
 import {
   comparePlannedRoutes,
@@ -464,6 +464,47 @@ test("the Kaprije screenshot route rejects the long western detour and keeps use
   const longestLeg = Math.max(...result.route.points.slice(1).map((point, index) => geoDistanceMetres(result.route.points[index], point)));
   assert.ok(longestLeg < 1_600, `route leg was too coarse at ${longestLeg} m`);
   assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points, getStartFixCorrectionTolerance(12)), true);
+});
+
+test("the Žirje screenshot narrows follows the widest channel centreline", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const result = planWaterRoute(
+    croatiaPack,
+    { longitude: 15.664672, latitude: 43.688393 },
+    { longitude: 15.6916, latitude: 43.6901 },
+    { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12 },
+  );
+  assert.ok(result.route, result.failure);
+  assert.ok(formatRouteDistance(result.route.distanceMetres) < 3, "the centred route must stay inside the short southern corridor");
+
+  for (const latitude of [43.6795, 43.6805, 43.6815]) {
+    const crossings = [];
+    for (let index = 1; index < result.route.points.length; index += 1) {
+      const start = result.route.points[index - 1];
+      const end = result.route.points[index];
+      if (start.latitude === end.latitude
+        || latitude < Math.min(start.latitude, end.latitude)
+        || latitude > Math.max(start.latitude, end.latitude)) continue;
+      const progress = (latitude - start.latitude) / (end.latitude - start.latitude);
+      const longitude = start.longitude + (end.longitude - start.longitude) * progress;
+      if (longitude >= 15.692 && longitude <= 15.7) crossings.push({ longitude, latitude });
+    }
+    assert.ok(crossings.length > 0, `route did not cross the channel at ${latitude}`);
+    const routeClearance = Math.max(...crossings.map((point) => findNearestShore(
+      croatiaPack,
+      point.longitude,
+      point.latitude,
+    )?.distance ?? 0));
+    let widestClearance = 0;
+    for (let longitude = 15.692; longitude <= 15.7; longitude += 0.00005) {
+      if (isPointOnLand(croatiaPack, longitude, latitude)) continue;
+      widestClearance = Math.max(widestClearance, findNearestShore(croatiaPack, longitude, latitude)?.distance ?? 0);
+    }
+    assert.ok(
+      widestClearance - routeClearance <= 60,
+      `channel route lost ${(widestClearance - routeClearance).toFixed(1)} m of available clearance at ${latitude}`,
+    );
+  }
 });
 
 test("the bundled Croatia chart uses the shorter Tisno passage when near-shore speed is unrestricted", async () => {
