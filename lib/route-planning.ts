@@ -68,13 +68,10 @@ export function formatRouteDistance(distanceMetres: number) {
   return distanceMetres / 1_852;
 }
 
-/**
- * Safety is a constraint, travel time is the optimizer. A route that reaches
- * the requested clearance plus the 50 m planning margin is therefore compared
- * by ETA only. If the margin is physically impossible, the widest bottleneck
- * wins first; ETA breaks ties between equally safe alternatives.
- */
+/** Travel time selects the route; clearance and distance break ETA ties. */
 export function comparePlannedRoutes(left: PlannedRoute, right: PlannedRoute, clearanceMetres: number) {
+  const timeDifference = left.estimatedSeconds - right.estimatedSeconds;
+  if (Math.abs(timeDifference) > 1) return timeDifference < 0 ? -1 : 1;
   const preferredClearance = getPreferredRouteClearanceMetres(clearanceMetres);
   // Conditional passages already carry a manually verified centreline through
   // their unavoidable bottleneck. Treat that centreline as the safest possible
@@ -88,8 +85,6 @@ export function comparePlannedRoutes(left: PlannedRoute, right: PlannedRoute, cl
     : Math.min(preferredClearance, right.minimumShoreDistanceMetres);
   const clearanceDifference = leftClearance - rightClearance;
   if (Math.abs(clearanceDifference) > 1) return clearanceDifference > 0 ? -1 : 1;
-  const timeDifference = left.estimatedSeconds - right.estimatedSeconds;
-  if (Math.abs(timeDifference) > 0.01) return timeDifference < 0 ? -1 : 1;
   return left.distanceMetres - right.distanceMetres;
 }
 
@@ -715,6 +710,9 @@ export function planWaterRoute(
         const stepDistance = geoDistanceMetres(current.point, next.point);
         const edgeClearance = Math.min(current.shoreDistance, next.shoreDistance);
         const preferredShortfall = Math.max(0, 1 - edgeClearance / Math.max(1, routedClearance));
+        const configuredShortfall = options.clearanceMetres <= 0
+          ? 0
+          : Math.max(0, 1 - edgeClearance / options.clearanceMetres);
         // Passage hints represent intentionally selected narrow waterways. Do
         // not apply the generic shoreline-avoidance multiplier to their
         // validated centreline, or A* will always prefer a many-mile detour.
@@ -726,10 +724,12 @@ export function planWaterRoute(
           ? options.nearShoreSpeedKnots
           : options.cruiseSpeedKnots;
         const travelSeconds = stepDistance / (edgeSpeedKnots * KNOTS_TO_METRES_PER_SECOND);
-        // Below the preferred band, a clearance-field penalty pulls the path
-        // toward the medial axis of a channel. Both banks then contribute the
-        // same limiting distance, so a symmetric bottleneck is crossed midway.
-        const penalty = passageEdge ? 1 : restricted ? 1 + preferredShortfall * 4 : 1;
+        // The actual speed limit remains the dominant cost. A bounded
+        // clearance nudge centers unavoidable narrows without turning a few
+        // metres of extra clearance into a multi-mile detour.
+        const penalty = passageEdge
+          ? 1
+          : 1 + configuredShortfall * 0.75 + preferredShortfall * 0.1;
         const nextCost = costs[currentEntry.key] + travelSeconds * penalty;
         if (nextCost >= costs[nextKey]) continue;
         costs[nextKey] = nextCost;
