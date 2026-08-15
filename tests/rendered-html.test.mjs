@@ -44,7 +44,7 @@ test("rendered document exposes installable mobile metadata", async () => {
   const html = await response.text();
   assert.match(html, /<html lang="de"/);
   assert.match(html, /<title>Shoreline Watch<\/title>/);
-  assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest\?v=17"/);
+  assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest\?v=18"/);
   assert.match(html, /<link rel="apple-touch-icon" href="\/icons\/apple-touch-icon\.png" sizes="180x180"/);
   assert.match(html, /<meta name="theme-color" content="#06151b"/);
   assert.match(html, /<meta name="mobile-web-app-capable" content="yes"/);

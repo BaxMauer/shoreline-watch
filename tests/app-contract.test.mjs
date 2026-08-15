@@ -161,7 +161,8 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   const overlay = await readFile(new URL("../app/wind-overlay.tsx", import.meta.url), "utf8");
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   const windRoute = await readFile(new URL("../app/api/wind/route.ts", import.meta.url), "utf8");
-  assert.match(app, /fetch\(`\/api\/wind\?latitude=/);
+  assert.match(app, /fetch\(buildWindRequestUrl\(\{ latitude: windLatitude, longitude: windLongitude \}\)/);
+  assert.match(app, /return parseWindSample\(await response\.json\(\)\)/);
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} \/>/);
   assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} \/>/);
   assert.match(overlay, /requestAnimationFrame\(draw\)/);
