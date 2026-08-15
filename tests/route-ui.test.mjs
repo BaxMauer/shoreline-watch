@@ -17,6 +17,7 @@ import {
   formatRouteEta,
   getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
+  getRouteMapPreviewTransform,
   getRouteMapRenderingDetail,
   getRouteReadinessState,
   hasReachedRouteTarget,
@@ -102,9 +103,25 @@ test("map zoom remains inside the supported offline planning range", () => {
 });
 
 test("zoomed-out maps cap coastline and hatch rendering work", () => {
-  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 1.5, maximumShorelineSegments: 5_000 });
-  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 5, maximumShorelineSegments: 1_400 });
-  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 8, maximumShorelineSegments: 800 });
+  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 });
+  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 9, maximumShorelineSegments: 650, maximumLabels: 30 });
+  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 14, maximumShorelineSegments: 280, maximumLabels: 18 });
+});
+
+test("map preview transform follows pan and pinch without rebuilding geometry", () => {
+  const origin = { longitude: 15.6, latitude: 43.8 };
+  assert.deepEqual(getRouteMapPreviewTransform(origin, 20_000, origin, 20_000, 360), {
+    scale: 1,
+    translateX: 0,
+    translateY: -0,
+  });
+  const zoomed = getRouteMapPreviewTransform(origin, 20_000, origin, 10_000, 360);
+  assert.equal(zoomed.scale, 2);
+  assert.equal(zoomed.translateX, 0);
+  assert.equal(zoomed.translateY, -0);
+  const panned = getRouteMapPreviewTransform(origin, 20_000, { longitude: 15.61, latitude: 43.81 }, 20_000, 360);
+  assert.ok(panned.translateX < 0);
+  assert.ok(panned.translateY > 0);
 });
 
 test("active navigation follows the compact distance-tab map range", () => {
