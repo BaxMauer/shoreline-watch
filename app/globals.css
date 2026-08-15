@@ -276,6 +276,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .sunlight-mode .instrument-summary, .sunlight-mode .instrument-footer { border-color: rgba(0,99,79,.14); background: rgba(246,251,249,.94); }
 .sunlight-mode .distance-readout strong { color: #071b22; text-shadow: none; }
 .sunlight-mode .distance-readout strong.placeholder { color: #72898a; }
+.sunlight-mode .distance-map-overlay { background: linear-gradient(180deg, rgba(246,251,249,.76), transparent 48%); }
 .sunlight-mode .status-pill, .sunlight-mode .sound-state, .sunlight-mode .instrument-meta { background: rgba(255,255,255,.82); color: #405f62; box-shadow: 0 4px 18px rgba(18,62,63,.08); }
 .sunlight-mode .instrument-meta strong { color: #071b22; }
 .sunlight-mode .proximity-ring { stroke: rgba(0,107,96,.58); fill: rgba(0,107,96,.025); }
@@ -317,6 +318,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .theme-nautical .visual-signal.safe .visual-signal-card { background: rgba(23,76,91,.94); color: #fff5dc; }
 
 .summary-primary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; }
+.distance-map-overlay { position: absolute; z-index: 4; inset: 0; grid-template-rows: auto minmax(0,1fr) auto; align-items: start; padding: 14px 12px 12px; background: linear-gradient(180deg, rgba(5,20,26,.64), transparent 47%); pointer-events: none; }
 .distance-readout { grid-column: 1 / -1; min-width: 0; container-type: inline-size; text-align: left; pointer-events: none; }
 .distance-readout > span:first-child { display: block; color: var(--muted); font-size: .62rem; font-weight: 680; letter-spacing: .14em; text-transform: uppercase; }
 .distance-value { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
@@ -324,6 +326,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .distance-readout strong.placeholder { color: #395158; letter-spacing: -.03em; }
 .distance-readout small { display: block; flex: 0 0 auto; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; }
 .summary-primary-row > .go-no-go { grid-column: 2; justify-self: end; }
+.distance-map-overlay > .go-no-go { grid-row: 3; align-self: end; }
 .anchor-timer-chip { display: flex; width: 100%; min-height: 27px; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; background: rgba(5,20,26,.56); color: var(--muted); padding: 0 9px; font-family: var(--font-geist-mono), monospace; font-variant-numeric: tabular-nums; }
 .anchor-timer-chip small, .anchor-timer-chip em { font-size: .48rem; font-style: normal; letter-spacing: .03em; text-transform: uppercase; }
 .anchor-timer-chip b { color: var(--foam); font-size: .61rem; }
@@ -344,7 +347,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .theme-xp .go-no-go.no-go, .theme-nautical .go-no-go.no-go, .sunlight-mode .go-no-go.no-go { background: #9f2d23; color: #fff; }
 .theme-xp .go-no-go.unknown, .theme-nautical .go-no-go.unknown, .sunlight-mode .go-no-go.unknown { background: #6b5316; color: #fff3c5; }
 
-.map-stage { position: relative; min-height: 180px; overflow: hidden; }
+.map-stage { position: relative; min-height: 260px; overflow: hidden; }
 .proximity-plot { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 .gps-stale .proximity-plot { opacity: .62; }
 .gps-inaccurate .proximity-plot { opacity: .7; }

@@ -17,6 +17,7 @@ import {
   formatRouteEta,
   getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
+  getRouteMapRenderingDetail,
   getRouteReadinessState,
   hasReachedRouteTarget,
   parseRouteCoordinate,
@@ -98,6 +99,12 @@ test("map zoom remains inside the supported offline planning range", () => {
   assert.equal(clampRouteViewRange(1), MINIMUM_ROUTE_VIEW_METRES);
   assert.equal(clampRouteViewRange(20_000), 20_000);
   assert.equal(clampRouteViewRange(500_000), MAXIMUM_ROUTE_VIEW_METRES);
+});
+
+test("zoomed-out maps cap coastline and hatch rendering work", () => {
+  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 1.5, maximumShorelineSegments: 5_000 });
+  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 5, maximumShorelineSegments: 1_400 });
+  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 8, maximumShorelineSegments: 800 });
 });
 
 test("active navigation follows the compact distance-tab map range", () => {

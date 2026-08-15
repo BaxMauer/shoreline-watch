@@ -116,17 +116,17 @@ test("live overview keeps GPS speed in knots and collision prediction is opt-in"
   assert.match(app, /if \(!warningConfig\.courseWarningEnabled \|\| !gpsReliable/);
 });
 
-test("live overview keeps persistent readouts outside the map stage", () => {
+test("live overview places the distance instrument over the map", () => {
   const summary = app.indexOf('className="instrument-summary"');
   const anchor = app.indexOf("anchor-timer-chip", summary);
-  const distance = app.indexOf('className="summary-primary-row"', summary);
   const mapStage = app.indexOf('className="map-stage"');
   const proximityPlot = app.indexOf("<ProximityPlot", mapStage);
+  const distance = app.indexOf('className="summary-primary-row distance-map-overlay"', proximityPlot);
   const footer = app.indexOf('className="instrument-footer"');
   const depth = app.indexOf("current-depth-footer", footer);
   const accuracy = app.indexOf("m GPS", depth);
   const speed = app.indexOf("current-speed-footer", accuracy);
-  assert.ok(summary >= 0 && anchor > summary && distance > anchor && mapStage > distance && proximityPlot > mapStage && footer > proximityPlot);
+  assert.ok(summary >= 0 && anchor > summary && mapStage > anchor && proximityPlot > mapStage && distance > proximityPlot && footer > distance);
   assert.ok(depth > footer && accuracy > depth && speed > accuracy);
   assert.doesNotMatch(app, /className="tracker-head"/);
   assert.match(app, /className="tracking-controls"/);
@@ -211,10 +211,10 @@ test("route planning applies warning distance and near-shore speed settings", as
 
 test("place search converts land centroids into navigable water targets", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result\)/);
+  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result, undefined, effectiveStart\)/);
   assert.match(planner, /selectTarget\(destination\)/);
   assert.match(planner, /pendingPlaceTarget\.current = pack \? null : result/);
-  assert.match(planner, /selectTarget\(resolvePlaceSearchTarget\(pack, result\)\)/);
+  assert.match(planner, /setFocusedPlace\(\{ \.\.\.result, \.\.\.destination \}\)/);
 });
 
 test("route destination requires a stationary long press or entered coordinates", async () => {
@@ -288,7 +288,7 @@ test("Croatian place search combines local fuzzy matching with bounded Photon re
   assert.match(planner, /searchCroatianMapFeatures\(mapFeaturePack, placeQuery\)/);
   assert.match(planner, /fetch\(`\/api\/places\?q=\$\{encodeURIComponent\(query\)\}&lang=\$\{language\}`/);
   assert.match(planner, /focusPlaceResult\(result\)/);
-  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result\)/);
+  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result, undefined, effectiveStart\)/);
   assert.match(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(destination\)/);
   assert.match(placeRoute, /buildPhotonPlaceSearchUrl\(query, language\)/);
   assert.match(placeRoute, /AbortSignal\.timeout\(5_500\)/);

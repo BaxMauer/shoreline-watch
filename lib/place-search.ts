@@ -25,18 +25,75 @@ export const CROATIA_SEARCH_BOUNDS = {
 
 export const PLACE_TARGET_WATER_OFFSET_METRES = 8;
 
+function pointAtDistance(origin: GeoPoint, bearing: number, distanceMetres: number): GeoPoint {
+  const radians = bearing * Math.PI / 180;
+  const longitudeScale = 111_320 * Math.max(.1, Math.cos(origin.latitude * Math.PI / 180));
+  return {
+    longitude: origin.longitude + Math.sin(radians) * distanceMetres / longitudeScale,
+    latitude: origin.latitude + Math.cos(radians) * distanceMetres / 110_540,
+  };
+}
+
+function bearingBetween(origin: GeoPoint, destination: GeoPoint) {
+  const longitudeScale = 111_320 * Math.max(.1, Math.cos((origin.latitude + destination.latitude) / 2 * Math.PI / 180));
+  const east = (destination.longitude - origin.longitude) * longitudeScale;
+  const north = (destination.latitude - origin.latitude) * 110_540;
+  return (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+}
+
+function findWaterTowards(
+  pack: CoastlinePack,
+  origin: GeoPoint,
+  destination: GeoPoint,
+  waterOffsetMetres: number,
+) {
+  const bearing = bearingBetween(origin, destination);
+  const stepMetres = 20;
+  let lastLandDistance = 0;
+
+  for (let distance = stepMetres; distance <= 30_000; distance += stepMetres) {
+    const sample = pointAtDistance(origin, bearing, distance);
+    if (isPointOnLand(pack, sample.longitude, sample.latitude)) {
+      lastLandDistance = distance;
+      continue;
+    }
+
+    let landDistance = lastLandDistance;
+    let waterDistance = distance;
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+      const middle = (landDistance + waterDistance) / 2;
+      const candidate = pointAtDistance(origin, bearing, middle);
+      if (isPointOnLand(pack, candidate.longitude, candidate.latitude)) landDistance = middle;
+      else waterDistance = middle;
+    }
+
+    for (let offset = waterOffsetMetres; offset >= 4; offset /= 2) {
+      const candidate = pointAtDistance(origin, bearing, waterDistance + offset);
+      if (!isPointOnLand(pack, candidate.longitude, candidate.latitude)) return candidate;
+    }
+    return sample;
+  }
+  return null;
+}
+
 export function resolvePlaceSearchTarget(
   pack: CoastlinePack | null,
   result: Pick<PlaceSearchResult, "latitude" | "longitude">,
   waterOffsetMetres = PLACE_TARGET_WATER_OFFSET_METRES,
+  approachFrom?: GeoPoint | null,
 ): GeoPoint {
   const original = { latitude: result.latitude, longitude: result.longitude };
   if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return original;
 
+  const offset = Math.max(4, Math.min(40, waterOffsetMetres));
+  if (approachFrom) {
+    const approachTarget = findWaterTowards(pack, original, approachFrom, offset);
+    if (approachTarget) return approachTarget;
+  }
+
   const shore = findNearestShore(pack, original.longitude, original.latitude);
   if (!shore) return original;
 
-  const offset = Math.max(4, Math.min(40, waterOffsetMetres));
   const distances = [offset, offset * 2, offset * 4, 50, 100];
   const bearingOffsets = Array.from({ length: 36 }, (_, index) => {
     if (index === 0) return 0;
