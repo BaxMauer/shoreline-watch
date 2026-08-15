@@ -27,6 +27,7 @@ import RoutePlanner from "./route-planner";
 import OfflinePackageManager from "./offline-package-manager";
 import WindOverlay from "./wind-overlay";
 import NauticalWeather from "./nautical-weather";
+import MapOrientationControl from "./map-orientation-control";
 import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
 import { buildWindRequestUrl, parseWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
@@ -60,6 +61,7 @@ import {
   formatCurrentDepth,
   type CurrentDepthState,
 } from "../lib/bathymetry";
+import { getMapOrientation } from "../lib/map-orientation";
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
@@ -94,6 +96,7 @@ const DEBUG_STORAGE_KEY = "shoreline-debug-enabled";
 const ANCHOR_WATCH_STORAGE_KEY = "shoreline-anchor-watch-v1";
 const WIND_SAMPLE_STORAGE_KEY = "shoreline-last-wind-v1";
 const WIND_LAYER_STORAGE_KEY = "shoreline-wind-layer";
+const MAP_HEADING_UP_STORAGE_KEY = "shoreline-map-heading-up";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
@@ -497,6 +500,7 @@ function ProximityPlot({
   anchorRadiusMetres,
   anchorBreached,
   language,
+  headingUp,
 }: {
   pack: CoastlinePack | null;
   mapFeaturePack: MapFeaturePack | null;
@@ -513,6 +517,7 @@ function ProximityPlot({
   anchorRadiusMetres: number;
   anchorBreached: boolean;
   language: Language;
+  headingUp: boolean;
 }) {
   const copy = COPY[language];
   const size = 360;
@@ -531,9 +536,11 @@ function ProximityPlot({
   const anchorRadius = anchorRadiusMetres * pixelsPerMetre;
   const shallowRadius = 115 * pixelsPerMetre / 2;
   const shallow = currentDepthMetres !== null && currentDepthMetres <= shallowWaterMetres;
+  const { mapRotationDegrees, boatRotationDegrees } = getMapOrientation(fix?.heading, headingUp);
+  const mapTransform = `rotate(${mapRotationDegrees} ${centre} ${centre})`;
   const mapLabels = useMemo(() => {
     if (!fix) return [];
-    const halfRangeMetres = centre / pixelsPerMetre;
+    const halfRangeMetres = centre * Math.SQRT2 / pixelsPerMetre;
     return placeMapFeatureLabels(
       getMapFeaturesInView(mapFeaturePack, fix, halfRangeMetres),
       (value) => point(value.longitude, value.latitude),
@@ -574,25 +581,26 @@ function ProximityPlot({
   const landHatchPath = useMemo(() => {
     if (!fix || !pack) return "";
     const bandHeight = 4;
-    const minimumLongitude = fix.longitude - centre / (metresPerLongitudeDegree * pixelsPerMetre);
-    const maximumLongitude = fix.longitude + centre / (metresPerLongitudeDegree * pixelsPerMetre);
+    const extent = centre * Math.SQRT2;
+    const minimumLongitude = fix.longitude - extent / (metresPerLongitudeDegree * pixelsPerMetre);
+    const maximumLongitude = fix.longitude + extent / (metresPerLongitudeDegree * pixelsPerMetre);
     let path = "";
 
-    for (let y = 0; y < size; y += bandHeight) {
+    for (let y = centre - extent; y < centre + extent; y += bandHeight) {
       const sampleY = y + bandHeight / 2;
       const latitude = fix.latitude + (centre - sampleY) / (metresPerLatitudeDegree * pixelsPerMetre);
       const intervals = getLandIntervalsAtLatitude(pack, latitude, minimumLongitude, maximumLongitude);
-      const top = Math.max(0, y - 0.25);
-      const bottom = Math.min(size, y + bandHeight + 0.25);
+      const top = y - 0.25;
+      const bottom = y + bandHeight + 0.25;
 
       for (const [west, east] of intervals) {
-        const left = Math.max(0, centre + (west - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
-        const right = Math.min(size, centre + (east - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        const left = Math.max(centre - extent, centre + (west - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        const right = Math.min(centre + extent, centre + (east - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
         if (right > left) path += `M${left} ${top}H${right}V${bottom}H${left}Z`;
       }
     }
     return path;
-  }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pack, pixelsPerMetre, size]);
+  }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pack, pixelsPerMetre]);
 
   return (
     <svg
@@ -617,6 +625,8 @@ function ProximityPlot({
         </pattern>
       </defs>
       <circle cx={centre} cy={centre} r="166" fill="url(#plotGlow)" />
+
+      <g className="proximity-oriented-map" transform={mapTransform}>
 
       <g className="land-hatch-layer" aria-hidden="true">
         {landHatchPath && <path className="land-hatch-area" d={landHatchPath} />}
@@ -654,21 +664,23 @@ function ProximityPlot({
 
       <g className="map-feature-labels" aria-hidden="true">
         {mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
-          {label.kind === "restaurant" && <circle r="2.2" />}
-          <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+          <g transform={`rotate(${-mapRotationDegrees})`}>
+            {label.kind === "restaurant" && <circle r="2.2" />}
+            <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+          </g>
         </g>)}
       </g>
 
       {shallow && <g className="shallow-water-zone" aria-hidden="true">
         <circle cx={centre} cy={centre} r={Math.max(12, shallowRadius)} />
-        <text x={centre} y={centre + 28}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text>
+        <text x={centre} y={centre + 28} transform={`rotate(${-mapRotationDegrees} ${centre} ${centre + 28})`}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text>
       </g>}
 
       {anchorPoint && <g className={`anchor-map-watch ${anchorBreached ? "breached" : "holding"}`} aria-hidden="true">
         <circle className="anchor-swing-circle" cx={anchorPoint.x} cy={anchorPoint.y} r={anchorRadius} />
         <line className="anchor-rode" x1={anchorPoint.x} y1={anchorPoint.y} x2={centre} y2={centre} />
         <circle className="anchor-point" cx={anchorPoint.x} cy={anchorPoint.y} r="5" />
-        <text x={anchorPoint.x + 12} y={anchorPoint.y - 10}>⚓</text>
+        <text x={anchorPoint.x + 12} y={anchorPoint.y - 10} transform={`rotate(${-mapRotationDegrees} ${anchorPoint.x + 12} ${anchorPoint.y - 10})`}>⚓</text>
       </g>}
 
       <circle className="proximity-ring" cx={centre} cy={centre} r={ringRadius} />
@@ -688,9 +700,10 @@ function ProximityPlot({
       )}
 
       {nearestPoint && <circle className="nearest-point" cx={nearestPoint.x} cy={nearestPoint.y} r="3.8" />}
+      </g>
 
       {fix ? (
-        <g className="map-boat" transform={`translate(${centre} ${centre}) rotate(${fix.heading ?? 0})`} filter="url(#boatGlow)">
+        <g className="map-boat" transform={`translate(${centre} ${centre}) rotate(${boatRotationDegrees})`} filter="url(#boatGlow)">
           <circle className="boat-halo" cx="0" cy="0" r="17" />
           <path d="M0-14 8.5 10 0 6.5-8.5 10Z" />
           <circle className="boat-centre" cx="0" cy="0" r="2.6" />
@@ -736,6 +749,7 @@ export default function ShorelineApp() {
   const [windSample, setWindSample] = useState<WindSample | null>(null);
   const [windState, setWindState] = useState<"idle" | "loading" | "ready" | "offline">("idle");
   const [showWind, setShowWind] = useState(true);
+  const [headingUp, setHeadingUp] = useState(false);
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -767,6 +781,7 @@ export default function ShorelineApp() {
       const savedAnchorWatch = window.localStorage.getItem(ANCHOR_WATCH_STORAGE_KEY);
       const savedWind = window.localStorage.getItem(WIND_SAMPLE_STORAGE_KEY);
       const savedWindLayer = window.localStorage.getItem(WIND_LAYER_STORAGE_KEY);
+      const savedHeadingUp = window.localStorage.getItem(MAP_HEADING_UP_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -795,6 +810,7 @@ export default function ShorelineApp() {
         } catch { window.localStorage.removeItem(WIND_SAMPLE_STORAGE_KEY); }
       }
       if (savedWindLayer === "false") setShowWind(false);
+      if (savedHeadingUp === "true") setHeadingUp(true);
       setPreferencesLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -821,6 +837,11 @@ export default function ShorelineApp() {
     if (!preferencesLoaded) return;
     window.localStorage.setItem(WIND_LAYER_STORAGE_KEY, String(showWind));
   }, [preferencesLoaded, showWind]);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    window.localStorage.setItem(MAP_HEADING_UP_STORAGE_KEY, String(headingUp));
+  }, [headingUp, preferencesLoaded]);
 
   useEffect(() => {
     if (mode === "idle") return;
@@ -980,7 +1001,7 @@ export default function ShorelineApp() {
   const viewRangeMetres = getPlotRangeMetres(nearest?.distance ?? null, warningConfig.distanceMetres);
   const nearbySegments = useMemo(() => {
     if (!pack || !fix) return [];
-    return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.15);
+    return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.55);
   }, [fix, pack, viewRangeMetres]);
 
   const courseToShore = useMemo(() => {
@@ -1519,6 +1540,7 @@ export default function ShorelineApp() {
   const windLabel = windSample
     ? `${windState === "offline" ? "Offline · " : ""}${windCompassLabel(windSample.directionDegrees, language)} ${Math.round(windSample.speedKnots)} · ${copy.windGust} ${Math.round(windSample.gustKnots)} kn`
     : copy.windWaiting;
+  const mapOrientation = getMapOrientation(fix?.heading, headingUp);
   const debugSnapshot = {
     schemaVersion: 1,
     appVersion: APP_VERSION,
@@ -1574,6 +1596,7 @@ export default function ShorelineApp() {
       ...depthDebug,
     },
     wind: { state: windState, visible: showWind, sample: windSample, cellKey: currentWindCellKey },
+    mapOrientation: { headingUp, ...mapOrientation },
     warning: {
       config: warningConfig,
       speedViolation: activeSpeedViolation,
@@ -1856,13 +1879,15 @@ export default function ShorelineApp() {
                 anchorRadiusMetres={warningConfig.powerSaveAnchorRadiusMetres}
                 anchorBreached={anchorWatchSnapshot.breached}
                 language={language}
+                headingUp={headingUp}
               />
-              <WindOverlay sample={windSample} visible={showWind} />
+              <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapOrientation.mapRotationDegrees} />
               {showWind && windSample && <span className="wind-source-credit">Wind: Open-Meteo</span>}
               <button className={`wind-map-control ${showWind ? "active" : ""} ${windState}`} type="button" aria-pressed={showWind} onClick={() => setShowWind((value) => !value)}>
                 <span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }} aria-hidden="true">↓</span>
                 <span><small>{copy.wind}</small><b>{windLabel}</b></span>
               </button>
+              <MapOrientationControl headingUp={headingUp} heading={fix?.heading} language={language} onToggle={() => setHeadingUp((value) => !value)} className="distance-orientation-control" />
               <div className="summary-primary-row distance-map-overlay">
                 <div className="distance-readout">
                   <span>{copy.nearestShore}</span>
@@ -1920,6 +1945,8 @@ export default function ShorelineApp() {
               windSample={windSample}
               showWind={showWind}
               onToggleWind={() => setShowWind((value) => !value)}
+              headingUp={headingUp}
+              onToggleHeadingUp={() => setHeadingUp((value) => !value)}
             />
           </div>
           <div hidden={trackerTab !== "weather"} className="weather-tab-panel">

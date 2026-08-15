@@ -66,6 +66,8 @@ import type { WarningConfig } from "../lib/warning-config";
 import type { GoNoGoState } from "../lib/navigation-display";
 import WindOverlay from "./wind-overlay";
 import { windCompassLabel, type WindSample } from "../lib/wind";
+import MapOrientationControl from "./map-orientation-control";
+import { getMapOrientation, rotateMapDelta, rotateMapPoint } from "../lib/map-orientation";
 
 type Language = "de" | "en";
 type Fix = GeoPoint & { speed: number | null; accuracy?: number; heading?: number | null };
@@ -290,6 +292,8 @@ export default function RoutePlanner({
   windSample,
   showWind,
   onToggleWind,
+  headingUp,
+  onToggleHeadingUp,
 }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
@@ -305,6 +309,8 @@ export default function RoutePlanner({
   windSample: WindSample | null;
   showWind: boolean;
   onToggleWind: () => void;
+  headingUp: boolean;
+  onToggleHeadingUp: () => void;
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
@@ -585,6 +591,7 @@ export default function RoutePlanner({
   const renderedRangeMetres = renderedMapView.rangeMetres;
   const renderedMetresPerLongitudeDegree = 111_320 * Math.cos((renderedCentre.latitude * Math.PI) / 180);
   const renderedPixelsPerMetre = centre / renderedRangeMetres;
+  const mapDataRangeMetres = renderedRangeMetres * Math.SQRT2;
   const renderingDetail = getRouteMapRenderingDetail(renderedRangeMetres);
   const renderedPoint = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre,
@@ -592,32 +599,33 @@ export default function RoutePlanner({
   }), [centre, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre]);
   const previewTransform = getRouteMapPreviewTransform(renderedCentre, renderedRangeMetres, mapCentre, viewRangeMetres, size);
   const staticMapTransform = `translate(${previewTransform.translateX} ${previewTransform.translateY}) translate(${centre} ${centre}) scale(${previewTransform.scale}) translate(${-centre} ${-centre})`;
-  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, renderedRangeMetres * 1.45, renderingDetail.maximumShorelineSegments) : [], [pack, renderedCentre.latitude, renderedCentre.longitude, renderedRangeMetres, renderingDetail.maximumShorelineSegments]);
-  const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(renderedCentre, renderedRangeMetres, 720) : [], [renderedCentre, renderedRangeMetres, showDepths]);
+  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, mapDataRangeMetres * 1.1, renderingDetail.maximumShorelineSegments) : [], [mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderingDetail.maximumShorelineSegments]);
+  const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(renderedCentre, mapDataRangeMetres, 720) : [], [mapDataRangeMetres, renderedCentre, showDepths]);
   const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
   const hatchPath = useMemo(() => {
     if (!pack) return "";
     const bandHeight = renderingDetail.hatchBandHeight;
-    const minimumLongitude = renderedCentre.longitude - renderedRangeMetres / renderedMetresPerLongitudeDegree;
-    const maximumLongitude = renderedCentre.longitude + renderedRangeMetres / renderedMetresPerLongitudeDegree;
+    const extent = centre * Math.SQRT2;
+    const minimumLongitude = renderedCentre.longitude - mapDataRangeMetres / renderedMetresPerLongitudeDegree;
+    const maximumLongitude = renderedCentre.longitude + mapDataRangeMetres / renderedMetresPerLongitudeDegree;
     let path = "";
-    for (let y = 0; y < size; y += bandHeight) {
+    for (let y = centre - extent; y < centre + extent; y += bandHeight) {
       const latitude = renderedCentre.latitude + (centre - y - bandHeight / 2) / (110_540 * renderedPixelsPerMetre);
       const intervals = getLandIntervalsAtLatitude(pack, latitude, minimumLongitude, maximumLongitude);
       for (const [west, east] of intervals) {
-        const left = Math.max(0, centre + (west - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
-        const right = Math.min(size, centre + (east - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
-        if (right > left) path += `M${left} ${y}H${right}V${Math.min(size, y + bandHeight + .5)}H${left}Z`;
+        const left = Math.max(centre - extent, centre + (west - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
+        const right = Math.min(centre + extent, centre + (east - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
+        if (right > left) path += `M${left} ${y}H${right}V${y + bandHeight + .5}H${left}Z`;
       }
     }
     return path;
-  }, [centre, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderedRangeMetres, renderingDetail.hatchBandHeight]);
+  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderingDetail.hatchBandHeight]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
-    getMapFeaturesInView(mapFeaturePack, renderedCentre, renderedRangeMetres).slice(0, renderingDetail.maximumLabels),
+    getMapFeaturesInView(mapFeaturePack, renderedCentre, mapDataRangeMetres).slice(0, renderingDetail.maximumLabels),
     renderedPoint,
     size,
     26,
-  ), [mapFeaturePack, renderedCentre, renderedPoint, renderedRangeMetres, renderingDetail.maximumLabels, size]);
+  ), [mapDataRangeMetres, mapFeaturePack, renderedCentre, renderedPoint, renderingDetail.maximumLabels, size]);
 
   useEffect(() => {
     depthLoadState.current = { key: bathymetryKey, loaded: 0, failed: 0 };
@@ -639,6 +647,9 @@ export default function RoutePlanner({
 
   const routePoints = useMemo(() => route?.points.map(renderedPoint).map(({ x, y }) => `${x},${y}`).join(" ") ?? "", [renderedPoint, route]);
   const boatPoint = fix ? point(fix) : null;
+  const mapRotationPivot = boatPoint ?? { x: centre, y: centre };
+  const { mapRotationDegrees, boatRotationDegrees } = getMapOrientation(fix?.heading, headingUp);
+  const mapOrientationTransform = `rotate(${mapRotationDegrees} ${mapRotationPivot.x} ${mapRotationPivot.y})`;
   const liveNearest = useMemo(() => pack && fix ? findNearestShore(pack, fix.longitude, fix.latitude) : null, [fix, pack]);
   const liveNearestPoint = liveNearest ? point(liveNearest) : null;
   const liveWarningRadius = warningConfig.distanceMetres * pixelsPerMetre;
@@ -669,14 +680,16 @@ export default function RoutePlanner({
       return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
     })}</g>
     <g className="map-feature-labels" aria-hidden="true">{mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
-      {label.kind === "restaurant" && <circle r="2.2" />}
-      <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+      <g transform={`rotate(${-mapRotationDegrees})`}>
+        {label.kind === "restaurant" && <circle r="2.2" />}
+        <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+      </g>
     </g>)}</g>
     {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
-    {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g>}
-    {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><circle r="10" /><text y="3.5">A</text></g>}
-    {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="11" /><text y="3.5">B</text></g>}
-  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, focusedPlace?.name, focusedPlacePoint, hatchPath, journeyState, mapLabels, renderedPoint, route?.mode, routePoints, segments, showDepths, startPoint, targetPoint]);
+    {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g></g>}
+    {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="10" /><text y="3.5">A</text></g></g>}
+    {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="11" /><text y="3.5">B</text></g></g>}
+  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, focusedPlace?.name, focusedPlacePoint, hatchPath, journeyState, mapLabels, mapRotationDegrees, renderedPoint, route?.mode, routePoints, segments, showDepths, startPoint, targetPoint]);
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
@@ -750,10 +763,11 @@ export default function RoutePlanner({
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / bounds.width * size;
     const y = (event.clientY - bounds.top) / bounds.height * size;
+    const northUpPoint = rotateMapPoint({ x, y }, mapRotationPivot, -mapRotationDegrees);
     const candidate = {
       pointerId: event.pointerId,
       startedAt: Date.now(),
-      point: routeMapPixelToGeo(mapCentre, viewRangeMetres, size, x, y),
+      point: routeMapPixelToGeo(mapCentre, viewRangeMetres, size, northUpPoint.x, northUpPoint.y),
     };
     longPressCandidate.current = candidate;
     setLongPressActive(true);
@@ -783,12 +797,13 @@ export default function RoutePlanner({
     const gesture = mapGesture.current;
     const deltaX = metrics.centroid.x - gesture.centroid.x;
     const deltaY = metrics.centroid.y - gesture.centroid.y;
+    const northUpDelta = rotateMapDelta({ x: deltaX, y: deltaY }, -mapRotationDegrees);
     if (Math.hypot(deltaX, deltaY) > ROUTE_MAP_MOVE_TOLERANCE_PX || Math.abs(metrics.distance - gesture.distance) > ROUTE_MAP_MOVE_TOLERANCE_PX) {
       gesture.moved = true;
       cancelLongPress();
     }
     scheduleMapView(
-      panRouteMapCentre(gesture.centre, gesture.range, size, deltaX, deltaY, clampMapRange),
+      panRouteMapCentre(gesture.centre, gesture.range, size, northUpDelta.x, northUpDelta.y, clampMapRange),
       activePointers.current.size >= 2
         ? pinchRouteViewRange(gesture.range, gesture.distance, metrics.distance, clampMapRange)
         : gesture.range,
@@ -999,21 +1014,23 @@ export default function RoutePlanner({
               <pattern id="routeLandHatch" width="12" height="12" patternUnits="userSpaceOnUse"><rect className="route-land-fill-mark" width="12" height="12" /><path className="route-land-hatch-mark" d="M-3 12 12-3M6 15 15 6" /></pattern>
             </defs>
             <rect className="route-water" width={size} height={size} />
-            <g className="route-static-map" transform={staticMapTransform}>
-              {staticMapLayers}
+            <g className="route-oriented-map" transform={mapOrientationTransform}>
+              <g className="route-static-map" transform={staticMapTransform}>
+                {staticMapLayers}
+              </g>
+              {activeJourney && boatPoint && liveShallow && <g className="route-shallow-zone" aria-hidden="true"><circle cx={boatPoint.x} cy={boatPoint.y} r={Math.max(10, liveShallowRadius)} /><text x={boatPoint.x} y={boatPoint.y + 25} transform={`rotate(${-mapRotationDegrees} ${boatPoint.x} ${boatPoint.y + 25})`}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text></g>}
+              {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
+                <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
+                {liveNearestPoint && <>
+                  <line className="route-nearest-line" x1={boatPoint.x} y1={boatPoint.y} x2={liveNearestPoint.x} y2={liveNearestPoint.y} />
+                  <circle className="route-nearest-point" cx={liveNearestPoint.x} cy={liveNearestPoint.y} r="3.5" />
+                </>}
+              </g>}
             </g>
-            {activeJourney && boatPoint && liveShallow && <g className="route-shallow-zone" aria-hidden="true"><circle cx={boatPoint.x} cy={boatPoint.y} r={Math.max(10, liveShallowRadius)} /><text x={boatPoint.x} y={boatPoint.y + 25}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text></g>}
-            {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
-              <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
-              {liveNearestPoint && <>
-                <line className="route-nearest-line" x1={boatPoint.x} y1={boatPoint.y} x2={liveNearestPoint.x} y2={liveNearestPoint.y} />
-                <circle className="route-nearest-point" cx={liveNearestPoint.x} cy={liveNearestPoint.y} r="3.5" />
-              </>}
-            </g>}
-            {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${fix?.heading ?? 0})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
+            {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${boatRotationDegrees})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
-        <WindOverlay sample={windSample} visible={showWind} />
+        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
         {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
           <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
@@ -1028,6 +1045,7 @@ export default function RoutePlanner({
           <button type="button" aria-label={copy.zoomIn} onClick={() => setViewRangeMetres((value) => clampMapRange(value / 1.7))}>+</button>
           <button type="button" aria-label={copy.zoomOut} onClick={() => setViewRangeMetres((value) => clampMapRange(value * 1.7))}>−</button>
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
+          <MapOrientationControl headingUp={headingUp} heading={fix?.heading} language={language} onToggle={onToggleHeadingUp} className="route-orientation-control" />
         </div>
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
         <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}{showWind && windSample ? " · Wind: Open-Meteo" : ""}</div>
