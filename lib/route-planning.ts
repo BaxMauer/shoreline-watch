@@ -40,6 +40,11 @@ export type RoutePlanningResult = { route: PlannedRoute; failure?: never } | { r
 const METRES_PER_LATITUDE_DEGREE = 110_540;
 const KNOTS_TO_METRES_PER_SECOND = 0.514444;
 const MAXIMUM_ROUTE_VALIDATION_SPACING_METRES = 40;
+export const ROUTE_CLEARANCE_MARGIN_METRES = 50;
+
+export function getPreferredRouteClearanceMetres(clearanceMetres: number) {
+  return Math.max(0, Number.isFinite(clearanceMetres) ? clearanceMetres : 0) + ROUTE_CLEARANCE_MARGIN_METRES;
+}
 
 function longitudeScale(latitude: number) {
   return 111_320 * Math.cos((latitude * Math.PI) / 180);
@@ -61,6 +66,31 @@ export function geoBearing(left: GeoPoint, right: GeoPoint) {
 
 export function formatRouteDistance(distanceMetres: number) {
   return distanceMetres / 1_852;
+}
+
+/**
+ * Safety is a constraint, travel time is the optimizer. A route that reaches
+ * the requested clearance plus the 50 m planning margin is therefore compared
+ * by ETA only. If the margin is physically impossible, the widest bottleneck
+ * wins first; ETA breaks ties between equally safe alternatives.
+ */
+export function comparePlannedRoutes(left: PlannedRoute, right: PlannedRoute, clearanceMetres: number) {
+  const preferredClearance = getPreferredRouteClearanceMetres(clearanceMetres);
+  // Conditional passages already carry a manually verified centreline through
+  // their unavoidable bottleneck. Treat that centreline as the safest possible
+  // geometry for candidate ordering, then let ETA decide whether it beats the
+  // open-water alternative.
+  const leftClearance = left.passageIds.length > 0
+    ? preferredClearance
+    : Math.min(preferredClearance, left.minimumShoreDistanceMetres);
+  const rightClearance = right.passageIds.length > 0
+    ? preferredClearance
+    : Math.min(preferredClearance, right.minimumShoreDistanceMetres);
+  const clearanceDifference = leftClearance - rightClearance;
+  if (Math.abs(clearanceDifference) > 1) return clearanceDifference > 0 ? -1 : 1;
+  const timeDifference = left.estimatedSeconds - right.estimatedSeconds;
+  if (Math.abs(timeDifference) > 0.01) return timeDifference < 0 ? -1 : 1;
+  return left.distanceMetres - right.distanceMetres;
 }
 
 export function getRouteGridResolutions(widthMetres: number, heightMetres: number, clearanceMetres: number) {
@@ -431,6 +461,7 @@ export function planWaterRoute(
     maximumDistanceMetres: rawOptions.maximumDistanceMetres ?? 120_000,
     conditionalPassagesEnabled: rawOptions.conditionalPassagesEnabled ?? true,
   };
+  const preferredClearance = getPreferredRouteClearanceMetres(options.clearanceMetres);
   const insideBounds = (point: GeoPoint) => point.longitude >= pack.bounds[0] && point.longitude <= pack.bounds[2]
     && point.latitude >= pack.bounds[1] && point.latitude <= pack.bounds[3];
   if (!insideBounds(start) || !insideBounds(destination)) return { failure: "outside-region" };
@@ -496,8 +527,11 @@ export function planWaterRoute(
       column: Math.max(0, Math.min(columns - 1, Math.round((point.x - minimumX) / cellSize))),
       row: Math.max(0, Math.min(rows - 1, Math.round((point.y - minimumY) / cellSize))),
     });
-    const endpointGrace = Math.max(options.clearanceMetres * 1.2, cellSize * 1.8);
-    const routedClearance = options.clearanceMetres + cellSize * 0.5;
+    const endpointGrace = Math.max(preferredClearance * 1.2, cellSize * 1.8);
+    // The fixed 50 m margin is the desired navigational clearance. Segment
+    // validation below adds its own sampling guard; inflating node clearance
+    // by half a cell would incorrectly erase real but narrow channels.
+    const routedClearance = preferredClearance;
     const nodeCache = new Map<number, NodeInfo>();
     const landIntervalsByRow = new Map<number, LongitudeInterval[]>();
     const minimumLongitude = toGeo({ x: minimumX - cellSize, y: 0 }).longitude;
@@ -617,11 +651,12 @@ export function planWaterRoute(
     for (const candidate of startCandidates) {
       // Keep a chart-adjusted start expensive so it is used only when the live
       // fix genuinely needs the bounded one-time recovery.
-      const cost = startCorrectionDistance * 6 + candidate.connectionDistance;
+      const cruiseSpeed = options.cruiseSpeedKnots * KNOTS_TO_METRES_PER_SECOND;
+      const cost = (startCorrectionDistance * 6 + candidate.connectionDistance) / cruiseSpeed;
       if (cost >= costs[candidate.key]) continue;
       costs[candidate.key] = cost;
       previous[candidate.key] = -2;
-      open.push({ key: candidate.key, score: cost + geoDistanceMetres(node(candidate.key).point, destination) });
+      open.push({ key: candidate.key, score: cost + geoDistanceMetres(node(candidate.key).point, destination) / cruiseSpeed });
     }
     const closed = new Uint8Array(totalNodeCount);
     const directions = [-1, 0, 1];
@@ -678,21 +713,30 @@ export function planWaterRoute(
         // in water. Requiring both neighbouring square cells to be water used
         // to reject real angled channels and Croatian island narrows.
         const stepDistance = geoDistanceMetres(current.point, next.point);
-        const proximity = options.clearanceMetres <= 0 ? 0 : Math.max(0, 1 - Math.min(current.shoreDistance, next.shoreDistance) / Math.max(1, options.clearanceMetres));
+        const edgeClearance = Math.min(current.shoreDistance, next.shoreDistance);
+        const preferredShortfall = Math.max(0, 1 - edgeClearance / Math.max(1, routedClearance));
         // Passage hints represent intentionally selected narrow waterways. Do
         // not apply the generic shoreline-avoidance multiplier to their
         // validated centreline, or A* will always prefer a many-mile detour.
         // The resulting route is still measured and labelled restricted.
         const passageEdge = currentEntry.key >= gridNodeCount || nextKey >= gridNodeCount;
-        // Restricted cells remain expensive, but not so expensive that A*
-        // prefers a many-mile open-sea detour over an explicitly enabled,
-        // chart-verified conditional passage such as the Tisno bridge.
-        const penalty = passageEdge ? 1 : restricted ? (allowRestricted ? 3.25 : 4) : 1 + proximity * 1.5;
-        const nextCost = costs[currentEntry.key] + stepDistance * penalty;
+        // Actual travel seconds remain the base cost. The safety multiplier
+        // only guides ordinary raster edges toward their widest clearance.
+        const edgeSpeedKnots = options.speedWarningEnabled && edgeClearance < options.clearanceMetres
+          ? options.nearShoreSpeedKnots
+          : options.cruiseSpeedKnots;
+        const travelSeconds = stepDistance / (edgeSpeedKnots * KNOTS_TO_METRES_PER_SECOND);
+        // Below the preferred band, a clearance-field penalty pulls the path
+        // toward the medial axis of a channel. Both banks then contribute the
+        // same limiting distance, so a symmetric bottleneck is crossed midway.
+        const penalty = passageEdge ? 1 : restricted ? 1 + preferredShortfall * 4 : 1;
+        const nextCost = costs[currentEntry.key] + travelSeconds * penalty;
         if (nextCost >= costs[nextKey]) continue;
         costs[nextKey] = nextCost;
         previous[nextKey] = currentEntry.key;
-        open.push({ key: nextKey, score: nextCost + geoDistanceMetres(next.point, destination) });
+        const optimisticSeconds = geoDistanceMetres(next.point, destination)
+          / (options.cruiseSpeedKnots * KNOTS_TO_METRES_PER_SECOND);
+        open.push({ key: nextKey, score: nextCost + optimisticSeconds });
       }
     }
 
@@ -730,14 +774,22 @@ export function planWaterRoute(
       const from = rawPoints[fromIndex];
       const to = rawPoints[toIndex];
       if (routeSegmentCrossesShoreline(pack, from, to) || crossesBlockedPassageGate(from, to)) return false;
-      if (allowRestricted) return true;
       const distance = geoDistanceMetres(from, to);
       const samples = Math.max(1, Math.ceil(distance / MAXIMUM_ROUTE_VALIDATION_SPACING_METRES));
       const spacing = distance / samples;
+      const rawClearance = allowRestricted
+        ? rawPoints.slice(fromIndex, toIndex + 1).reduce(
+          (minimum, point) => Math.min(minimum, shorelineDistanceWithin(pack, point, routedClearance * 1.8)),
+          routedClearance,
+        )
+        : routedClearance;
       for (let sample = 0; sample < samples; sample += 1) {
         const samplePoint = interpolate(from, to, (sample + 0.5) / samples);
         if (nearEndpoint(samplePoint)) continue;
-        const required = routedClearance + spacing / 2;
+        // A shortcut may never reduce the clearance already achieved by A*.
+        // This keeps the centered medial-axis section of an unavoidable
+        // bottleneck instead of smoothing it back toward either shoreline.
+        const required = Math.max(0, rawClearance - cellSize * 0.35) + spacing / 2;
         if (shorelineDistanceWithin(pack, samplePoint, required) + 0.01 < required) return false;
       }
       return true;
@@ -752,8 +804,24 @@ export function planWaterRoute(
         anchor = next;
       }
     }
-    if (!routeGeometryIsWaterOnly(pack, simplified, startIsLand ? startSnapTolerance : 0)) return null;
-    return { points: simplified, passageIds: [...usedPassageIds] };
+    const compact: GeoPoint[] = [simplified[0]];
+    for (let index = 1; index < simplified.length - 1; index += 1) {
+      const point = simplified[index];
+      const protectedPoint = (startAnchor && geoDistanceMetres(startAnchor, point) < 0.5)
+        || ROUTE_PASSAGE_HINTS.some((passage) => passage.points.some((passagePoint) => geoDistanceMetres(passagePoint, point) < 0.5));
+      const previousPoint = compact.at(-1) as GeoPoint;
+      const nextPoint = simplified[index + 1];
+      const deviation = distanceToSegment(point.longitude, point.latitude, [
+        previousPoint.longitude,
+        previousPoint.latitude,
+        nextPoint.longitude,
+        nextPoint.latitude,
+      ]).distance;
+      if (protectedPoint || deviation > 0.5) compact.push(point);
+    }
+    compact.push(simplified.at(-1) as GeoPoint);
+    if (!routeGeometryIsWaterOnly(pack, compact, startIsLand ? startSnapTolerance : 0)) return null;
+    return { points: compact, passageIds: [...usedPassageIds] };
   };
 
   const searchAreas = margins.map((margin) => {
@@ -763,23 +831,19 @@ export function planWaterRoute(
       - Math.max(packSouth, Math.min(startLocal.y, destinationLocal.y) - margin);
     return { margin, width, height, resolutions: getRouteGridResolutions(width, height, options.clearanceMetres) };
   });
-  type MeasuredCandidate = { geometry: RouteSearchGeometry; route: PlannedRoute; score: number };
+  type MeasuredCandidate = { geometry: RouteSearchGeometry; route: PlannedRoute };
   const measuredCandidates: MeasuredCandidate[] = [];
   const bestMeasuredCandidate = () => measuredCandidates.reduce<MeasuredCandidate | null>(
-    (best, candidate) => !best || candidate.score < best.score ? candidate : best,
+    (best, candidate) => !best || comparePlannedRoutes(candidate.route, best.route, options.clearanceMetres) < 0
+      ? candidate
+      : best,
     null,
   );
   const consider = (geometry: RouteSearchGeometry | null) => {
     if (!geometry) return;
     const route = buildRoute(pack, geometry.points, options, "restricted", geometry.passageIds);
     route.mode = route.restrictedDistanceMetres > 0 || route.passageIds.length > 0 ? "restricted" : "clearance";
-    // Prefer the shortest practical route while retaining an explicit cost
-    // for time spent inside the configured clearance band. A conditional
-    // passage has a small extra cost so an equally short open-water route wins.
-    const score = route.distanceMetres
-      + route.restrictedDistanceMetres * 0.35
-      + route.passageIds.length * 150;
-    measuredCandidates.push({ geometry, route, score });
+    measuredCandidates.push({ geometry, route });
   };
 
   // Compare strict and restricted A* candidates instead of returning the
@@ -796,7 +860,9 @@ export function planWaterRoute(
   // Refine only bounded search spaces. The fine pass improves real narrows
   // without allowing a whole-archipelago raster to stall a phone.
   const coarseBest = bestMeasuredCandidate();
-  if (!coarseBest || coarseBest.route.distanceMetres > directDistance * 2.25) {
+  if (!coarseBest
+    || coarseBest.route.distanceMetres > directDistance * 2.25
+    || coarseBest.route.minimumShoreDistanceMetres < preferredClearance + ROUTE_CLEARANCE_MARGIN_METRES) {
     for (const { margin, width, height, resolutions } of searchAreas) {
       const fine = resolutions.at(-1) as number;
       if (fine === resolutions[0] || width * height / (fine * fine) > 85_000) continue;
