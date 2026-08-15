@@ -161,7 +161,7 @@ test("active route view becomes a distance-first navigation cockpit", () => {
   assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*auto[^}]*aspect-ratio:\s*1 \/ 1/s);
   assert.match(css, /\.route-static-map\s*\{[^}]*will-change:\s*transform/s);
   assert.doesNotMatch(css, /\.route-live-(?:distance|guidance|go-no-go)\s*\{[^}]*position:\s*absolute/s);
-  assert.match(css, /\.journey-active \.map-feature-label, \.journey-arrived \.map-feature-label\s*\{[^}]*display:\s*none/s);
+  assert.doesNotMatch(css, /\.journey-(?:active|arrived) \.map-feature-label[^}]*display:\s*none/s);
   assert.match(css, /\.journey-active \.route-screen-header, \.journey-arrived \.route-screen-header\s*\{[^}]*display:\s*none/s);
 });
 

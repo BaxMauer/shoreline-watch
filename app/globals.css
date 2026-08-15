@@ -631,7 +631,6 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .journey-active .route-map-wrap, .journey-arrived .route-map-wrap { width: 100%; max-width: 520px; height: auto; aspect-ratio: 1 / 1; margin-inline: auto; border-radius: 20px; }
 .journey-active .route-map, .journey-arrived .route-map { cursor: grab; }
 .journey-active .route-map:active, .journey-arrived .route-map:active { cursor: grabbing; }
-.journey-active .map-feature-label, .journey-arrived .map-feature-label { display: none; }
 .journey-active .route-controls, .journey-arrived .route-controls { display: none; }
 .journey-active .route-zoom, .journey-arrived .route-zoom { top: 10px; display: flex; }
 .journey-active .route-zoom button, .journey-arrived .route-zoom button { width: 32px; height: 32px; }
