@@ -27,7 +27,7 @@ import RoutePlanner from "./route-planner";
 import OfflinePackageManager from "./offline-package-manager";
 import WindOverlay from "./wind-overlay";
 import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
-import { windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
+import { buildWindRequestUrl, parseWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
   createStationaryState,
   distanceFromStationaryReference,
@@ -944,12 +944,12 @@ export default function ShorelineApp() {
     const controller = new AbortController();
     const load = () => {
       setWindState("loading");
-      fetch(`/api/wind?latitude=${windLatitude}&longitude=${windLongitude}`, { signal: controller.signal, cache: "no-store" })
+      fetch(buildWindRequestUrl({ latitude: windLatitude, longitude: windLongitude }), { signal: controller.signal, cache: "no-store" })
         .then(async (response) => {
           if (!response.ok) throw new Error("Wind unavailable");
-          return response.json() as Promise<{ sample: WindSample | null }>;
+          return parseWindSample(await response.json());
         })
-        .then(({ sample }) => {
+        .then((sample) => {
           if (!sample || controller.signal.aborted) throw new Error("Wind unavailable");
           setWindSample(sample);
           setWindState("ready");
