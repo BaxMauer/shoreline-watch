@@ -309,6 +309,7 @@ export default function RoutePlanner({
   const longPressTimer = useRef<number | null>(null);
   const longPressCandidate = useRef<{ pointerId: number; startedAt: number; point: GeoPoint } | null>(null);
   const placeSearchController = useRef<AbortController | null>(null);
+  const pendingPlaceTarget = useRef<PlaceSearchResult | null>(null);
   const depthLoadState = useRef({ key: "", loaded: 0, failed: 0 });
   const routeEditor = useRef<HTMLDetailsElement | null>(null);
 
@@ -441,6 +442,7 @@ export default function RoutePlanner({
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
     const destination = resolvePlaceSearchTarget(pack, result);
+    pendingPlaceTarget.current = pack ? null : result;
     setFocusedPlace(result);
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
@@ -450,6 +452,13 @@ export default function RoutePlanner({
       setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
     }
   };
+
+  useEffect(() => {
+    const result = pendingPlaceTarget.current;
+    if (!pack || !result) return;
+    pendingPlaceTarget.current = null;
+    selectTarget(resolvePlaceSearchTarget(pack, result));
+  }, [pack, selectTarget]);
 
   const runPlaceSearch = async () => {
     const query = placeQuery.trim();

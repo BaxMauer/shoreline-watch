@@ -213,6 +213,8 @@ test("place search converts land centroids into navigable water targets", async 
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result\)/);
   assert.match(planner, /selectTarget\(destination\)/);
+  assert.match(planner, /pendingPlaceTarget\.current = pack \? null : result/);
+  assert.match(planner, /selectTarget\(resolvePlaceSearchTarget\(pack, result\)\)/);
 });
 
 test("route destination requires a stationary long press or entered coordinates", async () => {

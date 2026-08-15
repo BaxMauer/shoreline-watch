@@ -106,7 +106,8 @@ test("sunlight mode provides a dedicated high-contrast instrument", () => {
 
 test("distance digits cannot collide on a narrow phone", () => {
   assert.match(css, /\.distance-readout strong\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
-  assert.match(css, /\.distance-readout strong\s*\{[^}]*5\.6rem[^}]*28vw[^}]*8\.5rem/s);
+  assert.match(css, /\.distance-readout\s*\{[^}]*grid-column:\s*1 \/ -1/s);
+  assert.match(css, /\.distance-readout strong\s*\{[^}]*11\.2rem[^}]*56vw[^}]*17rem/s);
   assert.match(css, /\.distance-readout\s*\{[^}]*container-type:\s*inline-size/s);
   assert.match(css, /\.distance-readout strong\s*\{[^}]*font-size:\s*min\([^}]*100cqi/s);
   assert.match(css, /\.distance-readout strong\s*\{[^}]*overflow:\s*visible/s);
