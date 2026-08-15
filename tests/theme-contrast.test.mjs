@@ -105,6 +105,18 @@ test("sunlight mode provides a dedicated high-contrast instrument", () => {
   assert.match(css, /\.sunlight-mode\s*\{[^}]*--shore-stroke:\s*#385f64/s);
 });
 
+test("weather cards keep dedicated readable colors in every visual mode", () => {
+  assert.match(css, /\.weather-panel\s*\{[^}]*--weather-ink:\s*#edf5f1[^}]*--weather-muted:\s*#a9c1bf[^}]*color:\s*var\(--weather-ink\)/s);
+  assert.match(css, /\.weather-condition-copy > strong\s*\{[^}]*color:\s*var\(--weather-ink\)/s);
+  assert.match(css, /\.weather-primary-grid strong\s*\{[^}]*color:\s*var\(--weather-ink\)/s);
+  assert.match(css, /\.weather-details-grid strong\s*\{[^}]*color:\s*var\(--weather-ink\)/s);
+  assert.match(css, /\.theme-xp \.weather-panel\s*\{[^}]*--weather-ink:\s*#10213b[^}]*--weather-muted:\s*#4f5966/s);
+  assert.match(css, /\.theme-nautical \.weather-panel\s*\{[^}]*--weather-ink:\s*#152f3b[^}]*--weather-muted:\s*#655b43/s);
+  assert.match(css, /\.sunlight-mode \.weather-panel\s*\{[^}]*--weather-ink:\s*#071b22[^}]*--weather-muted:\s*#49696b[^}]*#f8fbfa/s);
+  assert.ok(contrast("#071b22", "#f8fbfa") >= 12);
+  assert.ok(contrast("#49696b", "#f8fbfa") >= 5);
+});
+
 test("distance digits cannot collide on a narrow phone", () => {
   assert.match(css, /\.distance-readout strong\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
   assert.match(css, /\.distance-readout\s*\{[^}]*grid-column:\s*1 \/ -1/s);
