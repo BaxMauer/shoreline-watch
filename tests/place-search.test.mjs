@@ -78,3 +78,20 @@ test("an island search result resolves to nearby water instead of its land centr
   });
   assert.ok(route.route, route.failure);
 });
+
+test("an island target uses the water-facing side nearest the route start", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const ljutac = { latitude: 43.789751, longitude: 15.659253 };
+  const start = { latitude: 43.7902, longitude: 15.6596 };
+  const target = resolvePlaceSearchTarget(coastline, ljutac, undefined, start);
+
+  assert.equal(isPointOnLand(coastline, target.longitude, target.latitude), false);
+  assert.ok(geoDistanceMetres(start, target) < geoDistanceMetres(start, ljutac));
+  const result = planWaterRoute(coastline, start, target, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  });
+  assert.ok(result.route, result.failure);
+});

@@ -56,10 +56,11 @@ test("tracking instrument is borderless and the coastline is continuous", () => 
   assert.doesNotMatch(closeCoast, /stroke-dasharray/);
 });
 
-test("land is hatched, clipped to the plot, and painted as one background path", () => {
+test("land is hatched across the complete plot and painted as one background path", () => {
   assert.match(app, /<pattern id="landHatch"[^>]*>[\s\S]*className="land-hatch-mark"/);
-  assert.match(app, /<clipPath id="plotClip"><circle[^>]*r="166"/);
-  assert.match(app, /className="land-hatch-layer"[^>]*clipPath="url\(#plotClip\)"/);
+  assert.doesNotMatch(app, /<clipPath id="plotClip"/);
+  assert.match(app, /className="land-hatch-layer" aria-hidden="true"/);
+  assert.doesNotMatch(app, /clipPath="url\(#plotClip\)"/);
   assert.match(app, /landHatchPath && <path className="land-hatch-area" d=\{landHatchPath\}/);
   assert.match(css, /\.land-hatch-area\s*\{[^}]*fill:\s*url\(#landHatch\)/s);
   assert.match(css, /\.land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)/s);
@@ -135,7 +136,7 @@ test("distance, status, GO, and warning cards are sized for viewing from afar", 
   assert.match(css, /\.instrument-meta\s*\{[^}]*min-height:\s*48px[^}]*font-variant-numeric:\s*tabular-nums/s);
 });
 
-test("live map uses dedicated rows without persistent overlays", () => {
+test("live map keeps the distance instrument as a readable map overlay", () => {
   assert.match(css, /\.is-tracking \.topbar\s*\{[^}]*min-height:\s*38px/s);
   assert.match(css, /\.instrument\s*\{[^}]*display:\s*grid[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto/s);
   assert.match(css, /\.map-stage\s*\{[^}]*position:\s*relative[^}]*overflow:\s*hidden/s);
@@ -143,7 +144,7 @@ test("live map uses dedicated rows without persistent overlays", () => {
   assert.match(css, /\.instrument-footer\s*\{[^}]*position:\s*relative/s);
   assert.match(css, /\.current-depth-footer strong\s*\{[^}]*var\(--aqua\)/s);
   assert.match(css, /\.current-speed-footer strong\s*\{[^}]*var\(--aqua\)/s);
-  assert.doesNotMatch(css, /\.distance-readout\s*\{[^}]*position:\s*absolute/s);
+  assert.match(css, /\.distance-map-overlay\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s);
 });
 
 test("active route view exposes compact live shoreline and depth readouts", () => {

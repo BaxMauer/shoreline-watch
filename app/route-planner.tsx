@@ -24,6 +24,7 @@ import {
   formatRouteEta,
   getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
+  getRouteMapRenderingDetail,
   getRouteReadinessState,
   hasReachedRouteTarget,
   parseRouteCoordinate,
@@ -441,9 +442,9 @@ export default function RoutePlanner({
   }, [calculate, fitRoute, target]);
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
-    const destination = resolvePlaceSearchTarget(pack, result);
+    const destination = resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
     pendingPlaceTarget.current = pack ? null : result;
-    setFocusedPlace(result);
+    setFocusedPlace({ ...result, ...destination });
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
     selectTarget(destination);
@@ -457,8 +458,10 @@ export default function RoutePlanner({
     const result = pendingPlaceTarget.current;
     if (!pack || !result) return;
     pendingPlaceTarget.current = null;
-    selectTarget(resolvePlaceSearchTarget(pack, result));
-  }, [pack, selectTarget]);
+    const destination = resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
+    setFocusedPlace((current) => current ? { ...current, ...destination } : current);
+    selectTarget(destination);
+  }, [effectiveStart, pack, selectTarget]);
 
   const runPlaceSearch = async () => {
     const query = placeQuery.trim();
@@ -517,16 +520,17 @@ export default function RoutePlanner({
   const mapCentre = useMemo(() => viewCentre ?? fix ?? manualStart ?? target ?? { longitude: 15.55, latitude: 43.8 }, [fix, manualStart, target, viewCentre]);
   const metresPerLongitudeDegree = 111_320 * Math.cos((mapCentre.latitude * Math.PI) / 180);
   const pixelsPerMetre = centre / viewRangeMetres;
+  const renderingDetail = getRouteMapRenderingDetail(viewRangeMetres);
   const point = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (value.latitude - mapCentre.latitude) * 110_540 * pixelsPerMetre,
   }), [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
-  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, 5_000) : [], [mapCentre.latitude, mapCentre.longitude, pack, viewRangeMetres]);
+  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, renderingDetail.maximumShorelineSegments) : [], [mapCentre.latitude, mapCentre.longitude, pack, renderingDetail.maximumShorelineSegments, viewRangeMetres]);
   const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(mapCentre, viewRangeMetres, 720) : [], [mapCentre, showDepths, viewRangeMetres]);
   const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
   const hatchPath = useMemo(() => {
     if (!pack) return "";
-    const bandHeight = 1.5;
+    const bandHeight = renderingDetail.hatchBandHeight;
     const minimumLongitude = mapCentre.longitude - viewRangeMetres / metresPerLongitudeDegree;
     const maximumLongitude = mapCentre.longitude + viewRangeMetres / metresPerLongitudeDegree;
     let path = "";
@@ -540,7 +544,7 @@ export default function RoutePlanner({
       }
     }
     return path;
-  }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, viewRangeMetres]);
+  }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, renderingDetail.hatchBandHeight, viewRangeMetres]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
     getMapFeaturesInView(mapFeaturePack, mapCentre, viewRangeMetres),
     point,

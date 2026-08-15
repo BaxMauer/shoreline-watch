@@ -565,11 +565,10 @@ function ProximityPlot({
           <rect className="land-fill-mark" width="12" height="12" />
           <path className="land-hatch-mark" d="M-3 12 12-3M6 15 15 6" />
         </pattern>
-        <clipPath id="plotClip"><circle cx={centre} cy={centre} r="166" /></clipPath>
       </defs>
       <circle cx={centre} cy={centre} r="166" fill="url(#plotGlow)" />
 
-      <g className="land-hatch-layer" aria-hidden="true" clipPath="url(#plotClip)">
+      <g className="land-hatch-layer" aria-hidden="true">
         {landHatchPath && <path className="land-hatch-area" d={landHatchPath} />}
       </g>
 
@@ -1679,19 +1678,6 @@ export default function ShorelineApp() {
                 <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
                 <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
               </div>}
-              <div className="summary-primary-row">
-                <div className="distance-readout">
-                  <span>{copy.nearestShore}</span>
-                  <span className="distance-value">
-                    <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
-                    <small>{gpsSignalProblem && nearest ? copy.lastKnown : nearest ? distanceUnit : copy.acquiring}</small>
-                  </span>
-                </div>
-                <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
-                  <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
-                  <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
-                </div>
-              </div>
             </div>
 
             <div className="map-stage">
@@ -1707,6 +1693,19 @@ export default function ShorelineApp() {
                 warningDistanceMetres={warningConfig.distanceMetres}
                 language={language}
               />
+              <div className="summary-primary-row distance-map-overlay">
+                <div className="distance-readout">
+                  <span>{copy.nearestShore}</span>
+                  <span className="distance-value">
+                    <strong className={!nearest ? "placeholder" : ""}>{formatDistance(nearest?.distance ?? null, language)}</strong>
+                    <small>{gpsSignalProblem && nearest ? copy.lastKnown : nearest ? distanceUnit : copy.acquiring}</small>
+                  </span>
+                </div>
+                <div className={`go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+                  <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+                  <b>{goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</b>
+                </div>
+              </div>
             </div>
 
             <div className="instrument-footer">
