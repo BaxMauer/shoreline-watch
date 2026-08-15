@@ -165,7 +165,7 @@ test("active trip map mirrors the distance instrument's clearance geometry", asy
   assert.match(planner, /findNearestShore\(pack, fix\.longitude, fix\.latitude\)/);
   assert.match(planner, /className="route-warning-ring"/);
   assert.match(planner, /className="route-nearest-line"/);
-  assert.match(planner, /className="route-distance-label"/);
+  assert.doesNotMatch(planner, /className="route-distance-label"/);
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
   assert.match(app, /<RoutePlanner[\s\S]*goNoGoState=\{goNoGoState\}/);
 });
@@ -336,7 +336,7 @@ test("route planning keeps secondary controls in compact disclosure panels", asy
   assert.match(planner, /<details ref=\{routeEditor\} className="route-panel route-editor">/);
   assert.match(planner, /<details className="route-panel route-options">/);
   assert.match(planner, /<details className="route-notices">/);
-  assert.match(planner, /preserveAspectRatio="none" role="img"/);
+  assert.match(planner, /preserveAspectRatio="xMidYMid meet" role="img"/);
   assert.doesNotMatch(planner, /route-map-heading|route-depth-credit/);
 });
 
@@ -366,6 +366,8 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /className="route-live-distance"/);
   assert.match(planner, /route-live-go-no-go \$\{goNoGoState\}/);
   assert.match(planner, /className="route-live-footer"/);
+  assert.match(planner, /<small>{copy\.chartDepth}<\/small>/);
+  assert.match(planner, /<small>{copy\.currentSpeed}<\/small>/);
   assert.match(planner, /goNoGoState: GoNoGoState/);
   assert.match(planner, /shoreDistanceMetres === null/);
   assert.match(planner, /currentDepthState === "ready"/);
