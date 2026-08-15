@@ -21,6 +21,7 @@ import {
 } from "../lib/nautical-weather";
 import type { GeoPoint } from "../lib/route-planning";
 import { getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
+import type { MapFeaturePack } from "../lib/map-features";
 import WeatherChart from "./weather-chart";
 import WeatherMap from "./weather-map";
 
@@ -33,6 +34,7 @@ type Props = {
   language: "de" | "en";
   online: boolean;
   coastline: CoastlinePack | null;
+  mapFeatures: MapFeaturePack | null;
 };
 
 const TEXT = {
@@ -190,7 +192,7 @@ function riskCopy(level: NauticalConditionLevel, copy: { good: string; caution: 
       : { title: copy.good, detail: copy.goodDetail };
 }
 
-export default function NauticalWeather({ point, active, language, online, coastline }: Props) {
+export default function NauticalWeather({ point, active, language, online, coastline, mapFeatures }: Props) {
   const copy = TEXT[language];
   const [forecast, setForecast] = useState<NauticalWeatherForecast | null>(null);
   const [mapForecast, setMapForecast] = useState<NauticalWeatherMapForecast | null>(null);
@@ -410,7 +412,7 @@ export default function NauticalWeather({ point, active, language, online, coast
       <div className="weather-metric-tabs" role="tablist" aria-label={copy.weatherMap}>
         {metricOptions.map((entry) => <button key={entry.id} type="button" role="tab" aria-selected={visualMetric === entry.id} className={visualMetric === entry.id ? "active" : ""} onClick={() => setSelectedMetric(entry.id)}><span aria-hidden="true">{entry.symbol}</span>{entry.label}</button>)}
       </div>
-      {mapLocations.length && selectedMapTime ? <WeatherMap point={point} locations={mapLocations} segments={mapSegments} metric={visualMetric} time={selectedMapTime} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} language={language} loading={mapState === "loading"} /> : <div className="weather-map-placeholder"><span className="weather-loader" aria-hidden="true"/><small>{mapState === "error" ? copy.unavailable : copy.mapLoading}</small></div>}
+      {mapLocations.length && selectedMapTime ? <WeatherMap point={point} locations={mapLocations} segments={mapSegments} coastline={coastline} mapFeatures={mapFeatures} metric={visualMetric} metricLabel={visualMetricConfig.label} time={selectedMapTime} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} language={language} loading={mapState === "loading"} /> : <div className="weather-map-placeholder"><span className="weather-loader" aria-hidden="true"/><small>{mapState === "error" ? copy.unavailable : copy.mapLoading}</small></div>}
     </section>
 
     {bestWindow && <article className={`weather-window ${bestWindow.level}`}>

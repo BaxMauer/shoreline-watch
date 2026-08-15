@@ -240,6 +240,10 @@ test("tracking exposes distance, route, and nautical weather tabs", async () => 
   assert.match(chart, /onPointerDown=\{selectFromPointer\}/);
   assert.match(weatherMap, /weather-map-heat/);
   assert.match(weatherMap, /weather-map-coast/);
+  assert.match(weatherMap, /weather-map-land/);
+  assert.match(weatherMap, /weather-map-labels/);
+  assert.match(weatherMap, /weather-map-vectors/);
+  assert.match(weatherMap, /weather-map-inspector/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(styles, /weather-wave/);
   assert.match(planner, /new Worker\(/);
@@ -249,6 +253,24 @@ test("tracking exposes distance, route, and nautical weather tabs", async () => 
   assert.equal((planner.match(/fetch\(/g) ?? []).length, 1);
   assert.match(planner, /fetch\(`\/api\/places/);
   assert.doesNotMatch(planner, /XMLHttpRequest|WebSocket/);
+});
+
+test("weather map prioritizes geography and one selected value over grid bubbles", async () => {
+  const weatherMap = await readFile(new URL("../app/weather-map.tsx", import.meta.url), "utf8");
+  const weather = await readFile(new URL("../app/nautical-weather.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const layers = ["weather-map-heat", "weather-map-land", "weather-map-coast", "weather-map-labels", "weather-map-vectors", "weather-map-hit-areas", "weather-map-boat"]
+    .map((className) => weatherMap.indexOf(`className="${className}"`));
+  assert.ok(layers.every((position) => position >= 0));
+  assert.deepEqual(layers, layers.toSorted((left, right) => left - right));
+  assert.match(weatherMap, /getLandIntervalsAtLatitude/);
+  assert.match(weatherMap, /placeMapFeatureLabels/);
+  assert.match(weatherMap, /role="button" tabIndex=\{0\}/);
+  assert.match(weatherMap, /10 km/);
+  assert.doesNotMatch(weatherMap, /weather-map-values/);
+  assert.match(weather, /mapFeatures=\{mapFeatures\}/);
+  assert.match(styles, /\.weather-map-land\s*\{[^}]*weather-map-land-hatch/s);
+  assert.match(styles, /\.weather-map-hit-areas g:focus-visible/s);
 });
 
 test("route planning applies warning distance and near-shore speed settings", async () => {
