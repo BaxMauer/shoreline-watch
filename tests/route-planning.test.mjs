@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import { isPointOnLand } from "../lib/shoreline.ts";
 import { ROUTE_PASSAGE_HINTS } from "../lib/route-passages.ts";
 import {
+  comparePlannedRoutes,
   formatRouteDistance,
+  getPreferredRouteClearanceMetres,
   getStartFixCorrectionTolerance,
   getRouteGridResolutions,
   geoBearing,
@@ -12,6 +14,7 @@ import {
   planWaterRoute,
   routeGeometryIsWaterOnly,
   routeSegmentCrossesShoreline,
+  ROUTE_CLEARANCE_MARGIN_METRES,
 } from "../lib/route-planning.ts";
 
 const ISLAND_PACK = {
@@ -70,6 +73,24 @@ const NARROW_PASSAGE_PACK = {
       0.055, 0.05045, 0.055, 0.1,
       0.055, 0.1, 0.045, 0.1,
       0.045, 0.1, 0.045, 0.05045,
+    ],
+  },
+};
+
+const TWO_ISLAND_NARROWS_PACK = {
+  ...ISLAND_PACK,
+  region: "Two-island narrows",
+  segmentCount: 8,
+  cells: {
+    "0:0": [
+      0.045, 0, 0.055, 0,
+      0.055, 0, 0.055, 0.04937,
+      0.055, 0.04937, 0.045, 0.04937,
+      0.045, 0.04937, 0.045, 0,
+      0.045, 0.05063, 0.055, 0.05063,
+      0.055, 0.05063, 0.055, 0.1,
+      0.055, 0.1, 0.045, 0.1,
+      0.045, 0.1, 0.045, 0.05063,
     ],
   },
 };
@@ -227,6 +248,71 @@ test("adaptive refinement finds a roughly 100-metre narrow passage", () => {
   }
 });
 
+test("route planning adds a fixed 50-metre margin to the configured clearance", () => {
+  assert.equal(ROUTE_CLEARANCE_MARGIN_METRES, 50);
+  assert.equal(getPreferredRouteClearanceMetres(300), 350);
+  assert.equal(getPreferredRouteClearanceMetres(-20), 50);
+  assert.equal(getPreferredRouteClearanceMetres(Number.NaN), 50);
+
+  const result = planWaterRoute(
+    ISLAND_PACK,
+    { longitude: 0.03, latitude: 0.05 },
+    { longitude: 0.07, latitude: 0.05 },
+    { ...OPTIONS, clearanceMetres: 100 },
+  );
+  assert.ok(result.route, result.failure);
+  assert.ok(result.route.minimumShoreDistanceMetres >= 145, "sampling may conservatively consume only a few metres of the 50 m margin");
+});
+
+test("an unavoidable two-island narrows is routed along its widest middle", () => {
+  const result = planWaterRoute(
+    TWO_ISLAND_NARROWS_PACK,
+    { longitude: 0.03, latitude: 0.0495 },
+    { longitude: 0.07, latitude: 0.0495 },
+    { ...OPTIONS, clearanceMetres: 30 },
+  );
+  assert.ok(result.route, result.failure);
+  const channelPoints = [];
+  for (let index = 1; index < result.route.points.length; index += 1) {
+    const start = result.route.points[index - 1];
+    const end = result.route.points[index];
+    for (const longitude of [0.046, 0.05, 0.054]) {
+      if (longitude < Math.min(start.longitude, end.longitude) || longitude > Math.max(start.longitude, end.longitude)) continue;
+      const position = (longitude - start.longitude) / (end.longitude - start.longitude);
+      channelPoints.push({
+        longitude,
+        latitude: start.latitude + (end.latitude - start.latitude) * position,
+      });
+    }
+  }
+  assert.ok(channelPoints.length >= 3);
+  for (const point of channelPoints) {
+    const lowerDistance = (point.latitude - 0.04937) * 110_540;
+    const upperDistance = (0.05063 - point.latitude) * 110_540;
+    assert.ok(Math.abs(lowerDistance - upperDistance) < 10, `channel imbalance was ${Math.abs(lowerDistance - upperDistance)} m`);
+  }
+  assert.ok(result.route.minimumShoreDistanceMetres >= 55, "the bottleneck should maximize clearance instead of hugging one island");
+});
+
+test("equally safe route candidates are ordered by the shortest ETA", () => {
+  const route = (estimatedSeconds, distanceMetres, minimumShoreDistanceMetres, passageIds = []) => ({
+    points: [],
+    estimatedSeconds,
+    distanceMetres,
+    minimumShoreDistanceMetres,
+    restrictedDistanceMetres: 0,
+    mode: "clearance",
+    passageIds,
+  });
+  const fast = route(600, 8_000, 360);
+  const shortButSlow = route(900, 6_000, 500);
+  assert.ok(comparePlannedRoutes(fast, shortButSlow, 300) < 0, "ETA, not geometric distance, must decide");
+
+  const offCentre = route(500, 5_000, 45);
+  const centred = route(650, 5_300, 65);
+  assert.ok(comparePlannedRoutes(centred, offCentre, 30) < 0, "an unavoidable bottleneck must maximize clearance first");
+});
+
 test("route grid adds fine resolution while bounding long-route node counts", () => {
   const local = getRouteGridResolutions(10_000, 10_000, 300);
   assert.equal(local.length, 2);
@@ -360,7 +446,7 @@ test("the bundled Croatia chart produces a water-only route with configured clea
   }
 });
 
-test("the bundled Croatia chart routes through the conditional Tisno bridge passage", async () => {
+test("the bundled Croatia chart uses the shorter Tisno passage when near-shore speed is unrestricted", async () => {
   const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const start = { longitude: 15.61, latitude: 43.72 };
   const destination = { longitude: 15.65, latitude: 43.82 };
@@ -369,6 +455,7 @@ test("the bundled Croatia chart routes through the conditional Tisno bridge pass
     ...OPTIONS,
     clearanceMetres: 300,
     startAccuracyMetres: 12,
+    speedWarningEnabled: false,
   });
   assert.ok(result.route, result.failure);
   assert.ok(performance.now() - startedAt < 5_000, "route calculation must remain interactive on a phone");
@@ -398,7 +485,7 @@ test("the Pakoštane screenshot corridor no longer produces a 29-mile raster det
   assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points), true);
 });
 
-test("the Tisno passage remains water-only and works in the reverse direction", async () => {
+test("the Tisno passage remains water-only and works in reverse at unrestricted speed", async () => {
   const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const passage = ROUTE_PASSAGE_HINTS.find(({ id }) => id === "tisno-murter-bridge");
   assert.ok(passage);
@@ -423,7 +510,7 @@ test("the Tisno passage remains water-only and works in the reverse direction", 
     croatiaPack,
     { longitude: 15.65, latitude: 43.82 },
     { longitude: 15.61, latitude: 43.72 },
-    { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12 },
+    { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12, speedWarningEnabled: false },
   );
   assert.ok(result.route, result.failure);
   assert.equal(result.route.mode, "restricted");
