@@ -6,10 +6,10 @@ export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 
 export function getRouteMapRenderingDetail(viewRangeMetres: number) {
   const range = Number.isFinite(viewRangeMetres) ? Math.max(0, viewRangeMetres) : MAXIMUM_ROUTE_VIEW_METRES;
-  if (range > 60_000) return { hatchBandHeight: 8, maximumShorelineSegments: 800 } as const;
-  if (range > 25_000) return { hatchBandHeight: 5, maximumShorelineSegments: 1_400 } as const;
-  if (range > 10_000) return { hatchBandHeight: 3, maximumShorelineSegments: 2_500 } as const;
-  return { hatchBandHeight: 1.5, maximumShorelineSegments: 5_000 } as const;
+  if (range > 60_000) return { hatchBandHeight: 14, maximumShorelineSegments: 280, maximumLabels: 18 } as const;
+  if (range > 25_000) return { hatchBandHeight: 9, maximumShorelineSegments: 650, maximumLabels: 30 } as const;
+  if (range > 10_000) return { hatchBandHeight: 5, maximumShorelineSegments: 1_500, maximumLabels: 48 } as const;
+  return { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 } as const;
 }
 export const MINIMUM_ACTIVE_ROUTE_VIEW_METRES = 550;
 export const MAXIMUM_ACTIVE_ROUTE_VIEW_METRES = 2_500;
@@ -183,6 +183,25 @@ export function clampRouteViewRange(value: number) {
 export function clampActiveRouteViewRange(value: number) {
   if (!Number.isFinite(value)) return MINIMUM_ACTIVE_ROUTE_VIEW_METRES;
   return Math.max(MINIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES, Math.min(MAXIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES, value));
+}
+
+export function getRouteMapPreviewTransform(
+  renderedCentre: GeoPoint,
+  renderedRangeMetres: number,
+  viewCentre: GeoPoint,
+  viewRangeMetres: number,
+  size: number,
+) {
+  const safeSize = Math.max(1, Number.isFinite(size) ? size : 360);
+  const renderedRange = Math.max(1, Number.isFinite(renderedRangeMetres) ? renderedRangeMetres : MINIMUM_ROUTE_VIEW_METRES);
+  const viewRange = Math.max(1, Number.isFinite(viewRangeMetres) ? viewRangeMetres : MINIMUM_ROUTE_VIEW_METRES);
+  const pixelsPerMetre = safeSize / 2 / viewRange;
+  const metresPerLongitudeDegree = 111_320 * Math.cos(viewCentre.latitude * Math.PI / 180);
+  return {
+    scale: renderedRange / viewRange,
+    translateX: (renderedCentre.longitude - viewCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
+    translateY: -(renderedCentre.latitude - viewCentre.latitude) * 110_540 * pixelsPerMetre,
+  };
 }
 
 export function getActiveRouteViewRange(proximityRangeMetres: number, warningDistanceMetres: number) {

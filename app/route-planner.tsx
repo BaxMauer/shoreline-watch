@@ -24,6 +24,7 @@ import {
   formatRouteEta,
   getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
+  getRouteMapPreviewTransform,
   getRouteMapRenderingDetail,
   getRouteReadinessState,
   hasReachedRouteTarget,
@@ -62,6 +63,7 @@ import {
   type GpsNavigationState,
 } from "../lib/navigation-metrics";
 import type { WarningConfig } from "../lib/warning-config";
+import type { GoNoGoState } from "../lib/navigation-display";
 
 type Language = "de" | "en";
 type Fix = GeoPoint & { speed: number | null; accuracy?: number; heading?: number | null };
@@ -73,6 +75,7 @@ type JourneyState = "planning" | "active" | "arrived";
 const COPY = {
   de: {
     title: "Routenplanung",
+    navigation: "Navigation",
     subtitle: "Start und Ziel eingeben oder auf der Karte setzen",
     calculating: "Wasserroute wird berechnet …",
     noPosition: "Für die aktive Reise wird ein aktueller GPS-Fix benötigt.",
@@ -86,6 +89,13 @@ const COPY = {
     clearance: "Kleinster Abstand",
     bearing: "Nächster Kurs",
     shore: "Küste",
+    nearestShore: "Nächste Küste",
+    currentSpeed: "Geschwindigkeit",
+    go: "GO",
+    noGo: "NO GO",
+    goUnknown: "PRÜFEN",
+    metres: "Meter",
+    kilometres: "Kilometer",
     chartDepth: "Kartentiefe",
     ready: "ROUTE BEREIT",
     check: "ROUTE PRÜFEN",
@@ -159,6 +169,7 @@ const COPY = {
   },
   en: {
     title: "Route planning",
+    navigation: "Navigation",
     subtitle: "Enter a start and destination or place them on the map",
     calculating: "Calculating water route …",
     noPosition: "A current GPS fix is required for active travel.",
@@ -172,6 +183,13 @@ const COPY = {
     clearance: "Minimum clearance",
     bearing: "Next course",
     shore: "Shore",
+    nearestShore: "Nearest shore",
+    currentSpeed: "Speed",
+    go: "GO",
+    noGo: "NO GO",
+    goUnknown: "CHECK",
+    metres: "metres",
+    kilometres: "kilometres",
     chartDepth: "Chart depth",
     ready: "ROUTE READY",
     check: "CHECK ROUTE",
@@ -260,6 +278,7 @@ export default function RoutePlanner({
   currentDepthMetres,
   currentDepthState,
   mapFeaturePack,
+  goNoGoState,
 }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
@@ -271,6 +290,7 @@ export default function RoutePlanner({
   currentDepthMetres: number | null;
   currentDepthState: CurrentDepthState;
   mapFeaturePack: MapFeaturePack | null;
+  goNoGoState: GoNoGoState;
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
@@ -307,6 +327,8 @@ export default function RoutePlanner({
   const routeWorker = useRef<RoutePlanningWorkerController | null>(null);
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const mapGesture = useRef<{ centre: GeoPoint; range: number; centroid: { x: number; y: number }; distance: number; moved: boolean } | null>(null);
+  const mapViewFrame = useRef<number | null>(null);
+  const pendingMapView = useRef<{ centre: GeoPoint; range: number } | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const longPressCandidate = useRef<{ pointerId: number; startedAt: number; point: GeoPoint } | null>(null);
   const placeSearchController = useRef<AbortController | null>(null);
@@ -351,6 +373,7 @@ export default function RoutePlanner({
 
   useEffect(() => () => {
     if (longPressTimer.current !== null) window.clearTimeout(longPressTimer.current);
+    if (mapViewFrame.current !== null) window.cancelAnimationFrame(mapViewFrame.current);
     placeSearchController.current?.abort();
   }, []);
 
@@ -520,37 +543,61 @@ export default function RoutePlanner({
   const mapCentre = useMemo(() => viewCentre ?? fix ?? manualStart ?? target ?? { longitude: 15.55, latitude: 43.8 }, [fix, manualStart, target, viewCentre]);
   const metresPerLongitudeDegree = 111_320 * Math.cos((mapCentre.latitude * Math.PI) / 180);
   const pixelsPerMetre = centre / viewRangeMetres;
-  const renderingDetail = getRouteMapRenderingDetail(viewRangeMetres);
+  const [renderedMapView, setRenderedMapView] = useState(() => ({ centre: mapCentre, rangeMetres: viewRangeMetres }));
+  const renderedMapTimer = useRef<number | null>(null);
   const point = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (value.latitude - mapCentre.latitude) * 110_540 * pixelsPerMetre,
   }), [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
-  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, mapCentre.longitude, mapCentre.latitude, viewRangeMetres * 1.45, renderingDetail.maximumShorelineSegments) : [], [mapCentre.latitude, mapCentre.longitude, pack, renderingDetail.maximumShorelineSegments, viewRangeMetres]);
-  const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(mapCentre, viewRangeMetres, 720) : [], [mapCentre, showDepths, viewRangeMetres]);
+
+  useEffect(() => {
+    if (renderedMapTimer.current !== null) window.clearTimeout(renderedMapTimer.current);
+    renderedMapTimer.current = window.setTimeout(() => {
+      renderedMapTimer.current = null;
+      setRenderedMapView({ centre: mapCentre, rangeMetres: viewRangeMetres });
+    }, 100);
+    return () => {
+      if (renderedMapTimer.current !== null) window.clearTimeout(renderedMapTimer.current);
+    };
+  }, [mapCentre, viewRangeMetres]);
+
+  const renderedCentre = renderedMapView.centre;
+  const renderedRangeMetres = renderedMapView.rangeMetres;
+  const renderedMetresPerLongitudeDegree = 111_320 * Math.cos((renderedCentre.latitude * Math.PI) / 180);
+  const renderedPixelsPerMetre = centre / renderedRangeMetres;
+  const renderingDetail = getRouteMapRenderingDetail(renderedRangeMetres);
+  const renderedPoint = useCallback((value: GeoPoint) => ({
+    x: centre + (value.longitude - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre,
+    y: centre - (value.latitude - renderedCentre.latitude) * 110_540 * renderedPixelsPerMetre,
+  }), [centre, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre]);
+  const previewTransform = getRouteMapPreviewTransform(renderedCentre, renderedRangeMetres, mapCentre, viewRangeMetres, size);
+  const staticMapTransform = `translate(${previewTransform.translateX} ${previewTransform.translateY}) translate(${centre} ${centre}) scale(${previewTransform.scale}) translate(${-centre} ${-centre})`;
+  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, renderedRangeMetres * 1.45, renderingDetail.maximumShorelineSegments) : [], [pack, renderedCentre.latitude, renderedCentre.longitude, renderedRangeMetres, renderingDetail.maximumShorelineSegments]);
+  const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(renderedCentre, renderedRangeMetres, 720) : [], [renderedCentre, renderedRangeMetres, showDepths]);
   const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
   const hatchPath = useMemo(() => {
     if (!pack) return "";
     const bandHeight = renderingDetail.hatchBandHeight;
-    const minimumLongitude = mapCentre.longitude - viewRangeMetres / metresPerLongitudeDegree;
-    const maximumLongitude = mapCentre.longitude + viewRangeMetres / metresPerLongitudeDegree;
+    const minimumLongitude = renderedCentre.longitude - renderedRangeMetres / renderedMetresPerLongitudeDegree;
+    const maximumLongitude = renderedCentre.longitude + renderedRangeMetres / renderedMetresPerLongitudeDegree;
     let path = "";
     for (let y = 0; y < size; y += bandHeight) {
-      const latitude = mapCentre.latitude + (centre - y - bandHeight / 2) / (110_540 * pixelsPerMetre);
+      const latitude = renderedCentre.latitude + (centre - y - bandHeight / 2) / (110_540 * renderedPixelsPerMetre);
       const intervals = getLandIntervalsAtLatitude(pack, latitude, minimumLongitude, maximumLongitude);
       for (const [west, east] of intervals) {
-        const left = Math.max(0, centre + (west - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
-        const right = Math.min(size, centre + (east - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        const left = Math.max(0, centre + (west - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
+        const right = Math.min(size, centre + (east - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
         if (right > left) path += `M${left} ${y}H${right}V${Math.min(size, y + bandHeight + .5)}H${left}Z`;
       }
     }
     return path;
-  }, [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pack, pixelsPerMetre, renderingDetail.hatchBandHeight, viewRangeMetres]);
+  }, [centre, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderedRangeMetres, renderingDetail.hatchBandHeight]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
-    getMapFeaturesInView(mapFeaturePack, mapCentre, viewRangeMetres),
-    point,
+    getMapFeaturesInView(mapFeaturePack, renderedCentre, renderedRangeMetres).slice(0, renderingDetail.maximumLabels),
+    renderedPoint,
     size,
     26,
-  ), [mapCentre, mapFeaturePack, point, size, viewRangeMetres]);
+  ), [mapFeaturePack, renderedCentre, renderedPoint, renderedRangeMetres, renderingDetail.maximumLabels, size]);
 
   useEffect(() => {
     depthLoadState.current = { key: bathymetryKey, loaded: 0, failed: 0 };
@@ -558,27 +605,57 @@ export default function RoutePlanner({
     return () => window.clearTimeout(timer);
   }, [bathymetryKey, bathymetryTiles.length, showDepths]);
 
-  const depthTileLoaded = (key: string) => {
+  const depthTileLoaded = useCallback((key: string) => {
     if (depthLoadState.current.key !== bathymetryKey || !bathymetryKey.includes(key)) return;
     depthLoadState.current.loaded += 1;
     setDepthStatus("ready");
-  };
+  }, [bathymetryKey]);
 
-  const depthTileFailed = (key: string) => {
+  const depthTileFailed = useCallback((key: string) => {
     if (depthLoadState.current.key !== bathymetryKey || !bathymetryKey.includes(key)) return;
     depthLoadState.current.failed += 1;
     if (depthLoadState.current.loaded === 0 && depthLoadState.current.failed >= bathymetryTiles.length) setDepthStatus("error");
-  };
+  }, [bathymetryKey, bathymetryTiles.length]);
 
-  const routePoints = route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "";
+  const routePoints = useMemo(() => route?.points.map(renderedPoint).map(({ x, y }) => `${x},${y}`).join(" ") ?? "", [renderedPoint, route]);
   const boatPoint = fix ? point(fix) : null;
   const liveNearest = useMemo(() => pack && fix ? findNearestShore(pack, fix.longitude, fix.latitude) : null, [fix, pack]);
   const liveNearestPoint = liveNearest ? point(liveNearest) : null;
   const liveWarningRadius = warningConfig.distanceMetres * pixelsPerMetre;
   const liveDistanceLabel = shoreDistanceMetres === null ? "—" : formatRouteClearance(shoreDistanceMetres);
-  const startPoint = startMode === "manual" && manualStart ? point(manualStart) : null;
-  const targetPoint = target ? point(target) : null;
-  const focusedPlacePoint = focusedPlace ? point(focusedPlace) : null;
+  const startPoint = useMemo(() => startMode === "manual" && manualStart ? renderedPoint(manualStart) : null, [manualStart, renderedPoint, startMode]);
+  const targetPoint = useMemo(() => target ? renderedPoint(target) : null, [renderedPoint, target]);
+  const focusedPlacePoint = useMemo(() => focusedPlace ? renderedPoint(focusedPlace) : null, [focusedPlace, renderedPoint]);
+  const speedKnots = fix?.speed === null || fix?.speed === undefined ? null : Math.max(0, fix.speed * 1.943844);
+  const activeJourney = journeyState === "active" || journeyState === "arrived";
+  const activeGoNoGoLabel = goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown;
+  const activeDistanceValue = shoreDistanceMetres === null
+    ? "—"
+    : shoreDistanceMetres >= 1_000
+      ? (shoreDistanceMetres / 1_000).toFixed(1)
+      : Math.round(shoreDistanceMetres).toString();
+  const activeDistanceUnit = shoreDistanceMetres !== null && shoreDistanceMetres >= 1_000 ? copy.kilometres : copy.metres;
+  const staticMapLayers = useMemo(() => <>
+    {showDepths && <g className="route-bathymetry-layer">{bathymetryTiles.map((tile) => {
+      const northWest = renderedPoint({ longitude: tile.west, latitude: tile.north });
+      const southEast = renderedPoint({ longitude: tile.east, latitude: tile.south });
+      return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
+    })}</g>}
+    {hatchPath && <path className="route-land-area" d={hatchPath} />}
+    <g className="route-coast-layer">{segments.map((segment, index) => {
+      const start = renderedPoint({ longitude: segment[0], latitude: segment[1] });
+      const end = renderedPoint({ longitude: segment[2], latitude: segment[3] });
+      return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
+    })}</g>
+    <g className="map-feature-labels" aria-hidden="true">{mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
+      {label.kind === "restaurant" && <circle r="2.2" />}
+      <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+    </g>)}</g>
+    {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
+    {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g>}
+    {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><circle r="10" /><text y="3.5">A</text></g>}
+    {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="11" /><text y="3.5">B</text></g>}
+  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, focusedPlace?.name, focusedPlacePoint, hatchPath, journeyState, mapLabels, renderedPoint, route?.mode, routePoints, segments, showDepths, startPoint, targetPoint]);
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
@@ -614,9 +691,9 @@ export default function RoutePlanner({
     return { centroid, distance };
   };
 
-  const beginGesture = (element: HTMLDivElement) => {
+  const beginGesture = (element: HTMLDivElement, view = { centre: mapCentre, range: viewRangeMetres }) => {
     const metrics = pointerMetrics(element);
-    mapGesture.current = { centre: mapCentre, range: viewRangeMetres, ...metrics, moved: false };
+    mapGesture.current = { ...view, ...metrics, moved: false };
   };
 
   const cancelLongPress = () => {
@@ -627,6 +704,19 @@ export default function RoutePlanner({
   };
 
   const clampMapRange = journeyState === "planning" ? clampRouteViewRange : clampActiveRouteViewRange;
+
+  const scheduleMapView = (nextCentre: GeoPoint, nextRange: number) => {
+    pendingMapView.current = { centre: nextCentre, range: nextRange };
+    if (mapViewFrame.current !== null) return;
+    mapViewFrame.current = window.requestAnimationFrame(() => {
+      mapViewFrame.current = null;
+      const pending = pendingMapView.current;
+      pendingMapView.current = null;
+      if (!pending) return;
+      setViewCentre(pending.centre);
+      setViewRangeMetres(pending.range);
+    });
+  };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -676,21 +766,25 @@ export default function RoutePlanner({
       gesture.moved = true;
       cancelLongPress();
     }
-    setViewCentre(panRouteMapCentre(gesture.centre, gesture.range, size, deltaX, deltaY, clampMapRange));
-    if (activePointers.current.size >= 2) setViewRangeMetres(pinchRouteViewRange(gesture.range, gesture.distance, metrics.distance, clampMapRange));
+    scheduleMapView(
+      panRouteMapCentre(gesture.centre, gesture.range, size, deltaX, deltaY, clampMapRange),
+      activePointers.current.size >= 2
+        ? pinchRouteViewRange(gesture.range, gesture.distance, metrics.distance, clampMapRange)
+        : gesture.range,
+    );
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
     cancelLongPress();
     activePointers.current.delete(event.pointerId);
-    if (activePointers.current.size > 0) beginGesture(event.currentTarget);
+    if (activePointers.current.size > 0) beginGesture(event.currentTarget, pendingMapView.current ?? { centre: mapCentre, range: viewRangeMetres });
     else mapGesture.current = null;
   };
 
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
     cancelLongPress();
     activePointers.current.delete(event.pointerId);
-    if (activePointers.current.size > 0) beginGesture(event.currentTarget);
+    if (activePointers.current.size > 0) beginGesture(event.currentTarget, pendingMapView.current ?? { centre: mapCentre, range: viewRangeMetres });
     else mapGesture.current = null;
   };
 
@@ -828,7 +922,7 @@ export default function RoutePlanner({
   return (
     <section className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <header className="route-screen-header">
-        <span><strong>{copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : copy.following}</small></span>
+        <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : copy.following}</small></span>
         <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
       </header>
 
@@ -870,23 +964,12 @@ export default function RoutePlanner({
           <svg viewBox={`0 0 ${size} ${size}`} preserveAspectRatio="none" role="img" aria-hidden="true">
             <defs>
               <filter id="routeBoatGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+              <pattern id="routeLandHatch" width="12" height="12" patternUnits="userSpaceOnUse"><rect className="route-land-fill-mark" width="12" height="12" /><path className="route-land-hatch-mark" d="M-3 12 12-3M6 15 15 6" /></pattern>
             </defs>
             <rect className="route-water" width={size} height={size} />
-            {showDepths && <g className="route-bathymetry-layer">{bathymetryTiles.map((tile) => {
-              const northWest = point({ longitude: tile.west, latitude: tile.north });
-              const southEast = point({ longitude: tile.east, latitude: tile.south });
-              return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
-            })}</g>}
-            {hatchPath && <path className="route-land-area" d={hatchPath} />}
-            <g className="route-coast-layer">{segments.map((segment, index) => {
-              const start = point({ longitude: segment[0], latitude: segment[1] });
-              const end = point({ longitude: segment[2], latitude: segment[3] });
-              return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
-            })}</g>
-            <g className="map-feature-labels" aria-hidden="true">{mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
-              {label.kind === "restaurant" && <circle r="2.2" />}
-              <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
-            </g>)}</g>
+            <g className="route-static-map" transform={staticMapTransform}>
+              {staticMapLayers}
+            </g>
             {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
               <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
               {liveNearestPoint && <>
@@ -898,10 +981,6 @@ export default function RoutePlanner({
                 </g>
               </>}
             </g>}
-            {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
-            {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g>}
-            {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><circle r="10" /><text y="3.5">A</text></g>}
-            {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><circle r="11" /><text y="3.5">B</text></g>}
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${fix?.heading ?? 0})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
@@ -910,10 +989,21 @@ export default function RoutePlanner({
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
         </div>}
         {journeyState === "planning" && <div className={`route-long-press-hint ${longPressActive ? "active" : ""}`} role="status"><span />{longPressActive ? copy.holdingPoint : mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget}</div>}
-        {(journeyState === "active" || journeyState === "arrived") && <div className="route-live-readouts" aria-live="polite">
-          <span><small>{copy.shore}</small><strong>{liveDistanceLabel}</strong></span>
-          <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈ ${currentDepthDisplay} m` : "—"}</strong></span>
-        </div>}
+        {activeJourney && <>
+          <div className="route-live-distance" aria-live="polite">
+            <small>{copy.nearestShore}</small>
+            <span><strong>{activeDistanceValue}</strong><em>{activeDistanceUnit}</em></span>
+          </div>
+          <div className={`route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+            <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+            <b>{activeGoNoGoLabel}</b>
+          </div>
+          {route && <div className="route-live-guidance" aria-live="polite">
+            <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
+            <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
+            <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
+          </div>}
+        </>}
         <div className="route-layer-tools">
           <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
@@ -926,6 +1016,12 @@ export default function RoutePlanner({
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
         <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}</div>
       </div>
+
+      {activeJourney && <div className="route-live-footer" aria-live="polite">
+        <span className={currentDepthState}><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay}` : "—"}</strong> m · {copy.chartDepth}</span>
+        <span><strong>±{gpsAccuracyLabel}</strong> m GPS</span>
+        <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
+      </div>}
 
       {journeyState === "planning" && <details ref={routeEditor} className="route-panel route-editor">
         <summary><span><strong>{copy.pointsPanel}</strong><small>{startSummary} → {targetSummary}</small></span><b>{copy.edit}</b></summary>
@@ -956,11 +1052,6 @@ export default function RoutePlanner({
       {(planning || failure || route) && <div className="route-summary" aria-live="polite">
         {planning ? <p className="route-message">{startingJourney ? copy.startingJourney : copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
           <>
-            {(journeyState === "active" || journeyState === "arrived") && <div className={`route-navigation ${journeyState}`}>
-              <span><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
-              <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
-              <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
-            </div>}
             {journeyState === "planning" && <div className="route-metrics">
               <span><small>{copy.distance}</small><strong>{formatRouteDistance(route.distanceMetres).toFixed(route.distanceMetres < 18_520 ? 1 : 0)} {copy.nauticalMiles}</strong></span>
               <span><small>{copy.eta}</small><strong>{formatRouteEta(route.estimatedSeconds, copy.minutes)}</strong></span>

@@ -152,7 +152,7 @@ test("OSM feature catalog loads non-blockingly and labels both map modes", async
   assert.match(app, /fetch\("\/data\/croatia-map-features\.json"\)/);
   assert.match(app, /mapFeatureError/);
   assert.match(app, /<ProximityPlot[\s\S]*mapFeaturePack=\{mapFeaturePack\}/);
-  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, mapCentre, viewRangeMetres\)/);
+  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, renderedCentre, renderedRangeMetres\)\.slice\(0, renderingDetail\.maximumLabels\)/);
   assert.match(planner, /© OpenStreetMap contributors/);
   const depthLayer = planner.indexOf("className=\"route-bathymetry-layer\"");
   const landLayer = planner.indexOf("className=\"route-land-area\"");
@@ -167,6 +167,7 @@ test("active trip map mirrors the distance instrument's clearance geometry", asy
   assert.match(planner, /className="route-nearest-line"/);
   assert.match(planner, /className="route-distance-label"/);
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
+  assert.match(app, /<RoutePlanner[\s\S]*goNoGoState=\{goNoGoState\}/);
 });
 
 test("power saver runs only in live mode, honours all recent interaction, and retains GPS tracking", () => {
@@ -276,6 +277,11 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
   }
   assert.match(planner, /pinchRouteViewRange\(gesture\.range, gesture\.distance, metrics\.distance, clampMapRange\)/);
   assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, deltaX, deltaY, clampMapRange\)/);
+  assert.match(planner, /window\.requestAnimationFrame\(\(\) =>/);
+  assert.match(planner, /scheduleMapView\(/);
+  assert.match(planner, /setRenderedMapView\(\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\)/);
+  assert.match(planner, /const staticMapLayers = useMemo\(\(\) => <>/);
+  assert.match(planner, /className="route-static-map" transform=\{staticMapTransform\}/);
   assert.match(planner, /className="route-recenter"[\s\S]*onClick=\{recenterMap\}/);
   assert.match(planner, /journeyState === "planning" \? clampRouteViewRange : clampActiveRouteViewRange/);
   assert.doesNotMatch(planner, /journeyState === "planning" && <button type="button" aria-label=\{copy\.zoomIn\}/);
@@ -336,7 +342,7 @@ test("route planning keeps secondary controls in compact disclosure panels", asy
 
 test("depth relief is optional, attributed, and excluded from routing options", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /buildEmodnetBathymetryTiles\(mapCentre, viewRangeMetres, 720\)/);
+  assert.match(planner, /buildEmodnetBathymetryTiles\(renderedCentre, renderedRangeMetres, 720\)/);
   assert.match(planner, /className="route-depth-tile"/);
   assert.match(planner, /EMODNET_BATHYMETRY_ATTRIBUTION/);
   assert.match(planner, /route-bathymetry-layer/);
@@ -351,13 +357,16 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /hasReachedRouteTarget\(fix, target\)/);
   assert.match(planner, /routeProgressPercent\(route\.distanceMetres, progressMetres\)/);
   assert.match(planner, /className="route-start-trip"/);
-  assert.match(planner, /route-navigation[\s\S]*copy\.remaining[\s\S]*copy\.remainingEta/);
+  assert.match(planner, /route-live-guidance[\s\S]*copy\.remaining[\s\S]*copy\.remainingEta/);
   assert.match(planner, /route-clearance-chip[\s\S]*copy\.clearance/);
   assert.match(planner, /\{journeyState === "planning" && <div className="route-metrics">/);
   assert.match(planner, /REISE AKTIV/);
   assert.match(planner, /TRIP ACTIVE/);
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
-  assert.match(planner, /className="route-live-readouts"/);
+  assert.match(planner, /className="route-live-distance"/);
+  assert.match(planner, /route-live-go-no-go \$\{goNoGoState\}/);
+  assert.match(planner, /className="route-live-footer"/);
+  assert.match(planner, /goNoGoState: GoNoGoState/);
   assert.match(planner, /shoreDistanceMetres === null/);
   assert.match(planner, /currentDepthState === "ready"/);
 });

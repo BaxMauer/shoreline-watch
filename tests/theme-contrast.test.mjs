@@ -147,13 +147,16 @@ test("live map keeps the distance instrument as a readable map overlay", () => {
   assert.match(css, /\.distance-map-overlay\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s);
 });
 
-test("active route view exposes compact live shoreline and depth readouts", () => {
-  assert.match(css, /\.route-live-readouts\s*\{[^}]*position:\s*absolute[^}]*display:\s*flex/s);
-  assert.match(css, /\.route-live-readouts > span\s*\{[^}]*min-height:\s*48px/s);
-  assert.match(css, /\.route-live-readouts > span\.ready strong\s*\{[^}]*#9ff5dd/s);
+test("active route view becomes a distance-first navigation cockpit", () => {
+  assert.match(css, /\.route-live-distance\s*\{[^}]*position:\s*absolute[^}]*background:\s*linear-gradient/s);
+  assert.match(css, /\.route-live-distance strong\s*\{[^}]*font-size:\s*clamp\(3\.2rem,15vw,4\.8rem\)/s);
+  assert.match(css, /\.route-live-go-no-go\.no-go\s*\{[^}]*background:\s*#b43025/s);
+  assert.match(css, /\.route-live-guidance\s*\{[^}]*grid-template-columns:\s*1\.05fr 1fr 1fr/s);
+  assert.match(css, /\.route-live-footer\s*\{[^}]*grid-template-columns:\s*1fr \.8fr 1\.15fr/s);
   assert.match(css, /\.route-warning-ring\s*\{[^}]*stroke-dasharray:[^}]*vector-effect:\s*non-scaling-stroke/s);
   assert.match(css, /\.route-live-proximity\.danger \.route-warning-ring\s*\{[^}]*var\(--danger\)[^}]*ring-breathe/s);
-  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*aspect-ratio:\s*1 \/ 1/s);
+  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*clamp\(430px,60svh,610px\)/s);
+  assert.match(css, /\.route-static-map\s*\{[^}]*will-change:\s*transform/s);
 });
 
 test("route map declares touch panning and strong focus affordances", () => {
@@ -187,8 +190,10 @@ test("tracking view is locked to one viewport while launch settings remain scrol
   assert.match(css, /\.tracker-content\s*\{[^}]*overflow:\s*hidden/s);
 });
 
-test("route map keeps land smooth, coastline solid, and route visually separate", () => {
-  assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*#[0-9a-f]{6}/s);
+test("route map hatches all land while keeping coastline and route solid", () => {
+  assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*url\(#routeLandHatch\)/s);
+  assert.match(css, /\.route-land-fill-mark\s*\{[^}]*fill:\s*#c8c4aa/s);
+  assert.match(css, /\.route-land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)[^}]*opacity:\s*\.25/s);
   assert.match(css, /\.route-depth-tile\s*\{[^}]*image-rendering:\s*auto/s);
   const routeCoast = css.match(/\.route-coast-layer line\s*\{[^}]*\}/s)?.[0] ?? "";
   assert.match(routeCoast, /stroke:\s*var\(--shore-stroke\)/);
@@ -196,7 +201,6 @@ test("route map keeps land smooth, coastline solid, and route visually separate"
   assert.match(css, /\.planned-route\s*\{[^}]*stroke:\s*var\(--aqua\)/s);
   assert.match(css, /\.planned-route\.restricted\s*\{[^}]*stroke:\s*var\(--danger\)/s);
   assert.match(css, /\.route-water\s*\{[^}]*fill:\s*#85bac8/s);
-  assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*#c8c4aa/s);
   assert.match(css, /\.land-fill-mark\s*\{[^}]*fill:\s*#415353/s);
   assert.match(css, /\.map-feature-label text\s*\{[^}]*paint-order:\s*stroke/s);
   assert.match(css, /\.map-feature-label\.restaurant circle\s*\{[^}]*var\(--amber\)/s);

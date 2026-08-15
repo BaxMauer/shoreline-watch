@@ -1746,6 +1746,7 @@ export default function ShorelineApp() {
               currentDepthMetres={currentDepthMetres}
               currentDepthState={currentDepthState}
               mapFeaturePack={mapFeaturePack}
+              goNoGoState={goNoGoState}
             />
           </div>
           </div>
