@@ -23,7 +23,7 @@ export const CROATIA_SEARCH_BOUNDS = {
   north: 46.7,
 } as const;
 
-export const PLACE_TARGET_WATER_OFFSET_METRES = 40;
+export const PLACE_TARGET_WATER_OFFSET_METRES = 8;
 
 export function resolvePlaceSearchTarget(
   pack: CoastlinePack | null,
@@ -36,9 +36,13 @@ export function resolvePlaceSearchTarget(
   const shore = findNearestShore(pack, original.longitude, original.latitude);
   if (!shore) return original;
 
-  const offset = Math.max(8, Math.min(250, waterOffsetMetres));
-  const distances = [offset, offset * 1.5, offset * 2, Math.max(120, offset * 3), 250, 500];
-  const bearingOffsets = [0, -15, 15, -30, 30, -45, 45, -60, 60, -90, 90, 180];
+  const offset = Math.max(4, Math.min(40, waterOffsetMetres));
+  const distances = [offset, offset * 2, offset * 4, 50, 100];
+  const bearingOffsets = Array.from({ length: 36 }, (_, index) => {
+    if (index === 0) return 0;
+    const step = Math.ceil(index / 2) * 10;
+    return index % 2 === 1 ? -step : step;
+  });
 
   for (const distance of [...new Set(distances)]) {
     for (const bearingOffset of bearingOffsets) {

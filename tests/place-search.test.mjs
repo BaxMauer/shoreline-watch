@@ -13,7 +13,7 @@ import {
   searchLocalCroatianPlaces,
 } from "../lib/place-search.ts";
 import { findNearestShore, isPointOnLand } from "../lib/shoreline.ts";
-import { planWaterRoute } from "../lib/route-planning.ts";
+import { geoDistanceMetres, planWaterRoute } from "../lib/route-planning.ts";
 
 test("Croatian diacritics and common misspellings match locally", () => {
   assert.equal(normalizePlaceSearchText("  Pakoštane  "), "pakostane");
@@ -61,12 +61,14 @@ test("an island search result resolves to nearby water instead of its land centr
   const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const result = { latitude: 43.830668, longitude: 15.515315 };
   assert.equal(isPointOnLand(coastline, result.longitude, result.latitude), true, "Murvenjak centroid must reproduce the reported failure");
+  const originalShore = findNearestShore(coastline, result.longitude, result.latitude);
 
   const target = resolvePlaceSearchTarget(coastline, result);
   const shore = findNearestShore(coastline, target.longitude, target.latitude);
   assert.equal(isPointOnLand(coastline, target.longitude, target.latitude), false);
-  assert.ok(shore && shore.distance >= 5);
+  assert.ok(shore && shore.distance >= 2);
   assert.ok(shore && shore.distance <= PLACE_TARGET_WATER_OFFSET_METRES + 2);
+  assert.ok(originalShore && geoDistanceMetres(result, target) <= originalShore.distance + PLACE_TARGET_WATER_OFFSET_METRES + 1);
 
   const route = planWaterRoute(coastline, { longitude: 15.5, latitude: 43.82 }, target, {
     clearanceMetres: 300,
