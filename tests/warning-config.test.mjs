@@ -5,7 +5,7 @@ import { CROATIA_WARNING_CONFIG, migrateWarningConfig, sanitizeWarningConfig } f
 test("older saved settings receive safe alert-output defaults", () => {
   const config = sanitizeWarningConfig({ distanceMetres: 450, speedWarningEnabled: false, maxSpeedKnots: 6 });
   assert.equal(config.distanceMetres, 450);
-  assert.equal(config.settingsVersion, 2);
+  assert.equal(config.settingsVersion, 3);
   assert.equal(config.warningSoundEnabled, true);
   assert.equal(config.safeSoundEnabled, true);
   assert.equal(config.visualAlertsEnabled, true);
@@ -18,6 +18,8 @@ test("older saved settings receive safe alert-output defaults", () => {
   assert.equal(config.powerSaveAnchorRadiusMetres, 30);
   assert.equal(config.distanceTextScalePercent, 110);
   assert.equal(config.courseWarningEnabled, false);
+  assert.equal(config.shallowWaterEnabled, true);
+  assert.equal(config.shallowWaterMetres, 3);
 });
 
 test("power-saving thresholds are sanitized to practical ranges", () => {
@@ -89,6 +91,12 @@ test("distance and speed settings enforce their minimum and maximum", () => {
   assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, maxSpeedKnots: 100 }).maxSpeedKnots, 40);
 });
 
+test("shallow-water threshold is configurable from one to twenty metres", () => {
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, shallowWaterMetres: 0 }).shallowWaterMetres, 1);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, shallowWaterMetres: 4.26 }).shallowWaterMetres, 4.5);
+  assert.equal(sanitizeWarningConfig({ ...CROATIA_WARNING_CONFIG, shallowWaterMetres: 80 }).shallowWaterMetres, 20);
+});
+
 test("every boolean setting preserves an explicit false value", () => {
   const config = sanitizeWarningConfig(Object.fromEntries(
     Object.entries(CROATIA_WARNING_CONFIG).map(([key, value]) => [key, typeof value === "boolean" ? false : value]),
@@ -117,4 +125,8 @@ test("older saved defaults migrate to the new collision and anchor defaults", ()
   const current = migrateWarningConfig({ ...CROATIA_WARNING_CONFIG, courseWarningEnabled: true, powerSaveStationaryMinutes: 7 });
   assert.equal(current.courseWarningEnabled, true);
   assert.equal(current.powerSaveStationaryMinutes, 7);
+
+  const versionTwo = migrateWarningConfig({ ...CROATIA_WARNING_CONFIG, settingsVersion: 2, courseWarningEnabled: true, shallowWaterEnabled: undefined });
+  assert.equal(versionTwo.courseWarningEnabled, true);
+  assert.equal(versionTwo.shallowWaterEnabled, true);
 });

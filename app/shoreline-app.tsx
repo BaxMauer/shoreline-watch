@@ -24,6 +24,8 @@ import {
 import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
+import OfflinePackageManager from "./offline-package-manager";
+import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
 import {
   createStationaryState,
   distanceFromStationaryReference,
@@ -86,6 +88,7 @@ type ScreenWakeLock = {
 const WARNING_CONFIG_STORAGE_KEY = "shoreline-warning-config-v1";
 const AUTO_SUNLIGHT_STORAGE_KEY = "shoreline-auto-sunlight";
 const DEBUG_STORAGE_KEY = "shoreline-debug-enabled";
+const ANCHOR_WATCH_STORAGE_KEY = "shoreline-anchor-watch-v1";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
@@ -103,7 +106,7 @@ const COPY = {
     coastLoading: "Kroatische Küste wird geladen",
     startLive: "Live starten",
     demo: "Demo",
-    finePrint: "Kartentiefe nur zur Orientierung. Keine Prüfung von Untiefen, Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften. Amtliche Seekarte verwenden und Ausguck halten.",
+    finePrint: "Kartentiefe und Seichtmarkierung nur zur Orientierung. Keine Prüfung von Felsen, Verkehr, Bojen, Fahrwasser, Wetter oder Vorschriften. Amtliche Seekarte verwenden und Ausguck halten.",
     language: "Sprache",
     theme: "Design",
     themeOcean: "Ocean",
@@ -146,11 +149,21 @@ const COPY = {
     energyStationary: "Aktiv nach Stillstand",
     energyAnchorRadius: "Ankerkreis",
     energyAnchorRadiusHint: "Schwojen innerhalb dieses Radius gilt weiterhin als Stillstand.",
+    shallowWater: "Seichtwasser markieren",
+    shallowWaterHint: "Markiert den aktuellen EMODnet-Tiefenrasterpunkt unter der gewählten Grenze.",
+    shallowLimit: "Seicht ab",
     energySection: "Energiesparen",
     anchorTimer: "Anker-Timer",
     anchorRunning: "läuft",
     anchorReady: "aktiv",
     anchorBlocked: "pausiert",
+    anchorWatch: "Ankerwache",
+    anchorSet: "Anker setzen",
+    anchorRelease: "Anker lösen",
+    anchorHolding: "Anker hält",
+    anchorDragging: "Anker driftet",
+    anchorDistance: "vom Anker",
+    shallow: "SEICHT",
     diagnosticsSection: "Diagnose",
     debugMode: "Debug-Daten anzeigen",
     debugModeHint: "Zeigt lokale Live-, GPS-, Tiefen-, Alarm- und Ankerdaten. Es werden keine Daten übertragen.",
@@ -235,7 +248,7 @@ const COPY = {
     coastLoading: "Loading Croatia shoreline",
     startLive: "Start live",
     demo: "Demo",
-    finePrint: "Chart depth is for orientation only. No shoal, rock, traffic, buoy, channel, weather, or legal checks. Keep an approved chart and normal lookout.",
+    finePrint: "Chart depth and shallow marking are for orientation only. No rock, traffic, buoy, channel, weather, or legal checks. Keep an approved chart and normal lookout.",
     language: "Language",
     theme: "Theme",
     themeOcean: "Ocean",
@@ -278,11 +291,21 @@ const COPY = {
     energyStationary: "Activate after stationary",
     energyAnchorRadius: "Anchor circle",
     energyAnchorRadiusHint: "Swinging within this radius still counts as stationary.",
+    shallowWater: "Mark shallow water",
+    shallowWaterHint: "Marks the current EMODnet depth-grid point below the selected limit.",
+    shallowLimit: "Shallow below",
     energySection: "Power saving",
     anchorTimer: "Anchor timer",
     anchorRunning: "running",
     anchorReady: "active",
     anchorBlocked: "paused",
+    anchorWatch: "Anchor watch",
+    anchorSet: "Set anchor",
+    anchorRelease: "Release anchor",
+    anchorHolding: "Anchor holding",
+    anchorDragging: "Anchor dragging",
+    anchorDistance: "from anchor",
+    shallow: "SHALLOW",
     diagnosticsSection: "Diagnostics",
     debugMode: "Show debug data",
     debugModeHint: "Shows local live, GPS, depth, alarm and anchor data. No data is transmitted.",
@@ -455,6 +478,11 @@ function ProximityPlot({
   courseRisk,
   rangeMetres,
   warningDistanceMetres,
+  shallowWaterMetres,
+  currentDepthMetres,
+  anchorWatch,
+  anchorRadiusMetres,
+  anchorBreached,
   language,
 }: {
   pack: CoastlinePack | null;
@@ -466,6 +494,11 @@ function ProximityPlot({
   courseRisk: CourseRisk;
   rangeMetres: number;
   warningDistanceMetres: number;
+  shallowWaterMetres: number;
+  currentDepthMetres: number | null;
+  anchorWatch: AnchorWatch | null;
+  anchorRadiusMetres: number;
+  anchorBreached: boolean;
   language: Language;
 }) {
   const copy = COPY[language];
@@ -481,6 +514,10 @@ function ProximityPlot({
   const ringRadius = warningDistanceMetres * pixelsPerMetre;
   const nearestPoint = nearest ? point(nearest.longitude, nearest.latitude) : null;
   const coursePoint = courseToShore ? point(courseToShore.longitude, courseToShore.latitude) : null;
+  const anchorPoint = anchorWatch ? point(anchorWatch.point.longitude, anchorWatch.point.latitude) : null;
+  const anchorRadius = anchorRadiusMetres * pixelsPerMetre;
+  const shallowRadius = 115 * pixelsPerMetre / 2;
+  const shallow = currentDepthMetres !== null && currentDepthMetres <= shallowWaterMetres;
   const mapLabels = useMemo(() => {
     if (!fix) return [];
     const halfRangeMetres = centre / pixelsPerMetre;
@@ -609,6 +646,18 @@ function ProximityPlot({
         </g>)}
       </g>
 
+      {shallow && <g className="shallow-water-zone" aria-hidden="true">
+        <circle cx={centre} cy={centre} r={Math.max(12, shallowRadius)} />
+        <text x={centre} y={centre + 28}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text>
+      </g>}
+
+      {anchorPoint && <g className={`anchor-map-watch ${anchorBreached ? "breached" : "holding"}`} aria-hidden="true">
+        <circle className="anchor-swing-circle" cx={anchorPoint.x} cy={anchorPoint.y} r={anchorRadius} />
+        <line className="anchor-rode" x1={anchorPoint.x} y1={anchorPoint.y} x2={centre} y2={centre} />
+        <circle className="anchor-point" cx={anchorPoint.x} cy={anchorPoint.y} r="5" />
+        <text x={anchorPoint.x + 12} y={anchorPoint.y - 10}>⚓</text>
+      </g>}
+
       <circle className="proximity-ring" cx={centre} cy={centre} r={ringRadius} />
       {dangerSectors.map((sector) => (
         <path
@@ -670,6 +719,7 @@ export default function ShorelineApp() {
   const [currentDepthMetres, setCurrentDepthMetres] = useState<number | null>(null);
   const [currentDepthState, setCurrentDepthState] = useState<CurrentDepthState>("idle");
   const [depthDebug, setDepthDebug] = useState({ requestedAt: null as number | null, respondedAt: null as number | null, error: null as string | null });
+  const [anchorWatch, setAnchorWatch] = useState<AnchorWatch | null>(null);
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -687,6 +737,7 @@ export default function ShorelineApp() {
   const previousSpeedViolation = useRef<boolean | null>(null);
   const warningSoundAvailableForDangerEpisode = useRef(false);
   const depthQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
+  const previousAnchorBreach = useRef(false);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -696,6 +747,7 @@ export default function ShorelineApp() {
       const savedAutoSunlight = window.localStorage.getItem(AUTO_SUNLIGHT_STORAGE_KEY);
       const savedWarningConfig = window.localStorage.getItem(WARNING_CONFIG_STORAGE_KEY);
       const savedDebug = window.localStorage.getItem(DEBUG_STORAGE_KEY);
+      const savedAnchorWatch = window.localStorage.getItem(ANCHOR_WATCH_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -708,6 +760,14 @@ export default function ShorelineApp() {
         }
       }
       setDebugEnabled(savedDebug === "true");
+      if (savedAnchorWatch) {
+        try {
+          const saved = JSON.parse(savedAnchorWatch) as AnchorWatch;
+          setAnchorWatch(createAnchorWatch(saved.point, saved.setAt));
+        } catch {
+          window.localStorage.removeItem(ANCHOR_WATCH_STORAGE_KEY);
+        }
+      }
       setPreferencesLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -723,6 +783,12 @@ export default function ShorelineApp() {
     document.documentElement.lang = language;
     document.documentElement.dataset.theme = theme;
   }, [autoSunlight, debugEnabled, language, preferencesLoaded, theme, warningConfig]);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    if (anchorWatch) window.localStorage.setItem(ANCHOR_WATCH_STORAGE_KEY, JSON.stringify(anchorWatch));
+    else window.localStorage.removeItem(ANCHOR_WATCH_STORAGE_KEY);
+  }, [anchorWatch, preferencesLoaded]);
 
   useEffect(() => {
     if (mode === "idle") return;
@@ -904,7 +970,9 @@ export default function ShorelineApp() {
     gpsReliable,
     warningZoneInside,
   );
+  const anchorWatchSnapshot = getAnchorWatchSnapshot(anchorWatch, fix, warningConfig.powerSaveAnchorRadiusMetres, fix?.accuracy ?? 0);
   const anchorAlertActive = activeSpeedViolation
+    || anchorWatchSnapshot.breached
     || courseRisk.level !== "none"
     || (visualSignal !== null && visualSignal.kind !== "safe");
   const anchorTimer = getAnchorTimerSnapshot({
@@ -919,6 +987,10 @@ export default function ShorelineApp() {
   });
   const anchorTimerVisible = mode === "live" && shouldShowAnchorTimer(anchorTimer.elapsedMs);
   const anchorDistanceMetres = fix ? distanceFromStationaryReference(stationaryState, fix) : null;
+  const shallowWaterActive = warningConfig.shallowWaterEnabled
+    && currentDepthState === "ready"
+    && currentDepthMetres !== null
+    && currentDepthMetres <= warningConfig.shallowWaterMetres;
   const powerSaveReason = getPowerSaveReason({
     enabled: warningConfig.powerSaveEnabled,
     tracking: mode === "live",
@@ -1120,6 +1192,11 @@ export default function ShorelineApp() {
     navigator.vibrate(kind === "danger" ? [300, 120, 300, 120, 600] : [90, 70, 160]);
   }, [warningConfig.vibrationEnabled]);
 
+  useEffect(() => {
+    if (anchorWatchSnapshot.breached && !previousAnchorBreach.current) triggerVibration("danger");
+    previousAnchorBreach.current = anchorWatchSnapshot.breached;
+  }, [anchorWatchSnapshot.breached, triggerVibration]);
+
   const testWarningOutputs = useCallback(() => {
     triggerVisualSignal("distance");
     triggerVibration("danger");
@@ -1231,6 +1308,8 @@ export default function ShorelineApp() {
     setWarningZoneInside(null);
     setPowerSaveWakeUntil(0);
     setStationaryState(createStationaryState());
+    setAnchorWatch(null);
+    previousAnchorBreach.current = false;
     setTrackerTab("distance");
   }, []);
 
@@ -1404,6 +1483,8 @@ export default function ShorelineApp() {
     },
     anchor: {
       radiusMetres: warningConfig.powerSaveAnchorRadiusMetres,
+      watch: anchorWatch,
+      watchSnapshot: anchorWatchSnapshot,
       reference: stationaryState.reference,
       distanceFromReferenceMetres: anchorDistanceMetres,
       lastFixTimestamp: stationaryState.lastFixTimestamp,
@@ -1557,6 +1638,7 @@ export default function ShorelineApp() {
               <span><strong>{copy.autoSunlight}</strong><small>{copy.autoSunlightHint}</small></span>
               <input type="checkbox" checked={autoSunlight} onChange={(event) => setAutoSunlight(event.target.checked)} />
             </label>
+            <OfflinePackageManager language={language} fix={fix} />
             <details className="warning-settings">
               <summary>
                 <span>{copy.settings}</span>
@@ -1593,6 +1675,14 @@ export default function ShorelineApp() {
                   <span><strong>{copy.courseWarningSetting}</strong><small>{copy.courseWarningSettingHint}</small></span>
                   <input type="checkbox" checked={warningConfig.courseWarningEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, courseWarningEnabled: event.target.checked }))} />
                 </label>
+                <label className="toggle-row">
+                  <span><strong>{copy.shallowWater}</strong><small>{copy.shallowWaterHint}</small></span>
+                  <input type="checkbox" checked={warningConfig.shallowWaterEnabled} onChange={(event) => setWarningConfig((current) => ({ ...current, shallowWaterEnabled: event.target.checked }))} />
+                </label>
+                {warningConfig.shallowWaterEnabled && <label className="setting-row" htmlFor="shallow-water-limit">
+                  <span>{copy.shallowLimit}</span>
+                  <span className="number-field"><input id="shallow-water-limit" type="number" inputMode="decimal" min="1" max="20" step="0.5" value={warningConfig.shallowWaterMetres} onChange={(event) => Number.isFinite(event.target.valueAsNumber) && setWarningConfig((current) => ({ ...current, shallowWaterMetres: event.target.valueAsNumber }))} onBlur={() => setWarningConfig((current) => sanitizeWarningConfig(current))} /><b>m</b></span>
+                </label>}
                 <p className="settings-section-label">{copy.alertOutputs}</p>
                 <label className="volume-setting" htmlFor="alert-volume">
                   <span><strong>{copy.alertVolume}</strong><small>{copy.volumeBoostHint}</small></span>
@@ -1673,11 +1763,16 @@ export default function ShorelineApp() {
                   <span />{alarmLabel}
                 </div>
               </div>
-              {anchorTimerVisible && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
+              {anchorWatch ? <div className={`anchor-watch-card ${anchorWatchSnapshot.breached ? "breached" : "holding"}`} role="status" aria-live="assertive">
+                <span className="anchor-watch-symbol" aria-hidden="true">⚓</span>
+                <span><small>{copy.anchorWatch}</small><b>{anchorWatchSnapshot.breached ? copy.anchorDragging : copy.anchorHolding}</b></span>
+                <span className="anchor-watch-distance"><strong>{anchorWatchSnapshot.distanceMetres === null ? "—" : Math.round(anchorWatchSnapshot.distanceMetres)}</strong><small>m {copy.anchorDistance}</small></span>
+                <button type="button" onClick={() => setAnchorWatch(null)}>{copy.anchorRelease}</button>
+              </div> : anchorTimerVisible ? <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
                 <small>{copy.anchorTimer}</small>
                 <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
                 <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
-              </div>}
+              </div> : <button className="anchor-set-button" type="button" disabled={!fix || !gpsReliable} onClick={() => fix && setAnchorWatch(createAnchorWatch(fix, Date.now()))}><span aria-hidden="true">⚓</span>{copy.anchorSet}</button>}
             </div>
 
             <div className="map-stage">
@@ -1691,6 +1786,11 @@ export default function ShorelineApp() {
                 courseRisk={courseRisk}
                 rangeMetres={viewRangeMetres}
                 warningDistanceMetres={warningConfig.distanceMetres}
+                shallowWaterMetres={warningConfig.shallowWaterEnabled ? warningConfig.shallowWaterMetres : -1}
+                currentDepthMetres={currentDepthState === "ready" ? currentDepthMetres : null}
+                anchorWatch={anchorWatch}
+                anchorRadiusMetres={warningConfig.powerSaveAnchorRadiusMetres}
+                anchorBreached={anchorWatchSnapshot.breached}
                 language={language}
               />
               <div className="summary-primary-row distance-map-overlay">
@@ -1726,7 +1826,7 @@ export default function ShorelineApp() {
                 </div>
               ) : (
                 <div className="instrument-meta">
-                  <span className={`current-depth-footer ${currentDepthState}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}><strong>≈{currentDepthDisplay}</strong> m · {copy.chartDepth}</span>
+                  <span className={`current-depth-footer ${currentDepthState} ${shallowWaterActive ? "shallow" : ""}`} role="status" aria-label={currentDepthLabel} title={copy.depthDetail}><strong>≈{currentDepthDisplay}</strong> m · {shallowWaterActive ? copy.shallow : copy.chartDepth}</span>
                   <span><strong>{fix ? `±${Math.round(fix.accuracy)}` : "—"}</strong> m GPS</span>
                   <span className={`current-speed-footer ${activeSpeedViolation ? "danger" : ""}`} aria-label={`${copy.currentSpeed}: ${speedKnots === null ? "—" : speedKnots.toFixed(1)} kn`}><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
                 </div>
