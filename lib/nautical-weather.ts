@@ -2,6 +2,17 @@ import type { GeoPoint } from "./route-planning.ts";
 
 export type NauticalConditionLevel = "good" | "caution" | "danger";
 
+export type NauticalWeatherMetric =
+  | "temperature"
+  | "wind"
+  | "gusts"
+  | "waves"
+  | "rain"
+  | "visibility"
+  | "pressure"
+  | "seaTemperature"
+  | "current";
+
 export type NauticalWeatherHour = {
   time: string;
   temperatureCelsius: number | null;
@@ -53,6 +64,34 @@ export type NauticalWeatherForecast = {
   days: NauticalWeatherDay[];
 };
 
+export type NauticalWeatherMapLocation = {
+  latitude: number;
+  longitude: number;
+  hours: NauticalWeatherHour[];
+};
+
+export type NauticalWeatherMapForecast = {
+  cellKey: string;
+  fetchedAt: number;
+  locations: NauticalWeatherMapLocation[];
+};
+
+export type WeatherChartPoint = {
+  index: number;
+  time: string;
+  value: number;
+  x: number;
+  y: number;
+};
+
+export type WeatherChartModel = {
+  points: WeatherChartPoint[];
+  linePath: string;
+  areaPath: string;
+  minimum: number;
+  maximum: number;
+};
+
 type RecordValue = Record<string, unknown>;
 
 const WEATHER_HOURLY = [
@@ -77,6 +116,24 @@ const MARINE_HOURLY = [
   "swell_wave_height",
   "swell_wave_direction",
   "swell_wave_period",
+  "sea_surface_temperature",
+  "ocean_current_velocity",
+  "ocean_current_direction",
+].join(",");
+
+const MAP_WEATHER_HOURLY = [
+  "temperature_2m",
+  "precipitation_probability",
+  "pressure_msl",
+  "visibility",
+  "wind_speed_10m",
+  "wind_direction_10m",
+  "wind_gusts_10m",
+].join(",");
+
+const MAP_MARINE_HOURLY = [
+  "wave_height",
+  "wave_direction",
   "sea_surface_temperature",
   "ocean_current_velocity",
   "ocean_current_direction",
@@ -110,6 +167,38 @@ export function buildNauticalWeatherRequestUrls(point: GeoPoint) {
     length_unit: "metric",
     velocity_unit: "kn",
   });
+  return {
+    weather: `https://api.open-meteo.com/v1/forecast?${weather}`,
+    marine: `https://marine-api.open-meteo.com/v1/marine?${marine}`,
+  };
+}
+
+export function buildNauticalWeatherMapGrid(point: GeoPoint) {
+  if (!Number.isFinite(point.latitude) || !Number.isFinite(point.longitude)) return [];
+  const latitudeStep = 0.06;
+  const longitudeStep = 0.08;
+  return Array.from({ length: 25 }, (_, index) => {
+    const row = Math.floor(index / 5) - 2;
+    const column = index % 5 - 2;
+    return {
+      latitude: Number((point.latitude + row * latitudeStep).toFixed(5)),
+      longitude: Number((point.longitude + column * longitudeStep).toFixed(5)),
+    };
+  });
+}
+
+export function buildNauticalWeatherMapRequestUrls(point: GeoPoint) {
+  const grid = buildNauticalWeatherMapGrid(point);
+  if (!grid.length) return null;
+  const shared = {
+    latitude: grid.map((entry) => entry.latitude.toFixed(5)).join(","),
+    longitude: grid.map((entry) => entry.longitude.toFixed(5)).join(","),
+    timezone: "Europe/Zagreb",
+    forecast_days: "2",
+    cell_selection: "sea",
+  };
+  const weather = new URLSearchParams({ ...shared, hourly: MAP_WEATHER_HOURLY, wind_speed_unit: "kn" });
+  const marine = new URLSearchParams({ ...shared, hourly: MAP_MARINE_HOURLY, length_unit: "metric", velocity_unit: "kn" });
   return {
     weather: `https://api.open-meteo.com/v1/forecast?${weather}`,
     marine: `https://marine-api.open-meteo.com/v1/marine?${marine}`,
@@ -219,6 +308,81 @@ export function parseNauticalWeatherForecast(weatherPayload: unknown, marinePayl
     current: buildCurrent(record(weatherRoot?.current), record(marineRoot?.current)),
     days,
   };
+}
+
+function records(value: unknown) {
+  return Array.isArray(value) ? value.map(record).filter((entry): entry is RecordValue => entry !== null) : record(value) ? [record(value) as RecordValue] : [];
+}
+
+export function parseNauticalWeatherMapForecast(weatherPayload: unknown, marinePayload: unknown, point: GeoPoint, fetchedAt = Date.now()): NauticalWeatherMapForecast | null {
+  const weatherLocations = records(weatherPayload);
+  const marineLocations = records(marinePayload);
+  const key = nauticalWeatherCellKey(point);
+  if (!key || weatherLocations.length === 0) return null;
+  const locations = weatherLocations.flatMap((weatherRoot, locationIndex): NauticalWeatherMapLocation[] => {
+    const weatherHourly = record(weatherRoot.hourly);
+    const times = strings(weatherHourly?.time);
+    if (!times.length) return [];
+    const marineRoot = marineLocations[locationIndex] ?? null;
+    const marineHourly = record(marineRoot?.hourly);
+    const marineTimes = strings(marineHourly?.time);
+    const marineIndices = new Map(marineTimes.map((time, index) => [time, index]));
+    const latitude = finite(weatherRoot.latitude) ?? finite(marineRoot?.latitude);
+    const longitude = finite(weatherRoot.longitude) ?? finite(marineRoot?.longitude);
+    if (latitude === null || longitude === null) return [];
+    return [{
+      latitude,
+      longitude,
+      hours: times.map((time, index) => buildHour(time, weatherHourly, index, marineHourly, marineIndices.get(time) ?? -1)),
+    }];
+  });
+  return locations.length ? { cellKey: key, fetchedAt, locations } : null;
+}
+
+export function nauticalWeatherMetricValue(hour: NauticalWeatherHour, metric: NauticalWeatherMetric) {
+  switch (metric) {
+    case "temperature": return hour.temperatureCelsius;
+    case "wind": return hour.windSpeedKnots;
+    case "gusts": return hour.windGustKnots;
+    case "waves": return hour.waveHeightMetres;
+    case "rain": return hour.precipitationProbabilityPercent;
+    case "visibility": return hour.visibilityKilometres;
+    case "pressure": return hour.pressureHpa;
+    case "seaTemperature": return hour.seaSurfaceTemperatureCelsius;
+    case "current": return hour.currentVelocityKnots;
+  }
+}
+
+export function buildWeatherChartModel(hours: NauticalWeatherHour[], metric: NauticalWeatherMetric, width = 320, height = 132): WeatherChartModel | null {
+  const values = hours.map((hour, index) => ({ index, time: hour.time, value: nauticalWeatherMetricValue(hour, metric) }))
+    .filter((entry): entry is { index: number; time: string; value: number } => entry.value !== null && Number.isFinite(entry.value));
+  if (!values.length || width <= 0 || height <= 0) return null;
+  const rawMinimum = Math.min(...values.map((entry) => entry.value));
+  const rawMaximum = Math.max(...values.map((entry) => entry.value));
+  const span = Math.max(rawMaximum - rawMinimum, Math.max(Math.abs(rawMaximum), 1) * 0.08);
+  const minimum = rawMinimum - span * 0.12;
+  const maximum = rawMaximum + span * 0.12;
+  const plotLeft = 10;
+  const plotRight = width - 10;
+  const plotTop = 10;
+  const plotBottom = height - 18;
+  const lastIndex = Math.max(hours.length - 1, 1);
+  const points = values.map((entry) => ({
+    ...entry,
+    x: plotLeft + entry.index / lastIndex * (plotRight - plotLeft),
+    y: plotBottom - (entry.value - minimum) / (maximum - minimum) * (plotBottom - plotTop),
+  }));
+  const linePath = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+  const areaPath = `${linePath} L${points.at(-1)?.x.toFixed(2)},${plotBottom} L${points[0].x.toFixed(2)},${plotBottom} Z`;
+  return { points, linePath, areaPath, minimum: rawMinimum, maximum: rawMaximum };
+}
+
+export function findWeatherMapHour(location: NauticalWeatherMapLocation, time: string) {
+  return location.hours.find((hour) => hour.time === time) ?? null;
+}
+
+export function nauticalWeatherMapCanBeReused(forecast: NauticalWeatherMapForecast, cellKey: string | null, now = Date.now()) {
+  return forecast.cellKey === cellKey && Number.isFinite(forecast.fetchedAt) && now >= forecast.fetchedAt && now - forecast.fetchedAt <= 3 * 60 * 60 * 1_000;
 }
 
 function max(values: Array<number | null>) {

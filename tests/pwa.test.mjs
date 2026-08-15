@@ -35,7 +35,7 @@ test("manifest describes a German portrait navigation utility with matching colo
 
 test("layout version-pins the manifest so Android cannot reuse a stale install definition", async () => {
   const layout = await readFile("app/layout.tsx", "utf8");
-  assert.match(layout, /manifest:\s*["']\/manifest\.webmanifest\?v=18["']/);
+  assert.match(layout, /manifest:\s*["']\/manifest\.webmanifest\?v=19["']/);
 });
 
 test("PWA and Apple touch icons are real PNG assets", async () => {
@@ -56,7 +56,7 @@ test("service worker precaches the complete install shell", async () => {
 
   for (const asset of [
     "/manifest.webmanifest",
-    "/manifest.webmanifest?v=18",
+    "/manifest.webmanifest?v=19",
     "/icons/icon-192.png",
     "/icons/icon-512.png",
     "/icons/apple-touch-icon.png",
@@ -71,7 +71,7 @@ test("service worker precaches the complete install shell", async () => {
 
 test("service worker rotates caches and provides offline navigation fallback", async () => {
   const serviceWorker = await readFile("public/sw.js", "utf8");
-  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v35"/);
+  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v36"/);
   assert.match(serviceWorker, /OFFLINE_CACHE_PREFIX\s*=\s*"shoreline-watch-offline-"/);
   assert.match(serviceWorker, /key !== CACHE_NAME && !key\.startsWith\(OFFLINE_CACHE_PREFIX\)/);
   assert.match(serviceWorker, /event\.request\.mode === "navigate"/);
