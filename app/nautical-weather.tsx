@@ -2,27 +2,37 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
+  buildNauticalWeatherMapRequestUrls,
   buildNauticalWeatherRequestUrls,
   classifyNauticalConditions,
   compassLabel,
   getBestBoatingWindow,
+  nauticalWeatherMapCanBeReused,
   nauticalForecastCanBeReused,
   nauticalWeatherCellKey,
+  parseNauticalWeatherMapForecast,
   parseNauticalWeatherForecast,
   type NauticalConditionLevel,
   type NauticalWeatherDay,
   type NauticalWeatherForecast,
   type NauticalWeatherHour,
+  type NauticalWeatherMapForecast,
+  type NauticalWeatherMetric,
 } from "../lib/nautical-weather";
 import type { GeoPoint } from "../lib/route-planning";
+import { getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
+import WeatherChart from "./weather-chart";
+import WeatherMap from "./weather-map";
 
 const STORAGE_KEY = "shoreline-nautical-weather-v1";
+const MAP_STORAGE_KEY = "shoreline-nautical-weather-map-v1";
 
 type Props = {
   point: GeoPoint | null;
   active: boolean;
   language: "de" | "en";
   online: boolean;
+  coastline: CoastlinePack | null;
 };
 
 const TEXT = {
@@ -72,6 +82,13 @@ const TEXT = {
     highGusts: "kräftige Böen",
     highWaves: "höhere Wellen",
     lowVisibility: "eingeschränkte Sicht",
+    tapMetric: "Wert antippen für den exakten Tagesverlauf",
+    dailyCourse: "Tagesverlauf",
+    weatherMap: "Wetterkarte",
+    mapDetail: "Räumliche Modellwerte rund um das Boot",
+    temperature: "Temperatur",
+    mapLoading: "Lokale Kartenwerte werden geladen",
+    close: "Schließen",
   },
   en: {
     title: "Nautical weather",
@@ -119,6 +136,13 @@ const TEXT = {
     highGusts: "strong gusts",
     highWaves: "higher waves",
     lowVisibility: "reduced visibility",
+    tapMetric: "Tap a value for its exact daily course",
+    dailyCourse: "Daily course",
+    weatherMap: "Weather map",
+    mapDetail: "Spatial model values around the boat",
+    temperature: "Temperature",
+    mapLoading: "Loading local map values",
+    close: "Close",
   },
 };
 
@@ -166,11 +190,15 @@ function riskCopy(level: NauticalConditionLevel, copy: { good: string; caution: 
       : { title: copy.good, detail: copy.goodDetail };
 }
 
-export default function NauticalWeather({ point, active, language, online }: Props) {
+export default function NauticalWeather({ point, active, language, online, coastline }: Props) {
   const copy = TEXT[language];
   const [forecast, setForecast] = useState<NauticalWeatherForecast | null>(null);
+  const [mapForecast, setMapForecast] = useState<NauticalWeatherMapForecast | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "ready" | "offline" | "error">("idle");
+  const [mapState, setMapState] = useState<"idle" | "loading" | "ready" | "offline" | "error">("idle");
   const [selectedDay, setSelectedDay] = useState(0);
+  const [selectedMetric, setSelectedMetric] = useState<NauticalWeatherMetric | null>(null);
+  const [selectedHourIndex, setSelectedHourIndex] = useState<number | null>(null);
   const [reloadSequence, setReloadSequence] = useState(0);
   const cellKey = point ? nauticalWeatherCellKey(point) : null;
   const queryPoint = useMemo<GeoPoint | null>(() => {
@@ -191,6 +219,23 @@ export default function NauticalWeather({ point, active, language, online }: Pro
         }
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [cellKey]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const saved = window.localStorage.getItem(MAP_STORAGE_KEY);
+      if (!saved) return;
+      try {
+        const cached = JSON.parse(saved) as NauticalWeatherMapForecast;
+        if (nauticalWeatherMapCanBeReused(cached, cellKey)) {
+          setMapForecast(cached);
+          setMapState("offline");
+        }
+      } catch {
+        window.localStorage.removeItem(MAP_STORAGE_KEY);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -235,6 +280,46 @@ export default function NauticalWeather({ point, active, language, online }: Pro
     return () => { window.clearTimeout(timer); window.clearInterval(interval); controller.abort(); };
   }, [active, cellKey, queryPoint, reloadSequence]);
 
+  useEffect(() => {
+    if (!active || !queryPoint || !cellKey) return;
+    const controller = new AbortController();
+    const load = async () => {
+      setMapState((current) => current === "offline" ? current : "loading");
+      const urls = buildNauticalWeatherMapRequestUrls(queryPoint);
+      if (!urls) { setMapState("error"); return; }
+      try {
+        const [weatherResponse, marineResponse] = await Promise.all([
+          fetch(urls.weather, { signal: controller.signal, cache: "no-store" }),
+          fetch(urls.marine, { signal: controller.signal, cache: "no-store" }),
+        ]);
+        if (!weatherResponse.ok || !marineResponse.ok) throw new Error("Map forecast unavailable");
+        const parsed = parseNauticalWeatherMapForecast(await weatherResponse.json(), await marineResponse.json(), queryPoint);
+        if (!parsed) throw new Error("Map forecast invalid");
+        if (controller.signal.aborted) return;
+        setMapForecast(parsed);
+        setMapState("ready");
+        window.localStorage.setItem(MAP_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {
+        if (controller.signal.aborted) return;
+        try {
+          const saved = window.localStorage.getItem(MAP_STORAGE_KEY);
+          const cached = saved ? JSON.parse(saved) as NauticalWeatherMapForecast : null;
+          if (cached && nauticalWeatherMapCanBeReused(cached, cellKey)) {
+            setMapForecast(cached);
+            setMapState("offline");
+            return;
+          }
+        } catch {
+          window.localStorage.removeItem(MAP_STORAGE_KEY);
+        }
+        setMapState("error");
+      }
+    };
+    const timer = window.setTimeout(load, 120);
+    const interval = window.setInterval(load, 30 * 60 * 1_000);
+    return () => { window.clearTimeout(timer); window.clearInterval(interval); controller.abort(); };
+  }, [active, cellKey, queryPoint, reloadSequence]);
+
   const day = forecast?.days[selectedDay] ?? null;
   const conditions = useMemo(() => day ? classifyNauticalConditions(dayRiskHours(day)) : "good", [day]);
   const conditionCopy = riskCopy(conditions, copy);
@@ -260,6 +345,25 @@ export default function NauticalWeather({ point, active, language, online }: Pro
     (maxWave ?? 0) >= .8 ? copy.highWaves : null,
     (minVisibility ?? 99) < 5 ? copy.lowVisibility : null,
   ].filter(Boolean);
+  const metricOptions: Array<{ id: NauticalWeatherMetric; label: string; unit: string; digits: number; symbol: string }> = [
+    { id: "temperature", label: copy.temperature, unit: "°C", digits: 0, symbol: "◉" },
+    { id: "wind", label: copy.wind, unit: "kn", digits: 0, symbol: "↓" },
+    { id: "gusts", label: copy.gusts, unit: "kn", digits: 0, symbol: "↯" },
+    { id: "waves", label: copy.waves, unit: "m", digits: 1, symbol: "≋" },
+    { id: "rain", label: copy.rain, unit: "%", digits: 0, symbol: "⌁" },
+    { id: "visibility", label: copy.visibility, unit: "km", digits: 1, symbol: "◌" },
+    { id: "pressure", label: copy.pressure, unit: "hPa", digits: 0, symbol: "◎" },
+    { id: "seaTemperature", label: copy.sea, unit: "°C", digits: 0, symbol: "≈" },
+    { id: "current", label: copy.current, unit: "kn", digits: 1, symbol: "⇢" },
+  ];
+  const visualMetric = selectedMetric ?? "wind";
+  const visualMetricConfig = metricOptions.find((entry) => entry.id === visualMetric) ?? metricOptions[1];
+  const effectiveHourIndex = selectedHourIndex ?? Math.max(0, Math.min(23, selectedDay === 0 ? Number(forecast?.current?.time.slice(11, 13) ?? 12) : 12));
+  const selectedMapTime = day?.hours[effectiveHourIndex]?.time ?? day?.hours[0]?.time ?? "";
+  const mapLocations = mapForecast?.cellKey === cellKey ? mapForecast.locations : [];
+  const mapSegments = useMemo(() => coastline && queryPoint
+    ? getNearbyShorelineSegments(coastline, queryPoint.longitude, queryPoint.latitude, 30_000, 900)
+    : [], [coastline, queryPoint]);
 
   if (!point) return <section className="weather-panel weather-empty"><span className="weather-empty-symbol" aria-hidden="true">⌖</span><strong>{copy.waiting}</strong><p>{copy.waitingDetail}</p></section>;
   if (!forecast && state === "loading") return <section className="weather-panel weather-empty weather-loading"><span className="weather-loader" aria-hidden="true" /><strong>{copy.loading}</strong><small>{point.latitude.toFixed(4)}° N · {point.longitude.toFixed(4)}° E</small></section>;
@@ -272,7 +376,7 @@ export default function NauticalWeather({ point, active, language, online }: Pro
     </header>
 
     <div className="weather-day-switch" role="tablist" aria-label={copy.title}>
-      {forecast.days.slice(0, 2).map((entry, index) => <button key={entry.date} type="button" role="tab" aria-selected={selectedDay === index} className={selectedDay === index ? "active" : ""} onClick={() => setSelectedDay(index)}>
+      {forecast.days.slice(0, 2).map((entry, index) => <button key={entry.date} type="button" role="tab" aria-selected={selectedDay === index} className={selectedDay === index ? "active" : ""} onClick={() => { setSelectedDay(index); setSelectedHourIndex(null); }}>
         <span>{index === 0 ? copy.today : copy.tomorrow}</span>
         <small>{new Date(`${entry.date}T12:00:00`).toLocaleDateString(language, { weekday: "short", day: "2-digit", month: "2-digit" })}</small>
       </button>)}
@@ -288,12 +392,26 @@ export default function NauticalWeather({ point, active, language, online }: Pro
       <div className="weather-hero-range"><small>{copy.dayRange}</small><b>{value(day.temperatureMinCelsius)}° / {value(day.temperatureMaxCelsius)}°</b></div>
     </div>
 
+    <p className="weather-metric-hint">{copy.tapMetric}</p>
     <div className="weather-primary-grid">
-      <article><span className="weather-metric-icon wind-direction" style={{ "--direction": `${selectedCurrent.windDirectionDegrees ?? 0}deg` } as CSSProperties}>↓</span><span><small>{copy.wind} {compassLabel(selectedCurrent.windDirectionDegrees, language)}</small><strong>{value(selectedCurrent.windSpeedKnots)} <em>kn</em></strong><b>{copy.gusts} {value(selectedCurrent.windGustKnots)} kn</b></span></article>
-      <article><span className="weather-metric-icon wave-icon">≋</span><span><small>{copy.waves}</small><strong>{value(selectedCurrent.waveHeightMetres, 1)} <em>m</em></strong><b>{selectedCurrent.wavePeriodSeconds === null ? copy.noMarine : `${copy.period} ${value(selectedCurrent.wavePeriodSeconds)} s`}</b></span></article>
-      <article><span className="weather-metric-icon">◉</span><span><small>{copy.air} / {copy.sea}</small><strong>{value(selectedCurrent.temperatureCelsius)}° <em>/ {value(selectedCurrent.seaSurfaceTemperatureCelsius)}°</em></strong><b>{value(selectedCurrent.apparentTemperatureCelsius)}° {language === "de" ? "gefühlt" : "feels"}</b></span></article>
-      <article><span className="weather-metric-icon">◌</span><span><small>{copy.visibility}</small><strong>{value(selectedCurrent.visibilityKilometres, 1)} <em>km</em></strong><b>{copy.pressure} {value(selectedCurrent.pressureHpa)} hPa</b></span></article>
+      <button type="button" className={selectedMetric === "wind" ? "active" : ""} aria-pressed={selectedMetric === "wind"} onClick={() => setSelectedMetric("wind")}><span className="weather-metric-icon wind-direction" style={{ "--direction": `${selectedCurrent.windDirectionDegrees ?? 0}deg` } as CSSProperties}>↓</span><span><small>{copy.wind} {compassLabel(selectedCurrent.windDirectionDegrees, language)}</small><strong>{value(selectedCurrent.windSpeedKnots)} <em>kn</em></strong><b>{copy.gusts} {value(selectedCurrent.windGustKnots)} kn</b></span></button>
+      <button type="button" className={selectedMetric === "waves" ? "active" : ""} aria-pressed={selectedMetric === "waves"} onClick={() => setSelectedMetric("waves")}><span className="weather-metric-icon wave-icon">≋</span><span><small>{copy.waves}</small><strong>{value(selectedCurrent.waveHeightMetres, 1)} <em>m</em></strong><b>{selectedCurrent.wavePeriodSeconds === null ? copy.noMarine : `${copy.period} ${value(selectedCurrent.wavePeriodSeconds)} s`}</b></span></button>
+      <button type="button" className={selectedMetric === "temperature" ? "active" : ""} aria-pressed={selectedMetric === "temperature"} onClick={() => setSelectedMetric("temperature")}><span className="weather-metric-icon">◉</span><span><small>{copy.air} / {copy.sea}</small><strong>{value(selectedCurrent.temperatureCelsius)}° <em>/ {value(selectedCurrent.seaSurfaceTemperatureCelsius)}°</em></strong><b>{value(selectedCurrent.apparentTemperatureCelsius)}° {language === "de" ? "gefühlt" : "feels"}</b></span></button>
+      <button type="button" className={selectedMetric === "visibility" ? "active" : ""} aria-pressed={selectedMetric === "visibility"} onClick={() => setSelectedMetric("visibility")}><span className="weather-metric-icon">◌</span><span><small>{copy.visibility}</small><strong>{value(selectedCurrent.visibilityKilometres, 1)} <em>km</em></strong><b>{copy.pressure} {value(selectedCurrent.pressureHpa)} hPa</b></span></button>
     </div>
+
+    {selectedMetric && <section className="weather-visual-section weather-course-section">
+      <div className="weather-section-title"><span><strong>{copy.dailyCourse}</strong><small>{visualMetricConfig.label} · {forecast.timezone}</small></span><button type="button" onClick={() => setSelectedMetric(null)} aria-label={copy.close}>×</button></div>
+      <WeatherChart hours={day.hours} metric={selectedMetric} label={visualMetricConfig.label} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} selectedIndex={effectiveHourIndex} onSelect={setSelectedHourIndex} language={language} />
+    </section>}
+
+    <section className="weather-visual-section weather-map-section">
+      <div className="weather-section-title"><span><strong>{copy.weatherMap}</strong><small>{copy.mapDetail}</small></span><time>{selectedMapTime.slice(11, 16)}</time></div>
+      <div className="weather-metric-tabs" role="tablist" aria-label={copy.weatherMap}>
+        {metricOptions.map((entry) => <button key={entry.id} type="button" role="tab" aria-selected={visualMetric === entry.id} className={visualMetric === entry.id ? "active" : ""} onClick={() => setSelectedMetric(entry.id)}><span aria-hidden="true">{entry.symbol}</span>{entry.label}</button>)}
+      </div>
+      {mapLocations.length && selectedMapTime ? <WeatherMap point={point} locations={mapLocations} segments={mapSegments} metric={visualMetric} time={selectedMapTime} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} language={language} loading={mapState === "loading"} /> : <div className="weather-map-placeholder"><span className="weather-loader" aria-hidden="true"/><small>{mapState === "error" ? copy.unavailable : copy.mapLoading}</small></div>}
+    </section>
 
     {bestWindow && <article className={`weather-window ${bestWindow.level}`}>
       <span className="weather-window-clock" aria-hidden="true">◷</span>
@@ -317,8 +435,8 @@ export default function NauticalWeather({ point, active, language, online }: Pro
 
     <section className="weather-details-grid">
       <article><small>{copy.swell}</small><strong>{value(selectedCurrent.swellHeightMetres, 1)} m</strong><span>{compassLabel(selectedCurrent.swellDirectionDegrees, language)} · {value(selectedCurrent.swellPeriodSeconds)} s</span></article>
-      <article><small>{copy.current}</small><strong>{value(selectedCurrent.currentVelocityKnots, 1)} kn</strong><span>{compassLabel(selectedCurrent.currentDirectionDegrees, language)} · {selectedCurrent.currentVelocityKnots !== null && selectedCurrent.currentVelocityKnots < .2 ? copy.calm : ""}</span></article>
-      <article><small>{hasThunder ? copy.thunder : copy.rainRisk}</small><strong>{value(maxRain)}%</strong><span>{value(maxOf(riskHours, (hour) => hour.precipitationMillimetres), 1)} mm/h {copy.max.toLowerCase()}</span></article>
+      <button type="button" className={selectedMetric === "current" ? "active" : ""} onClick={() => setSelectedMetric("current")}><small>{copy.current}</small><strong>{value(selectedCurrent.currentVelocityKnots, 1)} kn</strong><span>{compassLabel(selectedCurrent.currentDirectionDegrees, language)} · {selectedCurrent.currentVelocityKnots !== null && selectedCurrent.currentVelocityKnots < .2 ? copy.calm : ""}</span></button>
+      <button type="button" className={selectedMetric === "rain" ? "active" : ""} onClick={() => setSelectedMetric("rain")}><small>{hasThunder ? copy.thunder : copy.rainRisk}</small><strong>{value(maxRain)}%</strong><span>{value(maxOf(riskHours, (hour) => hour.precipitationMillimetres), 1)} mm/h {copy.max.toLowerCase()}</span></button>
       <article><small>{copy.sunrise} / {copy.sunset}</small><strong>{time(day.sunrise)}</strong><span>{time(day.sunset)}</span></article>
     </section>
 

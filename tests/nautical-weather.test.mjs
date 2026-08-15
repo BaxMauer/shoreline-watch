@@ -1,12 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildNauticalWeatherMapGrid,
+  buildNauticalWeatherMapRequestUrls,
   buildNauticalWeatherRequestUrls,
+  buildWeatherChartModel,
   classifyNauticalConditions,
   compassLabel,
+  findWeatherMapHour,
   getBestBoatingWindow,
   nauticalForecastCanBeReused,
+  nauticalWeatherMapCanBeReused,
   nauticalWeatherCellKey,
+  nauticalWeatherMetricValue,
+  parseNauticalWeatherMapForecast,
   parseNauticalWeatherForecast,
 } from "../lib/nautical-weather.ts";
 
@@ -145,4 +152,54 @@ test("compass labels are localized", () => {
   assert.equal(compassLabel(45, "de"), "NO");
   assert.equal(compassLabel(45, "en"), "NE");
   assert.equal(compassLabel(null, "de"), "—");
+});
+
+test("weather map requests a unique five by five sea grid in one batch", () => {
+  const point = { latitude: 43.8, longitude: 15.55 };
+  const grid = buildNauticalWeatherMapGrid(point);
+  assert.equal(grid.length, 25);
+  assert.equal(new Set(grid.map((entry) => `${entry.latitude}:${entry.longitude}`)).size, 25);
+  assert.deepEqual(grid[12], point);
+  const urls = buildNauticalWeatherMapRequestUrls(point);
+  assert.ok(urls);
+  const weather = new URL(urls.weather);
+  const marine = new URL(urls.marine);
+  assert.equal(weather.searchParams.get("latitude").split(",").length, 25);
+  assert.equal(weather.searchParams.get("longitude").split(",").length, 25);
+  assert.equal(weather.searchParams.get("timezone"), "Europe/Zagreb");
+  assert.match(weather.searchParams.get("hourly"), /wind_gusts_10m/);
+  assert.match(marine.searchParams.get("hourly"), /ocean_current_velocity/);
+});
+
+test("batched map forecasts align weather and marine values by location and hour", () => {
+  const secondWeather = structuredClone(weatherPayload);
+  secondWeather.latitude = 43.86;
+  secondWeather.longitude = 15.63;
+  secondWeather.hourly.wind_speed_10m = constant(14);
+  const secondMarine = structuredClone(marinePayload);
+  secondMarine.latitude = 43.86;
+  secondMarine.longitude = 15.63;
+  secondMarine.hourly.wave_height = constant(.7);
+  const mapped = parseNauticalWeatherMapForecast([weatherPayload, secondWeather], [marinePayload, secondMarine], { latitude: 43.8, longitude: 15.55 }, 1_000);
+  assert.ok(mapped);
+  assert.equal(mapped.locations.length, 2);
+  assert.equal(findWeatherMapHour(mapped.locations[1], "2026-08-15T12:00").windSpeedKnots, 14);
+  assert.equal(findWeatherMapHour(mapped.locations[1], "2026-08-15T12:00").waveHeightMetres, .7);
+  assert.equal(nauticalWeatherMapCanBeReused(mapped, mapped.cellKey, 1_000 + 3 * 60 * 60 * 1_000), true);
+  assert.equal(nauticalWeatherMapCanBeReused(mapped, mapped.cellKey, 1_001 + 3 * 60 * 60 * 1_000), false);
+});
+
+test("daily chart keeps all 24 hourly values and handles flat and missing series", () => {
+  const forecast = parseNauticalWeatherForecast(weatherPayload, marinePayload, { latitude: 43.8, longitude: 15.6 });
+  const hours = forecast.days[0].hours.map((hour, index) => ({ ...hour, windSpeedKnots: index }));
+  const chart = buildWeatherChartModel(hours, "wind");
+  assert.ok(chart);
+  assert.equal(chart.points.length, 24);
+  assert.equal(chart.minimum, 0);
+  assert.equal(chart.maximum, 23);
+  assert.match(chart.linePath, /^M/);
+  assert.match(chart.areaPath, /Z$/);
+  assert.equal(nauticalWeatherMetricValue(hours[7], "wind"), 7);
+  assert.ok(buildWeatherChartModel(forecast.days[0].hours, "pressure"));
+  assert.equal(buildWeatherChartModel(forecast.days[0].hours.map((hour) => ({ ...hour, waveHeightMetres: null })), "waves"), null);
 });

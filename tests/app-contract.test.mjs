@@ -222,6 +222,8 @@ test("nearest shore, warning ring, collision course, and boat remain separate SV
 test("tracking exposes distance, route, and nautical weather tabs", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   const weather = await readFile(new URL("../app/nautical-weather.tsx", import.meta.url), "utf8");
+  const chart = await readFile(new URL("../app/weather-chart.tsx", import.meta.url), "utf8");
+  const weatherMap = await readFile(new URL("../app/weather-map.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(app, /type TrackerTab = "distance" \| "route" \| "weather"/);
   assert.match(app, /<nav className="tracker-tabs"/);
@@ -230,6 +232,14 @@ test("tracking exposes distance, route, and nautical weather tabs", async () => 
   assert.match(weather, /Promise\.all\(\[/);
   assert.match(weather, /forecast\.days\.slice\(0, 2\)/);
   assert.match(weather, /getBestBoatingWindow\(day\)/);
+  assert.match(weather, /setSelectedMetric\("wind"\)/);
+  assert.match(weather, /<WeatherChart hours=\{day\.hours\}/);
+  assert.match(weather, /<WeatherMap point=\{point\}/);
+  assert.match(weather, /buildNauticalWeatherMapRequestUrls\(queryPoint\)/);
+  assert.match(chart, /type="range"/);
+  assert.match(chart, /onPointerDown=\{selectFromPointer\}/);
+  assert.match(weatherMap, /weather-map-heat/);
+  assert.match(weatherMap, /weather-map-coast/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(styles, /weather-wave/);
   assert.match(planner, /new Worker\(/);
