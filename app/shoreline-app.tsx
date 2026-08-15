@@ -1923,7 +1923,7 @@ export default function ShorelineApp() {
             />
           </div>
           <div hidden={trackerTab !== "weather"} className="weather-tab-panel">
-            <NauticalWeather point={fix} active={trackerTab === "weather"} language={language} online={online} coastline={pack} />
+            <NauticalWeather point={fix} active={trackerTab === "weather"} language={language} online={online} coastline={pack} mapFeatures={mapFeaturePack} />
           </div>
           </div>
 
