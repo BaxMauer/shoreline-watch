@@ -220,6 +220,7 @@ test("place search converts land centroids into navigable water targets", async 
 
 test("route destination requires a stationary long press or entered coordinates", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /const navigableDestination = resolvePlaceSearchTarget\(pack, destination, undefined, start\)/);
   assert.match(planner, /longPressTimer\.current = window\.setTimeout/);
   assert.match(planner, /shouldCommitRouteMapLongPress\(\{/);
   assert.match(planner, /elapsedMs: Date\.now\(\) - activeCandidate\.startedAt/);
@@ -365,6 +366,7 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
   assert.match(planner, /className="route-live-distance"/);
   assert.match(planner, /route-live-go-no-go \$\{goNoGoState\}/);
+  assert.match(planner, /className="route-live-cockpit"/);
   assert.match(planner, /className="route-live-footer"/);
   assert.match(planner, /<small>{copy\.chartDepth}<\/small>/);
   assert.match(planner, /<small>{copy\.currentSpeed}<\/small>/);

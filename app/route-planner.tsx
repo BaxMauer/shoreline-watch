@@ -335,6 +335,11 @@ export default function RoutePlanner({
   const pendingPlaceTarget = useRef<PlaceSearchResult | null>(null);
   const depthLoadState = useRef({ key: "", loaded: 0, failed: 0 });
   const routeEditor = useRef<HTMLDetailsElement | null>(null);
+  const routePlanner = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (journeyState === "active") routePlanner.current?.scrollTo({ top: 0 });
+  }, [journeyState]);
 
   const effectiveStart = startMode === "manual" ? manualStart : fix;
   const parsedManualStart = startMode === "manual" ? {
@@ -441,15 +446,16 @@ export default function RoutePlanner({
   }, [effectiveStart, target]);
 
   const selectTarget = useCallback((destination: GeoPoint, start = effectiveStart) => {
-    setTarget(destination);
-    setTargetLatitude(coordinateText(destination.latitude));
-    setTargetLongitude(coordinateText(destination.longitude));
+    const navigableDestination = resolvePlaceSearchTarget(pack, destination, undefined, start);
+    setTarget(navigableDestination);
+    setTargetLatitude(coordinateText(navigableDestination.latitude));
+    setTargetLongitude(coordinateText(navigableDestination.longitude));
     setInputError(false);
     if (start) {
-      fitRoute(start, destination);
-      calculate(destination, start);
+      fitRoute(start, navigableDestination);
+      calculate(navigableDestination, start);
     }
-  }, [calculate, effectiveStart, fitRoute]);
+  }, [calculate, effectiveStart, fitRoute, pack]);
 
   const selectStart = useCallback((start: GeoPoint) => {
     setStartMode("manual");
@@ -919,11 +925,22 @@ export default function RoutePlanner({
   const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
 
   return (
-    <section className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
+    <section ref={routePlanner} className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <header className="route-screen-header">
         <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : copy.following}</small></span>
         <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
       </header>
+
+      {activeJourney && <div className="route-live-cockpit">
+        <div className="route-live-distance" aria-live="polite">
+          <small>{copy.nearestShore}</small>
+          <span><strong>{activeDistanceValue}</strong><em>{activeDistanceUnit}</em></span>
+        </div>
+        <div className={`route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+          <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+          <b>{activeGoNoGoLabel}</b>
+        </div>
+      </div>}
 
       {journeyState === "planning" && <div className="route-place-search">
         <form onSubmit={(event) => { event.preventDefault(); void runPlaceSearch(); }} role="search">
@@ -984,21 +1001,6 @@ export default function RoutePlanner({
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
         </div>}
         {journeyState === "planning" && <div className={`route-long-press-hint ${longPressActive ? "active" : ""}`} role="status"><span />{longPressActive ? copy.holdingPoint : mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget}</div>}
-        {activeJourney && <>
-          <div className="route-live-distance" aria-live="polite">
-            <small>{copy.nearestShore}</small>
-            <span><strong>{activeDistanceValue}</strong><em>{activeDistanceUnit}</em></span>
-          </div>
-          <div className={`route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
-            <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
-            <b>{activeGoNoGoLabel}</b>
-          </div>
-          {route && <div className="route-live-guidance" aria-live="polite">
-            <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
-            <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
-            <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
-          </div>}
-        </>}
         <div className="route-layer-tools">
           <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
@@ -1011,6 +1013,12 @@ export default function RoutePlanner({
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
         <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}</div>
       </div>
+
+      {activeJourney && route && <div className="route-live-guidance" aria-live="polite">
+        <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
+        <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
+        <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
+      </div>}
 
       {activeJourney && <div className="route-live-footer" aria-live="polite">
         <span className={currentDepthState}><small>{copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay} m` : "—"}</strong></span>
