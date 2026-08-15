@@ -26,6 +26,7 @@ import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
 import OfflinePackageManager from "./offline-package-manager";
 import WindOverlay from "./wind-overlay";
+import NauticalWeather from "./nautical-weather";
 import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
 import { buildWindRequestUrl, parseWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
@@ -66,7 +67,7 @@ type RiskLevel = "none" | "warning" | "danger";
 type Language = "de" | "en";
 type Theme = "ocean" | "xp" | "dark" | "nautical";
 type VisualSignalKind = "distance" | "speed" | "safe";
-type TrackerTab = "distance" | "route";
+type TrackerTab = "distance" | "route" | "weather";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -242,6 +243,7 @@ const COPY = {
     locationTimeout: "GPS-Zeitüberschreitung — App sichtbar lassen.",
     distanceTab: "Abstand",
     routeTab: "Route",
+    weatherTab: "Wetter",
   },
   en: {
     online: "Online",
@@ -387,6 +389,7 @@ const COPY = {
     locationTimeout: "GPS timed out — keep the app visible.",
     distanceTab: "Distance",
     routeTab: "Route",
+    weatherTab: "Weather",
   },
 } as const;
 
@@ -1919,6 +1922,9 @@ export default function ShorelineApp() {
               onToggleWind={() => setShowWind((value) => !value)}
             />
           </div>
+          <div hidden={trackerTab !== "weather"} className="weather-tab-panel">
+            <NauticalWeather point={fix} active={trackerTab === "weather"} language={language} online={online} />
+          </div>
           </div>
 
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
@@ -1926,6 +1932,7 @@ export default function ShorelineApp() {
           <nav className="tracker-tabs" aria-label={language === "de" ? "Ansicht" : "View"}>
             <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => setTrackerTab("distance")}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
             <button type="button" className={trackerTab === "route" ? "active" : ""} aria-current={trackerTab === "route" ? "page" : undefined} onClick={() => setTrackerTab("route")}><span aria-hidden="true">↗</span>{copy.routeTab}</button>
+            <button type="button" className={trackerTab === "weather" ? "active" : ""} aria-current={trackerTab === "weather" ? "page" : undefined} onClick={() => setTrackerTab("weather")}><span aria-hidden="true">≋</span>{copy.weatherTab}</button>
           </nav>
 
           {mode === "demo" && trackerTab === "distance" && (
