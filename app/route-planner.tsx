@@ -64,6 +64,8 @@ import {
 } from "../lib/navigation-metrics";
 import type { WarningConfig } from "../lib/warning-config";
 import type { GoNoGoState } from "../lib/navigation-display";
+import WindOverlay from "./wind-overlay";
+import { windCompassLabel, type WindSample } from "../lib/wind";
 
 type Language = "de" | "en";
 type Fix = GeoPoint & { speed: number | null; accuracy?: number; heading?: number | null };
@@ -142,6 +144,8 @@ const COPY = {
     depthUnavailable: "Tiefenebene momentan nicht verfügbar",
     depthSource: "EMODnet 2024 · Übersicht",
     shallow: "SEICHT",
+    wind: "Wind",
+    gust: "Böen",
     pointsPanel: "Start & Ziel",
     optionsPanel: "Routenoptionen",
     edit: "Bearbeiten",
@@ -237,6 +241,8 @@ const COPY = {
     depthUnavailable: "Depth layer is currently unavailable",
     depthSource: "EMODnet 2024 · overview",
     shallow: "SHALLOW",
+    wind: "Wind",
+    gust: "Gusts",
     pointsPanel: "Start & destination",
     optionsPanel: "Route options",
     edit: "Edit",
@@ -281,6 +287,9 @@ export default function RoutePlanner({
   currentDepthState,
   mapFeaturePack,
   goNoGoState,
+  windSample,
+  showWind,
+  onToggleWind,
 }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
@@ -293,6 +302,9 @@ export default function RoutePlanner({
   currentDepthState: CurrentDepthState;
   mapFeaturePack: MapFeaturePack | null;
   goNoGoState: GoNoGoState;
+  windSample: WindSample | null;
+  showWind: boolean;
+  onToggleWind: () => void;
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
@@ -1001,6 +1013,7 @@ export default function RoutePlanner({
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${fix?.heading ?? 0})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
+        <WindOverlay sample={windSample} visible={showWind} />
         {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
           <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
@@ -1008,6 +1021,7 @@ export default function RoutePlanner({
         {journeyState === "planning" && <div className={`route-long-press-hint ${longPressActive ? "active" : ""}`} role="status"><span />{longPressActive ? copy.holdingPoint : mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget}</div>}
         <div className="route-layer-tools">
           <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
+          <button type="button" className={showWind ? "active wind" : "wind"} aria-pressed={showWind} onClick={onToggleWind} title={windSample ? `${copy.gust}: ${Math.round(windSample.gustKnots)} kn` : copy.wind}><span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }}>↓</span>{windSample ? `${copy.wind} ${windCompassLabel(windSample.directionDegrees, language)} · ${Math.round(windSample.speedKnots)} kn` : copy.wind}</button>
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
         </div>
         <div className="route-zoom" aria-label="Zoom">
@@ -1016,7 +1030,7 @@ export default function RoutePlanner({
           <button className="route-recenter" type="button" aria-label={copy.recenter} onClick={recenterMap}>◎</button>
         </div>
         <div className="route-scale"><span /><small>{scaleLabel}</small></div>
-        <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}</div>
+        <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}{showWind && windSample ? " · Wind: Open-Meteo" : ""}</div>
       </div>
 
       {activeJourney && route && <div className="route-live-guidance" aria-live="polite">

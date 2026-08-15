@@ -157,6 +157,19 @@ test("offline packages and shallow-water marking are exposed as user controls", 
   assert.match(app, /className="shallow-water-zone"/);
 });
 
+test("wind data drives a reusable animated overlay on distance and route maps", async () => {
+  const overlay = await readFile(new URL("../app/wind-overlay.tsx", import.meta.url), "utf8");
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  const windRoute = await readFile(new URL("../app/api/wind/route.ts", import.meta.url), "utf8");
+  assert.match(app, /fetch\(`\/api\/wind\?latitude=/);
+  assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} \/>/);
+  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} \/>/);
+  assert.match(overlay, /requestAnimationFrame\(draw\)/);
+  assert.match(overlay, /prefers-reduced-motion: reduce/);
+  assert.match(windRoute, /AbortSignal\.timeout\(6_500\)/);
+  assert.match(windRoute, /max-age=600, stale-while-revalidate=1800/);
+});
+
 test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {
   assert.match(app, /localStorage\.getItem\(DEBUG_STORAGE_KEY\)/);
   assert.match(app, /localStorage\.setItem\(DEBUG_STORAGE_KEY, String\(debugEnabled\)\)/);

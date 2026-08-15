@@ -25,7 +25,9 @@ import { getGeneratedAlertPeak } from "../lib/audio-levels";
 import { APP_VERSION } from "../lib/app-version";
 import RoutePlanner from "./route-planner";
 import OfflinePackageManager from "./offline-package-manager";
+import WindOverlay from "./wind-overlay";
 import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
+import { windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
   createStationaryState,
   distanceFromStationaryReference,
@@ -89,6 +91,8 @@ const WARNING_CONFIG_STORAGE_KEY = "shoreline-warning-config-v1";
 const AUTO_SUNLIGHT_STORAGE_KEY = "shoreline-auto-sunlight";
 const DEBUG_STORAGE_KEY = "shoreline-debug-enabled";
 const ANCHOR_WATCH_STORAGE_KEY = "shoreline-anchor-watch-v1";
+const WIND_SAMPLE_STORAGE_KEY = "shoreline-last-wind-v1";
+const WIND_LAYER_STORAGE_KEY = "shoreline-wind-layer";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
@@ -164,6 +168,9 @@ const COPY = {
     anchorDragging: "Anker driftet",
     anchorDistance: "vom Anker",
     shallow: "SEICHT",
+    wind: "Wind",
+    windGust: "Böe",
+    windWaiting: "Winddaten laden",
     diagnosticsSection: "Diagnose",
     debugMode: "Debug-Daten anzeigen",
     debugModeHint: "Zeigt lokale Live-, GPS-, Tiefen-, Alarm- und Ankerdaten. Es werden keine Daten übertragen.",
@@ -306,6 +313,9 @@ const COPY = {
     anchorDragging: "Anchor dragging",
     anchorDistance: "from anchor",
     shallow: "SHALLOW",
+    wind: "Wind",
+    windGust: "Gust",
+    windWaiting: "Loading wind",
     diagnosticsSection: "Diagnostics",
     debugMode: "Show debug data",
     debugModeHint: "Shows local live, GPS, depth, alarm and anchor data. No data is transmitted.",
@@ -720,6 +730,9 @@ export default function ShorelineApp() {
   const [currentDepthState, setCurrentDepthState] = useState<CurrentDepthState>("idle");
   const [depthDebug, setDepthDebug] = useState({ requestedAt: null as number | null, respondedAt: null as number | null, error: null as string | null });
   const [anchorWatch, setAnchorWatch] = useState<AnchorWatch | null>(null);
+  const [windSample, setWindSample] = useState<WindSample | null>(null);
+  const [windState, setWindState] = useState<"idle" | "loading" | "ready" | "offline">("idle");
+  const [showWind, setShowWind] = useState(true);
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -737,6 +750,7 @@ export default function ShorelineApp() {
   const previousSpeedViolation = useRef<boolean | null>(null);
   const warningSoundAvailableForDangerEpisode = useRef(false);
   const depthQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
+  const windQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
   const previousAnchorBreach = useRef(false);
   const copy = COPY[language];
 
@@ -748,6 +762,8 @@ export default function ShorelineApp() {
       const savedWarningConfig = window.localStorage.getItem(WARNING_CONFIG_STORAGE_KEY);
       const savedDebug = window.localStorage.getItem(DEBUG_STORAGE_KEY);
       const savedAnchorWatch = window.localStorage.getItem(ANCHOR_WATCH_STORAGE_KEY);
+      const savedWind = window.localStorage.getItem(WIND_SAMPLE_STORAGE_KEY);
+      const savedWindLayer = window.localStorage.getItem(WIND_LAYER_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -768,6 +784,14 @@ export default function ShorelineApp() {
           window.localStorage.removeItem(ANCHOR_WATCH_STORAGE_KEY);
         }
       }
+      if (savedWind) {
+        try {
+          const cached = JSON.parse(savedWind) as WindSample;
+          if (windSampleCanBeReused(cached)) { setWindSample(cached); setWindState("offline"); }
+          else window.localStorage.removeItem(WIND_SAMPLE_STORAGE_KEY);
+        } catch { window.localStorage.removeItem(WIND_SAMPLE_STORAGE_KEY); }
+      }
+      if (savedWindLayer === "false") setShowWind(false);
       setPreferencesLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -789,6 +813,11 @@ export default function ShorelineApp() {
     if (anchorWatch) window.localStorage.setItem(ANCHOR_WATCH_STORAGE_KEY, JSON.stringify(anchorWatch));
     else window.localStorage.removeItem(ANCHOR_WATCH_STORAGE_KEY);
   }, [anchorWatch, preferencesLoaded]);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    window.localStorage.setItem(WIND_LAYER_STORAGE_KEY, String(showWind));
+  }, [preferencesLoaded, showWind]);
 
   useEffect(() => {
     if (mode === "idle") return;
@@ -854,12 +883,17 @@ export default function ShorelineApp() {
   const gpsSignalProblem = gpsSignalState === "stale" || gpsSignalState === "lost";
   const gpsNavigationProblem = gpsNavigationState !== "reliable";
   const depthCellKey = fix ? depthSampleCellKey(fix) : null;
+  const currentWindCellKey = fix ? windCellKey(fix) : null;
   if (!depthCellKey || !fix) depthQueryPoint.current = null;
   else if (depthQueryPoint.current?.key !== depthCellKey) {
     depthQueryPoint.current = { key: depthCellKey, latitude: fix.latitude, longitude: fix.longitude };
   }
   const depthLatitude = depthQueryPoint.current?.latitude ?? null;
   const depthLongitude = depthQueryPoint.current?.longitude ?? null;
+  if (!currentWindCellKey || !fix) windQueryPoint.current = null;
+  else if (windQueryPoint.current?.key !== currentWindCellKey) windQueryPoint.current = { key: currentWindCellKey, latitude: fix.latitude, longitude: fix.longitude };
+  const windLatitude = windQueryPoint.current?.latitude ?? null;
+  const windLongitude = windQueryPoint.current?.longitude ?? null;
   const sunlightActive = mode !== "idle" && shouldUseSunlightMode(
     autoSunlight,
     clockNow,
@@ -904,6 +938,29 @@ export default function ShorelineApp() {
       controller.abort();
     };
   }, [depthCellKey, depthLatitude, depthLongitude, gpsSignalState, mode]);
+
+  useEffect(() => {
+    if (mode === "idle" || windLatitude === null || windLongitude === null) return;
+    const controller = new AbortController();
+    const load = () => {
+      setWindState("loading");
+      fetch(`/api/wind?latitude=${windLatitude}&longitude=${windLongitude}`, { signal: controller.signal, cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Wind unavailable");
+          return response.json() as Promise<{ sample: WindSample | null }>;
+        })
+        .then(({ sample }) => {
+          if (!sample || controller.signal.aborted) throw new Error("Wind unavailable");
+          setWindSample(sample);
+          setWindState("ready");
+          localStorage.setItem(WIND_SAMPLE_STORAGE_KEY, JSON.stringify(sample));
+        })
+        .catch(() => { if (!controller.signal.aborted) setWindState("offline"); });
+    };
+    const timer = window.setTimeout(load, 0);
+    const interval = window.setInterval(load, 600_000);
+    return () => { window.clearTimeout(timer); window.clearInterval(interval); controller.abort(); };
+  }, [currentWindCellKey, mode, windLatitude, windLongitude]);
 
   useEffect(() => {
     if (!nearest || !fix || mode === "idle") return;
@@ -1456,6 +1513,9 @@ export default function ShorelineApp() {
         : currentDepthState === "ready"
           ? `${copy.chartDepth} ${currentDepthDisplay} m`
           : copy.depthWaiting;
+  const windLabel = windSample
+    ? `${windState === "offline" ? "Offline · " : ""}${windCompassLabel(windSample.directionDegrees, language)} ${Math.round(windSample.speedKnots)} · ${copy.windGust} ${Math.round(windSample.gustKnots)} kn`
+    : copy.windWaiting;
   const debugSnapshot = {
     schemaVersion: 1,
     appVersion: APP_VERSION,
@@ -1510,6 +1570,7 @@ export default function ShorelineApp() {
       valueMetres: currentDepthMetres,
       ...depthDebug,
     },
+    wind: { state: windState, visible: showWind, sample: windSample, cellKey: currentWindCellKey },
     warning: {
       config: warningConfig,
       speedViolation: activeSpeedViolation,
@@ -1793,6 +1854,12 @@ export default function ShorelineApp() {
                 anchorBreached={anchorWatchSnapshot.breached}
                 language={language}
               />
+              <WindOverlay sample={windSample} visible={showWind} />
+              {showWind && windSample && <span className="wind-source-credit">Wind: Open-Meteo</span>}
+              <button className={`wind-map-control ${showWind ? "active" : ""} ${windState}`} type="button" aria-pressed={showWind} onClick={() => setShowWind((value) => !value)}>
+                <span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }} aria-hidden="true">↓</span>
+                <span><small>{copy.wind}</small><b>{windLabel}</b></span>
+              </button>
               <div className="summary-primary-row distance-map-overlay">
                 <div className="distance-readout">
                   <span>{copy.nearestShore}</span>
@@ -1847,6 +1914,9 @@ export default function ShorelineApp() {
               currentDepthState={currentDepthState}
               mapFeaturePack={mapFeaturePack}
               goNoGoState={goNoGoState}
+              windSample={windSample}
+              showWind={showWind}
+              onToggleWind={() => setShowWind((value) => !value)}
             />
           </div>
           </div>
