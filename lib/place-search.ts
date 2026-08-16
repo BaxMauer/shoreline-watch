@@ -156,6 +156,19 @@ export function resolvePlaceSearchTarget(
     if (approachTarget) return findOpenWaterTowards(pack, approachTarget, approachFrom, offset) ?? approachTarget;
   }
 
+  return resolveNearestNavigableWater(pack, original, offset);
+}
+
+export function resolveNearestNavigableWater(
+  pack: CoastlinePack | null,
+  point: GeoPoint,
+  waterOffsetMetres = PLACE_TARGET_WATER_OFFSET_METRES,
+): GeoPoint {
+  const original = { latitude: point.latitude, longitude: point.longitude };
+  if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return original;
+
+  const offset = Math.max(4, Math.min(40, waterOffsetMetres));
+
   const shore = findNearestShore(pack, original.longitude, original.latitude);
   if (!shore) return original;
 

@@ -11,6 +11,11 @@ export type WindSample = {
 
 export type WindParticle = { x: number; y: number; age: number; life: number; speed: number };
 
+export type WindMapView = {
+  centre: GeoPoint;
+  rangeMetres: number;
+};
+
 export function getWindCanvasSize(cssWidth: number, cssHeight: number, deviceScale: number) {
   const pixelRatio = Math.min(1.5, Math.max(1, deviceScale || 1));
   return {
@@ -22,6 +27,20 @@ export function getWindCanvasSize(cssWidth: number, cssHeight: number, deviceSca
 
 export function windCanvasSizeChanged(currentWidth: number, currentHeight: number, nextWidth: number, nextHeight: number) {
   return currentWidth !== nextWidth || currentHeight !== nextHeight;
+}
+
+export function getWindMapOffset(view: WindMapView, width: number, height: number) {
+  const range = Math.max(1, Number.isFinite(view.rangeMetres) ? view.rangeMetres : 1);
+  const longitudeScale = 111_320 * Math.max(.1, Math.cos(view.centre.latitude * Math.PI / 180));
+  return {
+    x: -view.centre.longitude * longitudeScale * width / (range * 2),
+    y: view.centre.latitude * 110_540 * height / (range * 2),
+  };
+}
+
+export function wrapWindCoordinate(value: number, extent: number) {
+  if (!Number.isFinite(value) || !Number.isFinite(extent) || extent <= 0) return 0;
+  return ((value % extent) + extent) % extent;
 }
 
 export function advanceWindParticle(particle: WindParticle, angle: number, speed: number, elapsedSeconds: number, width: number, height: number) {

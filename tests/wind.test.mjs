@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { advanceWindParticle, buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, getWindCanvasSize, parseWindProxyResponse, parseWindSample, windCanvasSizeChanged, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windSampleCanBeReused } from "../lib/wind.ts";
+import { advanceWindParticle, buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, getWindCanvasSize, getWindMapOffset, parseWindProxyResponse, parseWindSample, windCanvasSizeChanged, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windSampleCanBeReused, wrapWindCoordinate } from "../lib/wind.ts";
 
 test("wind request uses current 10-m speed, direction, gusts, and knots", () => {
   const url = new URL(buildWindRequestUrl({ latitude: 43.8, longitude: 15.55 }));
@@ -95,4 +95,16 @@ test("stable canvas bounds do not reset wind frame timing", () => {
   assert.deepEqual(size, { pixelRatio: 1.5, width: 585, height: 960 });
   assert.equal(windCanvasSizeChanged(size.width, size.height, size.width, size.height), false);
   assert.equal(windCanvasSizeChanged(size.width, size.height, size.width + 1, size.height), true);
+});
+
+test("wind field is geographically anchored while the route map pans", () => {
+  const centre = { latitude: 43.7869, longitude: 15.6431 };
+  const longitudeScale = 111_320 * Math.cos(centre.latitude * Math.PI / 180);
+  const movedEast = { ...centre, longitude: centre.longitude + 100 / longitudeScale };
+  const original = getWindMapOffset({ centre, rangeMetres: 2_500 }, 360, 360);
+  const moved = getWindMapOffset({ centre: movedEast, rangeMetres: 2_500 }, 360, 360);
+
+  assert.ok(Math.abs((moved.x - original.x) + 7.2) < .01);
+  assert.equal(wrapWindCoordinate(-4, 360), 356);
+  assert.equal(wrapWindCoordinate(364, 360), 4);
 });

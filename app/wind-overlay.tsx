@@ -2,16 +2,18 @@
 
 import { useEffect, useRef } from "react";
 import { createAnimationFrameLoop } from "../lib/animation-frame-loop";
-import { advanceWindParticle, getWindCanvasSize, windCanvasSizeChanged, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, type WindParticle, type WindSample } from "../lib/wind";
+import { advanceWindParticle, getWindCanvasSize, getWindMapOffset, windCanvasSizeChanged, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, wrapWindCoordinate, type WindMapView, type WindParticle, type WindSample } from "../lib/wind";
 
-export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }: { sample: WindSample | null; visible: boolean; mapRotationDegrees?: number }) {
+export default function WindOverlay({ sample, visible, mapRotationDegrees = 0, mapView = null }: { sample: WindSample | null; visible: boolean; mapRotationDegrees?: number; mapView?: WindMapView | null }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sampleRef = useRef(sample);
   const rotationRef = useRef(mapRotationDegrees);
+  const mapViewRef = useRef(mapView);
   const hasSample = sample !== null;
 
   useEffect(() => { sampleRef.current = sample; }, [sample]);
   useEffect(() => { rotationRef.current = mapRotationDegrees; }, [mapRotationDegrees]);
+  useEffect(() => { mapViewRef.current = mapView; }, [mapView]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -75,12 +77,13 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
       context.lineCap = "round";
       context.strokeStyle = activeSample.gustKnots >= 28 || activeSample.speedKnots >= 22 ? dangerColour : activeSample.gustKnots >= 18 || activeSample.speedKnots >= 12 ? strongColour : normalColour;
       context.fillStyle = context.strokeStyle;
+      const mapOffset = mapViewRef.current ? getWindMapOffset(mapViewRef.current, width, height) : { x: 0, y: 0 };
       for (const particle of particles) {
         if (!reducedMotion && speed > 0) {
           advanceWindParticle(particle, angle, speed, elapsedSeconds, width, height);
         }
-        const x = particle.x * width;
-        const y = particle.y * height;
+        const x = wrapWindCoordinate(particle.x * width + mapOffset.x, width);
+        const y = wrapWindCoordinate(particle.y * height + mapOffset.y, height);
         const tail = speed === 0 ? 5 : 13 + Math.min(21, activeSample.speedKnots * .72);
         context.globalAlpha = .5 + .5 * Math.sin(Math.PI * Math.min(1, particle.age / particle.life));
         context.beginPath();

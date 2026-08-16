@@ -87,8 +87,8 @@ export function placeMapFeatureLabels(
       || left.feature.id.localeCompare(right.feature.id));
 
   for (const { feature, position } of candidates) {
-    const halfWidth = Math.min(46, Math.max(10, feature.name.length * 2.65));
-    const box = { left: position.x - halfWidth, right: position.x + halfWidth, top: position.y - 7, bottom: position.y + 7 };
+    const halfWidth = Math.min(58, Math.max(12, feature.name.length * 3.6));
+    const box = { left: position.x - halfWidth, right: position.x + halfWidth, top: position.y - 9, bottom: position.y + 9 };
     if (boxes.some((other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue;
     boxes.push(box);
     placed.push({ ...feature, ...position });

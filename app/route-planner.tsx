@@ -48,6 +48,7 @@ import {
   mergePlaceSearchResults,
   formatPlaceSearchDetail,
   normalizePlaceSearchText,
+  resolveNearestNavigableWater,
   resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
   type PlaceSearchResult,
@@ -424,7 +425,7 @@ export default function RoutePlanner({
     if (!controller || !pack || !requestedStart || !routeCoordinateIsValid(requestedStart) || !routeCoordinateIsValid(destination)) return;
     const gpsStart = requestedStart === fix;
     if (gpsStart && !gpsReliable) return;
-    const routingStart = resolvePlaceSearchTarget(pack, requestedStart, undefined, destination);
+    const routingStart = resolveNearestNavigableWater(pack, requestedStart);
     const wasActiveJourney = journeyState === "active";
     setPlanning(true);
     setFailure(null);
@@ -485,7 +486,7 @@ export default function RoutePlanner({
   }, [calculate, effectiveStart, fitRoute, pack]);
 
   const selectStart = useCallback((start: GeoPoint) => {
-    const navigableStart = resolvePlaceSearchTarget(pack, start, undefined, target);
+    const navigableStart = resolveNearestNavigableWater(pack, start);
     setStartMode("manual");
     setManualStart(navigableStart);
     setStartLatitude(coordinateText(navigableStart.latitude));
@@ -603,21 +604,24 @@ export default function RoutePlanner({
   const pixelsPerMetre = centre / viewRangeMetres;
   const [renderedMapView, setRenderedMapView] = useState(() => ({ centre: mapCentre, rangeMetres: viewRangeMetres }));
   const renderedMapTimer = useRef<number | null>(null);
+  const latestMapView = useRef({ centre: mapCentre, rangeMetres: viewRangeMetres });
   const point = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - mapCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre,
     y: centre - (value.latitude - mapCentre.latitude) * 110_540 * pixelsPerMetre,
   }), [centre, mapCentre.latitude, mapCentre.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
 
   useEffect(() => {
-    if (renderedMapTimer.current !== null) window.clearTimeout(renderedMapTimer.current);
+    latestMapView.current = { centre: mapCentre, rangeMetres: viewRangeMetres };
+    if (renderedMapTimer.current !== null) return;
     renderedMapTimer.current = window.setTimeout(() => {
       renderedMapTimer.current = null;
-      setRenderedMapView({ centre: mapCentre, rangeMetres: viewRangeMetres });
-    }, 100);
-    return () => {
-      if (renderedMapTimer.current !== null) window.clearTimeout(renderedMapTimer.current);
-    };
+      setRenderedMapView(latestMapView.current);
+    }, 80);
   }, [mapCentre, viewRangeMetres]);
+
+  useEffect(() => () => {
+    if (renderedMapTimer.current !== null) window.clearTimeout(renderedMapTimer.current);
+  }, []);
 
   const renderedCentre = renderedMapView.centre;
   const renderedRangeMetres = renderedMapView.rangeMetres;
@@ -625,6 +629,8 @@ export default function RoutePlanner({
   const renderedPixelsPerMetre = centre / renderedRangeMetres;
   const mapDataRangeMetres = renderedRangeMetres * Math.SQRT2;
   const renderingDetail = getRouteMapRenderingDetail(renderedRangeMetres);
+  const currentMapDataRangeMetres = viewRangeMetres * Math.SQRT2;
+  const currentRenderingDetail = getRouteMapRenderingDetail(viewRangeMetres);
   const renderedPoint = useCallback((value: GeoPoint) => ({
     x: centre + (value.longitude - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre,
     y: centre - (value.latitude - renderedCentre.latitude) * 110_540 * renderedPixelsPerMetre,
@@ -653,11 +659,11 @@ export default function RoutePlanner({
     return bands;
   }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderingDetail.hatchBandHeight]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
-    getMapFeaturesInView(mapFeaturePack, renderedCentre, mapDataRangeMetres).slice(0, renderingDetail.maximumLabels),
-    renderedPoint,
+    getMapFeaturesInView(mapFeaturePack, mapCentre, currentMapDataRangeMetres).slice(0, currentRenderingDetail.maximumLabels),
+    point,
     size,
     26,
-  ), [mapDataRangeMetres, mapFeaturePack, renderedCentre, renderedPoint, renderingDetail.maximumLabels, size]);
+  ), [currentMapDataRangeMetres, currentRenderingDetail.maximumLabels, mapCentre, mapFeaturePack, point, size]);
 
   useEffect(() => {
     depthLoadState.current = { key: bathymetryKey, loaded: 0, failed: 0 };
@@ -677,7 +683,7 @@ export default function RoutePlanner({
     if (depthLoadState.current.loaded === 0 && depthLoadState.current.failed >= bathymetryTiles.length) setDepthStatus("error");
   }, [bathymetryKey, bathymetryTiles.length]);
 
-  const routePoints = useMemo(() => route?.points.map(renderedPoint).map(({ x, y }) => `${x},${y}`).join(" ") ?? "", [renderedPoint, route]);
+  const routePoints = useMemo(() => route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "", [point, route]);
   const boatPoint = fix ? point(fix) : null;
   const mapRotationPivot = boatPoint ?? { x: centre, y: centre };
   const { mapRotationDegrees, boatRotationDegrees } = getMapOrientation(fix?.heading, headingUp);
@@ -687,9 +693,9 @@ export default function RoutePlanner({
   const liveWarningRadius = warningConfig.distanceMetres * pixelsPerMetre;
   const liveShallowRadius = 115 * pixelsPerMetre / 2;
   const liveShallow = warningConfig.shallowWaterEnabled && currentDepthState === "ready" && currentDepthMetres !== null && currentDepthMetres <= warningConfig.shallowWaterMetres;
-  const startPoint = useMemo(() => startMode === "manual" && manualStart ? renderedPoint(manualStart) : null, [manualStart, renderedPoint, startMode]);
-  const targetPoint = useMemo(() => target ? renderedPoint(target) : null, [renderedPoint, target]);
-  const focusedPlacePoint = useMemo(() => focusedPlace ? renderedPoint(focusedPlace) : null, [focusedPlace, renderedPoint]);
+  const startPoint = useMemo(() => startMode === "manual" && manualStart ? point(manualStart) : null, [manualStart, point, startMode]);
+  const targetPoint = useMemo(() => target ? point(target) : null, [point, target]);
+  const focusedPlacePoint = useMemo(() => focusedPlace ? point(focusedPlace) : null, [focusedPlace, point]);
   const speedKnots = fix?.speed === null || fix?.speed === undefined ? null : Math.max(0, fix.speed * 1.943844);
   const activeJourney = journeyState === "active" || journeyState === "arrived";
   const activeGoNoGoLabel = goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown;
@@ -711,17 +717,7 @@ export default function RoutePlanner({
       const end = renderedPoint({ longitude: segment[2], latitude: segment[3] });
       return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
     })}</g>
-    <g className="map-feature-labels" aria-hidden="true">{mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
-      <g transform={`rotate(${-mapRotationDegrees})`}>
-        {label.kind === "restaurant" && <circle r="2.2" />}
-        <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
-      </g>
-    </g>)}</g>
-    {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
-    {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g></g>}
-    {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="10" /><text y="3.5">A</text></g></g>}
-    {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="11" /><text y="3.5">B</text></g></g>}
-  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, focusedPlace?.name, focusedPlacePoint, hatchBands, journeyState, mapLabels, mapRotationDegrees, renderedPoint, route?.mode, routePoints, segments, showDepths, startPoint, targetPoint]);
+  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, hatchBands, renderedPoint, segments, showDepths]);
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
@@ -909,7 +905,7 @@ export default function RoutePlanner({
       setInputError(true);
       return;
     }
-    const start = resolvePlaceSearchTarget(pack, requestedStart, undefined, destination);
+    const start = resolveNearestNavigableWater(pack, requestedStart);
     if (startMode === "manual") {
       setManualStart(start);
       setStartLatitude(coordinateText(start.latitude));
@@ -1059,6 +1055,18 @@ export default function RoutePlanner({
               <g className="route-static-map" transform={staticMapTransform}>
                 {staticMapLayers}
               </g>
+              <g className="route-dynamic-map">
+                <g className="map-feature-labels" aria-hidden="true">{mapLabels.map((label) => <g key={label.id} className={`map-feature-label ${label.kind}`} transform={`translate(${label.x} ${label.y})`}>
+                  <g transform={`rotate(${-mapRotationDegrees})`}>
+                    {label.kind === "restaurant" && <circle r="2.2" />}
+                    <text y={label.kind === "restaurant" ? -4 : 0}>{label.name}</text>
+                  </g>
+                </g>)}</g>
+                {routePoints && <polyline className={`planned-route ${route?.mode ?? ""}`} points={routePoints} />}
+                {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g></g>}
+                {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="10" /><text y="3.5">A</text></g></g>}
+                {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="11" /><text y="3.5">B</text></g></g>}
+              </g>
               {activeJourney && boatPoint && liveShallow && <g className="route-shallow-zone" aria-hidden="true"><circle cx={boatPoint.x} cy={boatPoint.y} r={Math.max(10, liveShallowRadius)} /><text x={boatPoint.x} y={boatPoint.y + 25} transform={`rotate(${-mapRotationDegrees} ${boatPoint.x} ${boatPoint.y + 25})`}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text></g>}
               {(journeyState === "active" || journeyState === "arrived") && boatPoint && <g className={`route-live-proximity ${shoreDistanceMetres !== null && shoreDistanceMetres < warningConfig.distanceMetres ? "danger" : "safe"}`}>
                 <circle className="route-warning-ring" cx={boatPoint.x} cy={boatPoint.y} r={liveWarningRadius} />
@@ -1071,7 +1079,7 @@ export default function RoutePlanner({
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${boatRotationDegrees})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
-        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
+        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} mapView={{ centre: mapCentre, rangeMetres: viewRangeMetres }} />
         {activeJourney && <div className="summary-primary-row distance-map-overlay route-live-map-overlay">
           <div className="distance-readout route-live-distance">
             <span>{copy.nearestShore}</span>
