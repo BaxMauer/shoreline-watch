@@ -56,18 +56,18 @@ test("tracking instrument is borderless and the coastline is continuous", () => 
   assert.doesNotMatch(closeCoast, /stroke-dasharray/);
 });
 
-test("land is hatched across the complete plot and painted as one background path", () => {
+test("land is hatched across the complete plot with Safari-stable scan bands", () => {
   assert.match(app, /<pattern id="landHatch"[^>]*>[\s\S]*className="land-hatch-mark"/);
   assert.doesNotMatch(app, /<clipPath id="plotClip"/);
   assert.match(app, /className="land-hatch-layer" aria-hidden="true"/);
   assert.doesNotMatch(app, /clipPath="url\(#plotClip\)"/);
-  assert.match(app, /landHatchPath && <path className="land-hatch-area" d=\{landHatchPath\}/);
+  assert.match(app, /landHatchBands\.map\(\(band, index\) => <rect className="land-hatch-area"/);
   assert.match(css, /\.land-hatch-area\s*\{[^}]*fill:\s*url\(#landHatch\)/s);
   assert.match(css, /\.land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)/s);
   assert.match(app, /getLandIntervalsAtLatitude\(pack, latitude, minimumLongitude, maximumLongitude\)/);
   assert.match(app, /const bandHeight = 4/);
   assert.doesNotMatch(app, /getLandHatchPolygon/);
-  assert.equal((app.match(/className="land-hatch-area"/g) ?? []).length, 1);
+  assert.doesNotMatch(app, /const landHatchPath/);
 });
 
 test("nearest shoreline guide is dashed, subtle, and behind the coast", () => {
@@ -209,6 +209,7 @@ test("tracking view is locked to one viewport while launch settings remain scrol
 
 test("route map hatches all land while keeping coastline and route solid", () => {
   assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*url\(#routeLandHatch\)/s);
+  assert.match(css, /\.route-land-area\s*\{[^}]*shape-rendering:\s*crispEdges/s);
   assert.match(css, /\.route-land-fill-mark\s*\{[^}]*fill:\s*#c8c4aa/s);
   assert.match(css, /\.route-land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)[^}]*opacity:\s*\.25/s);
   assert.match(css, /\.route-depth-tile\s*\{[^}]*image-rendering:\s*auto/s);
