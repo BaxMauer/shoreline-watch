@@ -165,6 +165,9 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapOrientation\.mapRotationDegrees\} \/>/);
   assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
   assert.match(overlay, /requestAnimationFrame\(draw\)/);
+  assert.match(overlay, /length: 96/);
+  assert.match(overlay, /--wind-flow-colour/);
+  assert.match(overlay, /context\.arc\(x, y, 1\.45/);
   assert.match(overlay, /prefers-reduced-motion: reduce/);
   assert.match(windRoute, /AbortSignal\.timeout\(6_500\)/);
   assert.match(windRoute, /max-age=600, stale-while-revalidate=1800/);
@@ -204,10 +207,10 @@ test("active trip map mirrors the distance instrument's clearance geometry", asy
 
 test("active navigation uses a map-first distance instrument layout", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /<div className="route-live-map-overlay">[\s\S]*className="route-live-guidance"[\s\S]*className="route-live-cockpit"/);
-  assert.match(planner, /className="route-live-distance"[\s\S]*copy\.nearestShore/);
-  assert.match(planner, /className=\{`route-live-go-no-go \$\{goNoGoState\}`\}/);
-  assert.match(planner, /className="route-live-footer"[\s\S]*copy\.chartDepth[\s\S]*GPS[\s\S]*copy\.currentSpeed[\s\S]*route-end-trip/);
+  assert.match(planner, /className="route-screen-header"[\s\S]*activeJourney && route[\s\S]*className="route-live-guidance"/);
+  assert.match(planner, /className="summary-primary-row distance-map-overlay route-live-map-overlay"[\s\S]*className="distance-readout route-live-distance"[\s\S]*copy\.nearestShore/);
+  assert.match(planner, /className=\{`go-no-go route-live-go-no-go \$\{goNoGoState\}`\}/);
+  assert.match(planner, /className="instrument-footer route-live-footer"[\s\S]*className="instrument-meta route-live-meta"[\s\S]*copy\.chartDepth[\s\S]*GPS[\s\S]*copy\.currentSpeed[\s\S]*route-end-trip/);
 });
 
 test("power saver runs only in live mode, honours all recent interaction, and retains GPS tracking", () => {
@@ -452,17 +455,17 @@ test("a planned route can become an active trip with progress and arrival", asyn
   assert.match(planner, /routeProgressPercent\(route\.distanceMetres, progressMetres\)/);
   assert.match(planner, /className="route-start-trip"/);
   assert.match(planner, /route-live-guidance[\s\S]*copy\.remaining[\s\S]*copy\.remainingEta/);
-  assert.match(planner, /route-clearance-chip[\s\S]*copy\.clearance/);
+  assert.match(planner, /className=\{`clearance \$\{route\.mode\}`\}[\s\S]*copy\.clearance/);
   assert.match(planner, /\{journeyState === "planning" && <div className="route-metrics">/);
   assert.match(planner, /REISE AKTIV/);
   assert.match(planner, /TRIP ACTIVE/);
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
-  assert.match(planner, /className="route-live-distance"/);
+  assert.match(planner, /className="distance-readout route-live-distance"/);
   assert.match(planner, /route-live-go-no-go \$\{goNoGoState\}/);
-  assert.match(planner, /className="route-live-cockpit"/);
-  assert.match(planner, /className="route-live-footer"/);
-  assert.match(planner, /<small>{liveShallow \? copy\.shallow : copy\.chartDepth}<\/small>/);
-  assert.match(planner, /<small>{copy\.currentSpeed}<\/small>/);
+  assert.match(planner, /className="summary-primary-row distance-map-overlay route-live-map-overlay"/);
+  assert.match(planner, /className="instrument-footer route-live-footer"/);
+  assert.match(planner, /liveShallow \? copy\.shallow : copy\.chartDepth/);
+  assert.match(planner, /kn · \{copy\.currentSpeed\}/);
   assert.match(planner, /goNoGoState: GoNoGoState/);
   assert.match(planner, /shoreDistanceMetres === null/);
   assert.match(planner, /currentDepthState === "ready"/);

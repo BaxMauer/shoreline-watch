@@ -49,6 +49,6 @@ test("portrait tablet navigation grows the map between compact controls", () => 
 test("landscape tablet navigation keeps map overlays compact", () => {
   assert.ok(landscapeMedia > tabletMedia);
   assert.match(cssBlock(".journey-active .route-map-wrap, .journey-arrived .route-map-wrap", landscapeMedia), /min-height:\s*0/);
-  assert.match(cssBlock(".route-live-map-top", landscapeMedia), /width:\s*min\(48%, 380px\)/);
-  assert.match(cssBlock(".route-live-map-overlay .route-live-cockpit", landscapeMedia), /width:\s*min\(62%, 520px\)/);
+  assert.match(cssBlock(".route-live-map-overlay", landscapeMedia), /padding:\s*14px 18px 12px/);
+  assert.match(cssBlock(".route-live-map-overlay > .route-live-distance", landscapeMedia), /width:\s*min\(48%, 320px\)/);
 });
