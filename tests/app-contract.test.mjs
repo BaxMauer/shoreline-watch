@@ -153,6 +153,7 @@ test("activity log is local, bounded, and available during and outside tracking"
   const activity = await readFile(new URL("../lib/activity-log.ts", import.meta.url), "utf8");
   const tracks = await readFile(new URL("../lib/activity-track.ts", import.meta.url), "utf8");
   const overview = await readFile(new URL("../app/activity-overview.tsx", import.meta.url), "utf8");
+  const miniMap = await readFile(new URL("../app/activity-mini-map.tsx", import.meta.url), "utf8");
   assert.match(app, /ACTIVITY_LOG_STORAGE_KEY/);
   assert.match(app, /<ActivityOverview/);
   assert.match(app, /trackerTab === "activities"/);
@@ -173,6 +174,12 @@ test("activity log is local, bounded, and available during and outside tracking"
   assert.match(overview, /getTripTrack\(trip\.id\)/);
   assert.match(overview, /buildTripGpx\(title, points\)/);
   assert.match(overview, /auch ohne aktive Navigation/);
+  assert.match(overview, /import ActivityMiniMap from "\.\/activity-mini-map"/);
+  assert.match(overview, /<ActivityMiniMap trip=\{record\} coastline=\{coastline\} language=\{language\} \/>/);
+  assert.match(miniMap, /fallbackTrack\(trip\)/);
+  assert.match(miniMap, /getTripTrack\(trip\.id\)/);
+  assert.match(miniMap, /className="activity-mini-map"/);
+  assert.match(miniMap, /className="activity-mini-land"/);
 });
 
 test("anchor drift alarm sounds, vibrates, flashes, and repeats while breached", () => {
@@ -206,8 +213,12 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(overlay, /createAnimationFrameLoop/);
   assert.match(overlay, /motionQuery\.addEventListener\("change"/);
   assert.match(overlay, /context\.setTransform\(1, 0, 0, 1, 0, 0\)/);
-  assert.match(overlay, /Math\.min\(1\.5, devicePixelRatio/);
+  assert.match(overlay, /getWindCanvasSize\(bounds\.width, bounds\.height, devicePixelRatio\)/);
   assert.match(overlay, /const scheduleResize/);
+  assert.match(overlay, /if \(changed\) lastFrameAt = 0/);
+  assert.match(overlay, /if \(changed \|\| reducedMotion\) draw\(\)/);
+  assert.match(overlay, /observer\.observe\(canvas\.parentElement \?\? canvas\)/);
+  assert.match(overlay, /advanceWindParticle\(particle, angle, speed, elapsedSeconds, width, height\)/);
   assert.doesNotMatch(overlay, /ResizeObserver\(\(\) => \{ resize\(\); draw\(\); \}\)/);
   assert.match(overlay, /length: 96/);
   assert.match(overlay, /--wind-flow-colour/);

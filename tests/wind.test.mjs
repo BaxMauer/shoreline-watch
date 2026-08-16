@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, parseWindProxyResponse, parseWindSample, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windSampleCanBeReused } from "../lib/wind.ts";
+import { advanceWindParticle, buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, getWindCanvasSize, parseWindProxyResponse, parseWindSample, windCanvasSizeChanged, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windSampleCanBeReused } from "../lib/wind.ts";
 
 test("wind request uses current 10-m speed, direction, gusts, and knots", () => {
   const url = new URL(buildWindRequestUrl({ latitude: 43.8, longitude: 15.55 }));
@@ -79,4 +79,20 @@ test("offline wind never crosses a location cell", () => {
 test("wind flow is calm-aware and gust-responsive", () => {
   assert.equal(windFlowSpeedPixelsPerSecond(0, 0), 0);
   assert.ok(windFlowSpeedPixelsPerSecond(12, 26) > windFlowSpeedPixelsPerSecond(12, 12));
+});
+
+test("wind particles advance across animation frames", () => {
+  const particle = { x: .5, y: .5, age: 10, life: 100, speed: 1 };
+  const before = { ...particle };
+  advanceWindParticle(particle, 0, 40, .016, 320, 480);
+  assert.ok(particle.x > before.x);
+  assert.equal(particle.y, before.y);
+  assert.ok(particle.age > before.age);
+});
+
+test("stable canvas bounds do not reset wind frame timing", () => {
+  const size = getWindCanvasSize(390, 640, 3);
+  assert.deepEqual(size, { pixelRatio: 1.5, width: 585, height: 960 });
+  assert.equal(windCanvasSizeChanged(size.width, size.height, size.width, size.height), false);
+  assert.equal(windCanvasSizeChanged(size.width, size.height, size.width + 1, size.height), true);
 });

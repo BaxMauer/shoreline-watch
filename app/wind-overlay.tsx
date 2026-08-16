@@ -2,9 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { createAnimationFrameLoop } from "../lib/animation-frame-loop";
-import { windFlowAngleRadians, windFlowSpeedPixelsPerSecond, type WindSample } from "../lib/wind";
-
-type Particle = { x: number; y: number; age: number; life: number; speed: number };
+import { advanceWindParticle, getWindCanvasSize, windCanvasSizeChanged, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, type WindParticle, type WindSample } from "../lib/wind";
 
 export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }: { sample: WindSample | null; visible: boolean; mapRotationDegrees?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -22,7 +20,7 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
     if (!context) return;
     const motionQuery = matchMedia("(prefers-reduced-motion: reduce)");
     let reducedMotion = motionQuery.matches;
-    const particles: Particle[] = Array.from({ length: 96 }, (_, index) => ({
+    const particles: WindParticle[] = Array.from({ length: 96 }, (_, index) => ({
       x: (index * 73 % 101) / 101,
       y: (index * 47 % 97) / 97,
       age: index % 80,
@@ -47,18 +45,19 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
 
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
-      pixelRatio = Math.min(1.5, devicePixelRatio || 1);
-      const nextWidth = Math.max(1, Math.round(bounds.width * pixelRatio));
-      const nextHeight = Math.max(1, Math.round(bounds.height * pixelRatio));
-      if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
-        canvas.width = nextWidth;
-        canvas.height = nextHeight;
+      const nextSize = getWindCanvasSize(bounds.width, bounds.height, devicePixelRatio);
+      pixelRatio = nextSize.pixelRatio;
+      const changed = windCanvasSizeChanged(canvas.width, canvas.height, nextSize.width, nextSize.height);
+      if (changed) {
+        canvas.width = nextSize.width;
+        canvas.height = nextSize.height;
       }
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       const styles = getComputedStyle(canvas);
       normalColour = styles.getPropertyValue("--wind-flow-colour").trim() || normalColour;
       strongColour = styles.getPropertyValue("--wind-flow-strong-colour").trim() || strongColour;
       dangerColour = styles.getPropertyValue("--wind-flow-danger-colour").trim() || dangerColour;
+      return changed;
     };
 
     const draw = (frameAt = 0) => {
@@ -78,14 +77,7 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
       context.fillStyle = context.strokeStyle;
       for (const particle of particles) {
         if (!reducedMotion && speed > 0) {
-          particle.x += Math.cos(angle) * speed * particle.speed * elapsedSeconds / Math.max(160, width);
-          particle.y += Math.sin(angle) * speed * particle.speed * elapsedSeconds / Math.max(160, height);
-          particle.age += elapsedSeconds * 60;
-          if (particle.x < -.05 || particle.x > 1.05 || particle.y < -.05 || particle.y > 1.05 || particle.age > particle.life) {
-            particle.x = ((particle.age * 67) % 101) / 101;
-            particle.y = ((particle.age * 43) % 97) / 97;
-            particle.age = 0;
-          }
+          advanceWindParticle(particle, angle, speed, elapsedSeconds, width, height);
         }
         const x = particle.x * width;
         const y = particle.y * height;
@@ -120,9 +112,9 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = null;
-        resize();
-        lastFrameAt = 0;
-        draw();
+        const changed = resize();
+        if (changed) lastFrameAt = 0;
+        if (changed || reducedMotion) draw();
       });
     };
     const handleMotionChange = () => { reducedMotion = motionQuery.matches; start(); };
@@ -134,7 +126,7 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
     resize();
     start();
     const observer = new ResizeObserver(scheduleResize);
-    observer.observe(canvas);
+    observer.observe(canvas.parentElement ?? canvas);
     const viewportObserver = new IntersectionObserver(([entry]) => {
       inViewport = entry?.isIntersecting ?? false;
       start();

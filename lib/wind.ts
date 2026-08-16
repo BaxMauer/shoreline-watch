@@ -9,6 +9,34 @@ export type WindSample = {
   cellKey?: string;
 };
 
+export type WindParticle = { x: number; y: number; age: number; life: number; speed: number };
+
+export function getWindCanvasSize(cssWidth: number, cssHeight: number, deviceScale: number) {
+  const pixelRatio = Math.min(1.5, Math.max(1, deviceScale || 1));
+  return {
+    pixelRatio,
+    width: Math.max(1, Math.round(cssWidth * pixelRatio)),
+    height: Math.max(1, Math.round(cssHeight * pixelRatio)),
+  };
+}
+
+export function windCanvasSizeChanged(currentWidth: number, currentHeight: number, nextWidth: number, nextHeight: number) {
+  return currentWidth !== nextWidth || currentHeight !== nextHeight;
+}
+
+export function advanceWindParticle(particle: WindParticle, angle: number, speed: number, elapsedSeconds: number, width: number, height: number) {
+  if (speed <= 0 || elapsedSeconds <= 0) return particle;
+  particle.x += Math.cos(angle) * speed * particle.speed * elapsedSeconds / Math.max(160, width);
+  particle.y += Math.sin(angle) * speed * particle.speed * elapsedSeconds / Math.max(160, height);
+  particle.age += elapsedSeconds * 60;
+  if (particle.x < -.05 || particle.x > 1.05 || particle.y < -.05 || particle.y > 1.05 || particle.age > particle.life) {
+    particle.x = ((particle.age * 67) % 101) / 101;
+    particle.y = ((particle.age * 43) % 97) / 97;
+    particle.age = 0;
+  }
+  return particle;
+}
+
 function finiteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

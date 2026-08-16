@@ -541,7 +541,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .activity-live strong { font-size: .72rem; }
 .activity-live > b { font-family: var(--font-geist-mono),monospace; font-size: .7rem; }
 .activity-timeline { display: grid; gap: 7px; }
-.activity-row { display: grid; min-height: 84px; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 10px; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: var(--activity-card); padding: 9px 11px; animation: activity-rise .42s calc(var(--activity-index) * 55ms) ease-out both; }
+.activity-row { display: grid; min-height: 84px; grid-template-columns: 38px minmax(0,1fr) clamp(78px,22vw,104px); align-items: center; gap: 10px; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: var(--activity-card); padding: 9px 11px; animation: activity-rise .42s calc(var(--activity-index) * 55ms) ease-out both; }
 .activity-row.trip { width: 100%; color: inherit; cursor: pointer; text-align: left; transition: border-color .2s ease, background .2s ease, transform .2s ease; }
 .activity-row.trip:hover, .activity-row.trip:focus-visible { border-color: rgba(115,229,203,.34); background: rgba(115,229,203,.09); outline: none; transform: translateY(-1px); }
 .activity-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: rgba(63,170,180,.14); color: var(--aqua); font-size: 1.05rem; }
@@ -554,6 +554,20 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .activity-meter { height: 3px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,.07); }
 .activity-meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,var(--aqua),#5aaec2); animation: activity-meter 1s .2s ease-out both; }
 .activity-row.anchor .activity-meter i { background: linear-gradient(90deg,var(--amber),#f18d62); }
+.activity-mini-map { position: relative; display: block; width: 100%; height: 64px; overflow: hidden; border: 1px solid rgba(115,229,203,.26); border-radius: 11px; background: #b9d9dc; box-shadow: inset 0 0 0 1px rgba(255,255,255,.22),0 5px 14px rgba(0,0,0,.12); pointer-events: none; }
+.activity-mini-map svg { display: block; width: 100%; height: 100%; }
+.activity-mini-map > b { position: absolute; top: 5px; right: 5px; display: grid; width: 17px; height: 17px; place-items: center; border-radius: 50%; background: rgba(3,35,42,.78); color: #fff; font-size: .7rem; line-height: 1; box-shadow: 0 2px 5px rgba(0,0,0,.2); }
+.activity-mini-water { fill: #b9d9dc; }
+.activity-mini-land rect { fill: #d8ddce; shape-rendering: crispEdges; }
+.activity-mini-shore line { stroke: #4d716d; stroke-width: 1.4; stroke-linecap: round; }
+.activity-mini-route-shadow { fill: none; stroke: rgba(3,30,35,.5); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.activity-mini-route { fill: none; stroke: #0b9e87; stroke-width: 2.7; stroke-linecap: round; stroke-linejoin: round; }
+.activity-mini-start { fill: #fff; stroke: #087d68; stroke-width: 2; }
+.activity-mini-end { fill: #ffd27a; stroke: #8f5a06; stroke-width: 2; }
+.activity-mini-map.empty { display: grid; place-items: center; background: radial-gradient(circle at center,rgba(115,229,203,.14),transparent 38%),#0b333c; }
+.activity-mini-map.empty > i { position: absolute; width: 40px; height: 40px; border: 1px solid rgba(115,229,203,.24); border-radius: 50%; }
+.activity-mini-map.empty > i::after { position: absolute; inset: 9px; border: 1px solid rgba(115,229,203,.22); border-radius: 50%; content:""; }
+.activity-mini-map.empty > b { position: relative; inset: auto; background: transparent; color: var(--aqua); box-shadow: none; }
 .activity-empty { display: grid; min-height: 190px; place-items: center; align-content: center; gap: 7px; border: 1px dashed rgba(115,229,203,.18); border-radius: 15px; color: var(--muted); padding: 24px; text-align: center; }
 .activity-empty > span { color: var(--aqua); font-size: 2rem; }
 .activity-empty strong { color: var(--foam); }
