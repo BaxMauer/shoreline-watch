@@ -541,16 +541,18 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .activity-live strong { font-size: .72rem; }
 .activity-live > b { font-family: var(--font-geist-mono),monospace; font-size: .7rem; }
 .activity-timeline { display: grid; gap: 7px; }
-.activity-row { display: grid; min-height: 84px; grid-template-columns: 38px minmax(0,1fr) clamp(78px,22vw,104px); align-items: center; gap: 10px; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: var(--activity-card); padding: 9px 11px; animation: activity-rise .42s calc(var(--activity-index) * 55ms) ease-out both; }
-.activity-row.trip { width: 100%; color: inherit; cursor: pointer; text-align: left; transition: border-color .2s ease, background .2s ease, transform .2s ease; }
-.activity-row.trip:hover, .activity-row.trip:focus-visible { border-color: rgba(115,229,203,.34); background: rgba(115,229,203,.09); outline: none; transform: translateY(-1px); }
+.activity-row { display: grid; min-height: 86px; grid-template-columns: minmax(0,1fr) 42px; align-items: stretch; gap: 3px; overflow: hidden; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: var(--activity-card); padding: 6px; animation: activity-rise .42s calc(var(--activity-index) * 55ms) ease-out both; transition: border-color .2s ease, background .2s ease, transform .2s ease; }
+.activity-row.trip:hover, .activity-row.trip:focus-within { border-color: rgba(115,229,203,.34); background: rgba(115,229,203,.09); transform: translateY(-1px); }
+.activity-row-open { display: grid; width: 100%; min-width: 0; grid-template-columns: 38px minmax(0,1fr) clamp(78px,22vw,104px); align-items: center; gap: 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; padding: 2px; text-align: left; }
+button.activity-row-open { cursor: pointer; }
+button.activity-row-open:focus-visible { outline: 2px solid var(--aqua); outline-offset: -2px; }
 .activity-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: rgba(63,170,180,.14); color: var(--aqua); font-size: 1.05rem; }
 .activity-row.anchor .activity-icon { background: rgba(255,210,122,.12); color: var(--amber); }
 .activity-row-main { display: grid; min-width: 0; gap: 2px; }
 .activity-row-main > small { color: var(--muted); font-size: .47rem; text-transform: uppercase; }
 .activity-row-main > strong { overflow: hidden; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .activity-row-main > span { overflow: hidden; color: #afc6c3; font-size: .52rem; text-overflow: ellipsis; white-space: nowrap; }
-.activity-row > b { align-self: start; color: var(--foam); padding-top: 4px; font-family: var(--font-geist-mono),monospace; font-size: .56rem; }
+.activity-row-open > b { align-self: start; color: var(--foam); padding-top: 4px; font-family: var(--font-geist-mono),monospace; font-size: .56rem; }
 .activity-meter { height: 3px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,.07); }
 .activity-meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,var(--aqua),#5aaec2); animation: activity-meter 1s .2s ease-out both; }
 .activity-row.anchor .activity-meter i { background: linear-gradient(90deg,var(--amber),#f18d62); }
@@ -568,6 +570,9 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .activity-mini-map.empty > i { position: absolute; width: 40px; height: 40px; border: 1px solid rgba(115,229,203,.24); border-radius: 50%; }
 .activity-mini-map.empty > i::after { position: absolute; inset: 9px; border: 1px solid rgba(115,229,203,.22); border-radius: 50%; content:""; }
 .activity-mini-map.empty > b { position: relative; inset: auto; background: transparent; color: var(--aqua); box-shadow: none; }
+.activity-delete { align-self: center; display: grid; width: 42px; height: 52px; place-items: center; border: 0; border-radius: 11px; background: rgba(255,116,95,.075); color: #ffaaa0; cursor: pointer; transition: background .18s ease,color .18s ease,transform .18s ease; }
+.activity-delete > svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.activity-delete:hover, .activity-delete:focus-visible { background: rgba(255,116,95,.2); color: #ffd7d2; outline: 1px solid rgba(255,170,160,.45); transform: scale(1.03); }
 .activity-empty { display: grid; min-height: 190px; place-items: center; align-content: center; gap: 7px; border: 1px dashed rgba(115,229,203,.18); border-radius: 15px; color: var(--muted); padding: 24px; text-align: center; }
 .activity-empty > span { color: var(--aqua); font-size: 2rem; }
 .activity-empty strong { color: var(--foam); }
@@ -640,6 +645,8 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .sunlight-mode .trip-detail-grid > span, .sunlight-mode .track-speed-chart { background: rgba(255,255,255,.65); }
 .sunlight-mode .trip-route-note { background: rgba(0,107,84,.1); }
 .sunlight-mode .trip-route-note p { color: #173a3b; }
+.sunlight-mode .activity-delete { background: rgba(171,42,32,.07); color: #a22c24; }
+.sunlight-mode .activity-delete:hover, .sunlight-mode .activity-delete:focus-visible { background: rgba(171,42,32,.14); color: #761b16; outline-color: rgba(118,27,22,.35); }
 @keyframes activity-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes activity-sweep { to { transform: rotate(360deg); } }
 @keyframes activity-live-pulse { 50% { opacity: .45; transform: scale(.8); } }

@@ -180,6 +180,14 @@ test("activity log is local, bounded, and available during and outside tracking"
   assert.match(miniMap, /getTripTrack\(trip\.id\)/);
   assert.match(miniMap, /className="activity-mini-map"/);
   assert.match(miniMap, /className="activity-mini-land"/);
+  assert.match(activity, /export function removeActivityRecord/);
+  assert.match(app, /const deleteActivityLogEntry = useCallback/);
+  assert.match(app, /window\.localStorage\.setItem\(ACTIVITY_LOG_STORAGE_KEY, JSON\.stringify\(nextRecords\)\)/);
+  assert.match(app, /if \(record\.kind === "trip"\) void deleteTripTrack\(record\.id\)/);
+  assert.match(app, /onDelete=\{\(record\) => window\.confirm/);
+  assert.match(overview, /className="activity-delete"/);
+  assert.match(overview, /onClick=\{\(\) => onDelete\(record\)\}/);
+  assert.match(overview, /Diesen Logbucheintrag löschen/);
   assert.match(overview, /getMapViewportExtent\(TRACK_MAP_WIDTH, TRACK_MAP_HEIGHT, scale, 4\)/);
   assert.match(overview, /className="track-map-land">\{map\.landBands\.map/);
   assert.doesNotMatch(overview, /let landPath =/);
