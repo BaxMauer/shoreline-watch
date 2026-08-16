@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTripGpx, shouldStoreTrackPoint } from "../lib/activity-track.ts";
+import { buildTripGpx, getMapViewportExtent, shouldStoreTrackPoint } from "../lib/activity-track.ts";
 
 function point(overrides = {}) {
   return {
@@ -42,4 +42,14 @@ test("GPX export contains ordered coordinates, time, speed, accuracy, and depth"
   assert.match(gpx, /<shoreline:speedKnots>6\.00<\/shoreline:speedKnots>/);
   assert.match(gpx, /<shoreline:accuracy>5\.0<\/shoreline:accuracy>/);
   assert.match(gpx, /<shoreline:chartDepth>12\.0<\/shoreline:chartDepth>/);
+});
+
+test("activity maps scan the complete wide viewport including overscan", () => {
+  const viewport = getMapViewportExtent(360, 246, 0.25, 4);
+  assert.ok(viewport);
+  assert.equal(viewport.halfWidthMetres, 736);
+  assert.equal(viewport.halfHeightMetres, 508);
+  assert.ok(viewport.radiusMetres > viewport.halfWidthMetres);
+  assert.equal(getMapViewportExtent(360, 246, 0), null);
+  assert.equal(getMapViewportExtent(360, 246, 0.25, -1), null);
 });

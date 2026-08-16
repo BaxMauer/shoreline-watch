@@ -36,6 +36,21 @@ function finite(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+export function getMapViewportExtent(width: number, height: number, pixelsPerMetre: number, overscanPixels = 0) {
+  if (![width, height, pixelsPerMetre, overscanPixels].every(Number.isFinite)
+    || width <= 0
+    || height <= 0
+    || pixelsPerMetre <= 0
+    || overscanPixels < 0) return null;
+  const halfWidthMetres = (width / 2 + overscanPixels) / pixelsPerMetre;
+  const halfHeightMetres = (height / 2 + overscanPixels) / pixelsPerMetre;
+  return {
+    halfWidthMetres,
+    halfHeightMetres,
+    radiusMetres: Math.hypot(halfWidthMetres, halfHeightMetres),
+  };
+}
+
 function headingDelta(left: number | null, right: number | null) {
   if (!finite(left) || !finite(right)) return 0;
   const delta = Math.abs((right as number) - (left as number)) % 360;
