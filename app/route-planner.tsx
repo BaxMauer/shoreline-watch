@@ -25,6 +25,8 @@ import {
   getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
   getRouteMapPreviewTransform,
+  getRouteMapInteractionInterval,
+  getRouteMapRefreshInterval,
   getRouteMapRenderingDetail,
   getRouteReadinessState,
   hasReachedRouteTarget,
@@ -330,6 +332,7 @@ export default function RoutePlanner({
   const [startingJourney, setStartingJourney] = useState(false);
   const [viewRangeMetres, setViewRangeMetres] = useState(20_000);
   const [viewCentre, setViewCentre] = useState<GeoPoint | null>(null);
+  const [mapInteracting, setMapInteracting] = useState(false);
   const [cruiseSpeedKnots, setCruiseSpeedKnots] = useState(16);
   const [conditionalPassagesEnabled, setConditionalPassagesEnabled] = useState(true);
   const [showDepths, setShowDepths] = useState(true);
@@ -354,6 +357,7 @@ export default function RoutePlanner({
   const activePointers = useRef(new Map<number, { x: number; y: number }>());
   const mapGesture = useRef<{ centre: GeoPoint; range: number; centroid: { x: number; y: number }; distance: number; moved: boolean } | null>(null);
   const mapViewFrame = useRef<number | null>(null);
+  const lastMapViewCommitAt = useRef(0);
   const pendingMapView = useRef<{ centre: GeoPoint; range: number } | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const longPressCandidate = useRef<{ pointerId: number; startedAt: number; point: GeoPoint } | null>(null);
@@ -616,7 +620,7 @@ export default function RoutePlanner({
     renderedMapTimer.current = window.setTimeout(() => {
       renderedMapTimer.current = null;
       setRenderedMapView(latestMapView.current);
-    }, 80);
+    }, getRouteMapRefreshInterval(viewRangeMetres));
   }, [mapCentre, viewRangeMetres]);
 
   useEffect(() => () => {
@@ -637,7 +641,9 @@ export default function RoutePlanner({
   }), [centre, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre]);
   const previewTransform = getRouteMapPreviewTransform(renderedCentre, renderedRangeMetres, mapCentre, viewRangeMetres, size);
   const staticMapTransform = `translate(${previewTransform.translateX} ${previewTransform.translateY}) translate(${centre} ${centre}) scale(${previewTransform.scale}) translate(${-centre} ${-centre})`;
-  const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, mapDataRangeMetres * 1.1, renderingDetail.maximumShorelineSegments) : [], [mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderingDetail.maximumShorelineSegments]);
+  const segments = useMemo(() => pack && renderingDetail.maximumShorelineSegments > 0
+    ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, mapDataRangeMetres * 1.1, renderingDetail.maximumShorelineSegments)
+    : [], [mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderingDetail.maximumShorelineSegments]);
   const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(renderedCentre, mapDataRangeMetres, 720) : [], [mapDataRangeMetres, renderedCentre, showDepths]);
   const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
   const hatchBands = useMemo(() => {
@@ -770,17 +776,27 @@ export default function RoutePlanner({
   const scheduleMapView = (nextCentre: GeoPoint, nextRange: number) => {
     pendingMapView.current = { centre: nextCentre, range: nextRange };
     if (mapViewFrame.current !== null) return;
-    mapViewFrame.current = window.requestAnimationFrame(() => {
-      mapViewFrame.current = null;
+    const commitMapView = (frameAt: number) => {
       const pending = pendingMapView.current;
+      if (!pending) {
+        mapViewFrame.current = null;
+        return;
+      }
+      if (frameAt - lastMapViewCommitAt.current < getRouteMapInteractionInterval(pending.range)) {
+        mapViewFrame.current = window.requestAnimationFrame(commitMapView);
+        return;
+      }
+      mapViewFrame.current = null;
       pendingMapView.current = null;
-      if (!pending) return;
+      lastMapViewCommitAt.current = frameAt;
       setViewCentre(pending.centre);
       setViewRangeMetres(pending.range);
-    });
+    };
+    mapViewFrame.current = window.requestAnimationFrame(commitMapView);
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    setMapInteracting(true);
     event.currentTarget.setPointerCapture(event.pointerId);
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     beginGesture(event.currentTarget);
@@ -842,14 +858,20 @@ export default function RoutePlanner({
     cancelLongPress();
     activePointers.current.delete(event.pointerId);
     if (activePointers.current.size > 0) beginGesture(event.currentTarget, pendingMapView.current ?? { centre: mapCentre, range: viewRangeMetres });
-    else mapGesture.current = null;
+    else {
+      mapGesture.current = null;
+      setMapInteracting(false);
+    }
   };
 
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
     cancelLongPress();
     activePointers.current.delete(event.pointerId);
     if (activePointers.current.size > 0) beginGesture(event.currentTarget, pendingMapView.current ?? { centre: mapCentre, range: viewRangeMetres });
-    else mapGesture.current = null;
+    else {
+      mapGesture.current = null;
+      setMapInteracting(false);
+    }
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -1079,7 +1101,7 @@ export default function RoutePlanner({
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${boatRotationDegrees})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
-        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} mapView={{ centre: mapCentre, rangeMetres: viewRangeMetres }} />
+        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} mapView={{ centre: mapCentre, rangeMetres: viewRangeMetres }} paused={mapInteracting} />
         {activeJourney && <div className="summary-primary-row distance-map-overlay route-live-map-overlay">
           <div className="distance-readout route-live-distance">
             <span>{copy.nearestShore}</span>

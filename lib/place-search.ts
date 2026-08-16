@@ -24,6 +24,7 @@ export const CROATIA_SEARCH_BOUNDS = {
 } as const;
 
 export const PLACE_TARGET_WATER_OFFSET_METRES = 8;
+export const ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES = 30;
 
 function pointAtDistance(origin: GeoPoint, bearing: number, distanceMetres: number): GeoPoint {
   const radians = bearing * Math.PI / 180;
@@ -39,6 +40,14 @@ function bearingBetween(origin: GeoPoint, destination: GeoPoint) {
   const east = (destination.longitude - origin.longitude) * longitudeScale;
   const north = (destination.latitude - origin.latitude) * 110_540;
   return (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+}
+
+function pointDistanceMetres(origin: GeoPoint, destination: GeoPoint) {
+  const longitudeScale = 111_320 * Math.max(.1, Math.cos((origin.latitude + destination.latitude) / 2 * Math.PI / 180));
+  return Math.hypot(
+    (destination.longitude - origin.longitude) * longitudeScale,
+    (destination.latitude - origin.latitude) * 110_540,
+  );
 }
 
 function waterLooksEnclosed(pack: CoastlinePack, origin: GeoPoint) {
@@ -156,13 +165,14 @@ export function resolvePlaceSearchTarget(
     if (approachTarget) return findOpenWaterTowards(pack, approachTarget, approachFrom, offset) ?? approachTarget;
   }
 
-  return resolveNearestNavigableWater(pack, original, offset);
+  return resolveNearestNavigableWater(pack, original, offset, offset);
 }
 
 export function resolveNearestNavigableWater(
   pack: CoastlinePack | null,
   point: GeoPoint,
   waterOffsetMetres = PLACE_TARGET_WATER_OFFSET_METRES,
+  minimumShoreClearanceMetres = ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES,
 ): GeoPoint {
   const original = { latitude: point.latitude, longitude: point.longitude };
   if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return original;
@@ -172,20 +182,49 @@ export function resolveNearestNavigableWater(
   const shore = findNearestShore(pack, original.longitude, original.latitude);
   if (!shore) return original;
 
-  const distances = [offset, offset * 2, offset * 4, 50, 100];
+  const minimumClearance = Math.max(offset, Math.min(100, minimumShoreClearanceMetres));
+  const distances = [offset, offset * 2, offset * 4, 50, 75, 100];
   const bearingOffsets = Array.from({ length: 36 }, (_, index) => {
     if (index === 0) return 0;
     const step = Math.ceil(index / 2) * 10;
     return index % 2 === 1 ? -step : step;
   });
 
-  for (const distance of [...new Set(distances)]) {
+  if (minimumClearance <= offset) {
+    for (const distance of [...new Set(distances)].sort((left, right) => left - right)) {
+      for (const bearingOffset of bearingOffsets) {
+        const candidate = offsetFromShore(shore, shore.bearing + bearingOffset, distance);
+        if (!isPointOnLand(pack, candidate.longitude, candidate.latitude)) return candidate;
+      }
+    }
+    return original;
+  }
+
+  const waterCandidates: Array<{ point: GeoPoint; distance: number; shoreDistance: number }> = [];
+  for (const distance of [...new Set(distances)].sort((left, right) => left - right)) {
     for (const bearingOffset of bearingOffsets) {
       const candidate = offsetFromShore(shore, shore.bearing + bearingOffset, distance);
-      if (!isPointOnLand(pack, candidate.longitude, candidate.latitude)) return candidate;
+      if (isPointOnLand(pack, candidate.longitude, candidate.latitude)) continue;
+      const candidateShore = findNearestShore(pack, candidate.longitude, candidate.latitude);
+      if (!candidateShore) continue;
+      waterCandidates.push({
+        point: candidate,
+        distance: pointDistanceMetres(original, candidate),
+        shoreDistance: candidateShore.distance,
+      });
     }
   }
-  return original;
+
+  const byNearestWater = (left: typeof waterCandidates[number], right: typeof waterCandidates[number]) => left.distance - right.distance
+    || right.shoreDistance - left.shoreDistance;
+  const openCandidates = waterCandidates
+    .filter((candidate) => candidate.shoreDistance + .5 >= minimumClearance)
+    .sort(byNearestWater);
+  const routingReady = openCandidates[0];
+  if (routingReady) return routingReady.point;
+
+  const nearestOpenWater = waterCandidates.sort(byNearestWater).find((candidate) => !waterLooksEnclosed(pack, candidate.point));
+  return nearestOpenWater?.point ?? waterCandidates[0]?.point ?? original;
 }
 
 const COASTAL_PLACES: PlaceSearchResult[] = [

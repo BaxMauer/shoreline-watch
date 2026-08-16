@@ -4,16 +4,18 @@ import { useEffect, useRef } from "react";
 import { createAnimationFrameLoop } from "../lib/animation-frame-loop";
 import { advanceWindParticle, getWindCanvasSize, getWindMapOffset, windCanvasSizeChanged, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, wrapWindCoordinate, type WindMapView, type WindParticle, type WindSample } from "../lib/wind";
 
-export default function WindOverlay({ sample, visible, mapRotationDegrees = 0, mapView = null }: { sample: WindSample | null; visible: boolean; mapRotationDegrees?: number; mapView?: WindMapView | null }) {
+export default function WindOverlay({ sample, visible, mapRotationDegrees = 0, mapView = null, paused = false }: { sample: WindSample | null; visible: boolean; mapRotationDegrees?: number; mapView?: WindMapView | null; paused?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sampleRef = useRef(sample);
   const rotationRef = useRef(mapRotationDegrees);
   const mapViewRef = useRef(mapView);
+  const pausedRef = useRef(paused);
   const hasSample = sample !== null;
 
   useEffect(() => { sampleRef.current = sample; }, [sample]);
   useEffect(() => { rotationRef.current = mapRotationDegrees; }, [mapRotationDegrees]);
   useEffect(() => { mapViewRef.current = mapView; }, [mapView]);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -64,7 +66,7 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0, m
 
     const draw = (frameAt = 0) => {
       const activeSample = sampleRef.current;
-      if (!activeSample || stopped) return;
+      if (!activeSample || stopped || pausedRef.current) return;
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
       const angle = windFlowAngleRadians(activeSample.directionDegrees) + rotationRef.current * Math.PI / 180;

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   PLACE_TARGET_WATER_OFFSET_METRES,
+  ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES,
   buildPhotonPlaceSearchUrl,
   fuzzyPlaceScore,
   formatPlaceSearchDetail,
@@ -88,8 +89,10 @@ test("a route start on land is moved to the nearest navigable sea point", async 
   assert.equal(isPointOnLand(coastline, requestedStart.longitude, requestedStart.latitude), true);
 
   const start = resolveNearestNavigableWater(coastline, requestedStart);
+  const startShore = findNearestShore(coastline, start.longitude, start.latitude);
   assert.equal(isPointOnLand(coastline, start.longitude, start.latitude), false);
-  assert.ok(originalShore && geoDistanceMetres(requestedStart, start) <= originalShore.distance + PLACE_TARGET_WATER_OFFSET_METRES + 3);
+  assert.ok(startShore && startShore.distance >= ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES - 1);
+  assert.ok(originalShore && geoDistanceMetres(requestedStart, start) <= originalShore.distance + 60);
 
   const result = planWaterRoute(coastline, start, destination, {
     clearanceMetres: 300,
@@ -112,8 +115,29 @@ test("a Jezera land start uses the closest coast instead of crossing the island 
   const destinationFacingWater = resolvePlaceSearchTarget(coastline, requestedStart, undefined, destination);
 
   assert.equal(isPointOnLand(coastline, start.longitude, start.latitude), false);
-  assert.ok(shore && geoDistanceMetres(requestedStart, start) <= shore.distance + PLACE_TARGET_WATER_OFFSET_METRES + 1);
+  assert.ok(shore && geoDistanceMetres(requestedStart, start) <= shore.distance + 60);
   assert.ok(geoDistanceMetres(requestedStart, start) < geoDistanceMetres(requestedStart, destinationFacingWater) / 5);
+});
+
+test("a Jezera land start still connects to a longer southbound water route", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const requestedStart = { latitude: 43.7869, longitude: 15.6431 };
+  const destination = { latitude: 43.7117, longitude: 15.6543 };
+  const start = resolveNearestNavigableWater(coastline, requestedStart);
+  const startShore = findNearestShore(coastline, start.longitude, start.latitude);
+
+  assert.equal(isPointOnLand(coastline, start.longitude, start.latitude), false);
+  assert.ok(startShore && startShore.distance >= ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES - 1);
+  assert.ok(geoDistanceMetres(requestedStart, start) < 250);
+
+  const result = planWaterRoute(coastline, start, destination, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  });
+  assert.ok(result.route, result.failure);
+  assert.ok(result.route.distanceMetres > 8_000);
 });
 
 test("an island target uses the water-facing side nearest the route start", async () => {
