@@ -120,6 +120,7 @@ const WIND_SAMPLE_STORAGE_KEY = "shoreline-last-wind-v1";
 const WIND_LAYER_STORAGE_KEY = "shoreline-wind-layer";
 const MAP_HEADING_UP_STORAGE_KEY = "shoreline-map-heading-up";
 const ACTIVE_TRIP_STORAGE_KEY = "shoreline-active-trip-v1";
+const PENDING_TRACK_POINT_STORAGE_KEY = "shoreline-pending-track-point-v1";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
@@ -807,6 +808,7 @@ export default function ShorelineApp() {
   const currentTrip = useRef<TripDraft | null>(null);
   const lastLoggedFixTimestamp = useRef<number | null>(null);
   const lastStoredTrackPoint = useRef<TripTrackPoint | null>(null);
+  const activityRecordsRef = useRef<ActivityRecord[]>([]);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -821,6 +823,7 @@ export default function ShorelineApp() {
       const savedWindLayer = window.localStorage.getItem(WIND_LAYER_STORAGE_KEY);
       const savedHeadingUp = window.localStorage.getItem(MAP_HEADING_UP_STORAGE_KEY);
       const savedActivities = window.localStorage.getItem(ACTIVITY_LOG_STORAGE_KEY);
+      const savedPendingTrackPoint = window.localStorage.getItem(PENDING_TRACK_POINT_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -856,12 +859,35 @@ export default function ShorelineApp() {
         try {
           const draft = JSON.parse(savedTrip) as TripDraft;
           const recovered = finishTripDraft(draft, draft.lastPoint?.timestamp ?? Date.now());
-          if (recovered) restoredActivities = addActivityRecord(restoredActivities, recovered);
+          if (recovered) {
+            restoredActivities = addActivityRecord(restoredActivities, recovered);
+            window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(restoredActivities));
+          }
         } catch {
           // Ignore an incomplete write and keep the validated activity history.
         }
         window.localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
       }
+      if (savedPendingTrackPoint) {
+        try {
+          const pendingPoint = JSON.parse(savedPendingTrackPoint) as TripTrackPoint;
+          const validPendingPoint = typeof pendingPoint.tripId === "string"
+            && Number.isFinite(pendingPoint.sequence)
+            && shouldStoreTrackPoint(null, pendingPoint);
+          if (validPendingPoint) {
+            void saveTripTrackPoint(pendingPoint).then((saved) => {
+              if (saved && window.localStorage.getItem(PENDING_TRACK_POINT_STORAGE_KEY) === savedPendingTrackPoint) {
+                window.localStorage.removeItem(PENDING_TRACK_POINT_STORAGE_KEY);
+              }
+            }).catch(() => undefined);
+          } else {
+            window.localStorage.removeItem(PENDING_TRACK_POINT_STORAGE_KEY);
+          }
+        } catch {
+          window.localStorage.removeItem(PENDING_TRACK_POINT_STORAGE_KEY);
+        }
+      }
+      activityRecordsRef.current = restoredActivities;
       setActivityRecords(restoredActivities);
       setPreferencesLoaded(true);
     }, 0);
@@ -897,11 +923,19 @@ export default function ShorelineApp() {
 
   useEffect(() => {
     if (!preferencesLoaded) return;
+    activityRecordsRef.current = activityRecords;
     window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(activityRecords));
     const validTripIds = activityRecords.filter((record) => record.kind === "trip").map((record) => record.id);
     if (currentTrip.current) validTripIds.push(currentTrip.current.id);
     void pruneTripTracks(validTripIds).catch(() => undefined);
   }, [activityRecords, preferencesLoaded]);
+
+  const storeActivityRecord = useCallback((record: ActivityRecord) => {
+    const nextRecords = addActivityRecord(activityRecordsRef.current, record);
+    activityRecordsRef.current = nextRecords;
+    window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(nextRecords));
+    setActivityRecords(nextRecords);
+  }, []);
 
   useEffect(() => {
     if (mode === "idle") return;
@@ -911,11 +945,20 @@ export default function ShorelineApp() {
 
   useEffect(() => {
     const refreshClock = () => setClockNow(Date.now());
+    const persistActiveTrip = () => {
+      if (currentTrip.current) window.localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(currentTrip.current));
+    };
+    const handleVisibilityChange = () => {
+      refreshClock();
+      if (document.visibilityState === "hidden") persistActiveTrip();
+    };
     window.addEventListener("pageshow", refreshClock);
-    document.addEventListener("visibilitychange", refreshClock);
+    window.addEventListener("pagehide", persistActiveTrip);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.removeEventListener("pageshow", refreshClock);
-      document.removeEventListener("visibilitychange", refreshClock);
+      window.removeEventListener("pagehide", persistActiveTrip);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -1170,7 +1213,13 @@ export default function ShorelineApp() {
     if (shouldStoreTrackPoint(lastStoredTrackPoint.current, trackPoint)) {
       lastStoredTrackPoint.current = trackPoint;
       currentTrip.current = noteStoredTrackPoint(currentTrip.current);
-      void saveTripTrackPoint(trackPoint).catch(() => undefined);
+      const pendingTrackPoint = JSON.stringify(trackPoint);
+      window.localStorage.setItem(PENDING_TRACK_POINT_STORAGE_KEY, pendingTrackPoint);
+      void saveTripTrackPoint(trackPoint).then((saved) => {
+        if (saved && window.localStorage.getItem(PENDING_TRACK_POINT_STORAGE_KEY) === pendingTrackPoint) {
+          window.localStorage.removeItem(PENDING_TRACK_POINT_STORAGE_KEY);
+        }
+      }).catch(() => undefined);
     }
     window.localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(currentTrip.current));
   }, [currentDepthMetres, currentDepthState, fix, mode, nearest?.distance, speedKnots]);
@@ -1465,7 +1514,7 @@ export default function ShorelineApp() {
 
   const releaseAnchor = useCallback((endedAt = Date.now()) => {
     if (anchorWatch && modeRef.current === "live") {
-      setActivityRecords((records) => addActivityRecord(records, {
+      storeActivityRecord({
         id: `anchor-${anchorWatch.setAt}`,
         kind: "anchor",
         startedAt: anchorWatch.setAt,
@@ -1476,13 +1525,13 @@ export default function ShorelineApp() {
         maxDriftMetres: Math.round(anchorStats.current.maxDriftMetres),
         radiusMetres: warningConfig.powerSaveAnchorRadiusMetres,
         driftAlarmCount: anchorStats.current.driftAlarmCount,
-      }));
+      });
     }
     setAnchorWatch(null);
     anchorStats.current = { maxDriftMetres: 0, driftAlarmCount: 0 };
     lastAnchorAlarmAt.current = null;
     previousAnchorBreach.current = false;
-  }, [anchorWatch, warningConfig.powerSaveAnchorRadiusMetres]);
+  }, [anchorWatch, storeActivityRecord, warningConfig.powerSaveAnchorRadiusMetres]);
 
   const setAnchorAtCurrentPosition = useCallback(() => {
     if (!fix) return;
@@ -1502,7 +1551,7 @@ export default function ShorelineApp() {
       startLabel: getTripPlaceLabel(mapFeaturePack, draft.firstPoint),
       endLabel: getTripPlaceLabel(mapFeaturePack, draft.lastPoint),
     }) : null;
-    if (trip) setActivityRecords((records) => addActivityRecord(records, trip));
+    if (trip) storeActivityRecord(trip);
     else if (draft) void deleteTripTrack(draft.id).catch(() => undefined);
     currentTrip.current = null;
     lastLoggedFixTimestamp.current = null;
@@ -1537,7 +1586,7 @@ export default function ShorelineApp() {
     setPowerSaveWakeUntil(0);
     setStationaryState(createStationaryState());
     setTrackerTab("distance");
-  }, [mapFeaturePack, releaseAnchor]);
+  }, [mapFeaturePack, releaseAnchor, storeActivityRecord]);
 
   useEffect(() => () => {
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
@@ -1659,6 +1708,8 @@ export default function ShorelineApp() {
   }, [demoIndex, setDemoFix]);
 
   const clearActivityLog = useCallback(() => {
+    activityRecordsRef.current = [];
+    window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, "[]");
     setActivityRecords([]);
     void clearTripTracks().catch(() => undefined);
   }, []);
