@@ -871,6 +871,7 @@ export default function ShorelineApp() {
       if (savedWindLayer === "false") setShowWind(false);
       if (savedHeadingUp === "true") setHeadingUp(true);
       let restoredActivities = parseActivityLog(savedActivities);
+      let discardedTripId: string | null = null;
       const savedTrip = window.localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
       if (savedTrip) {
         try {
@@ -879,6 +880,9 @@ export default function ShorelineApp() {
           if (recovered) {
             restoredActivities = addActivityRecord(restoredActivities, recovered);
             window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(restoredActivities));
+          } else if (typeof draft.id === "string") {
+            discardedTripId = draft.id;
+            void deleteTripTrack(draft.id).catch(() => undefined);
           }
         } catch {
           // Ignore an incomplete write and keep the validated activity history.
@@ -889,6 +893,7 @@ export default function ShorelineApp() {
         try {
           const pendingPoint = JSON.parse(savedPendingTrackPoint) as TripTrackPoint;
           const validPendingPoint = typeof pendingPoint.tripId === "string"
+            && pendingPoint.tripId !== discardedTripId
             && Number.isFinite(pendingPoint.sequence)
             && shouldStoreTrackPoint(null, pendingPoint);
           if (validPendingPoint) {

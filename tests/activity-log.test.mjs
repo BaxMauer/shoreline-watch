@@ -6,6 +6,7 @@ import {
   addActivityRecord,
   createTripDraft,
   finishTripDraft,
+  isMeaningfulTripDraft,
   noteStoredTrackPoint,
   parseActivityLog,
   removeActivityRecord,
@@ -15,20 +16,64 @@ import {
 test("trip log aggregates plausible GPS samples while retaining track metadata separately", () => {
   let draft = createTripDraft(1_000);
   draft = updateTripDraft(draft, { latitude: 43.8, longitude: 15.55, accuracy: 5, speedKnots: 5, timestamp: 1_000 }, { shoreDistanceMetres: 500, depthMetres: 12 });
-  draft = updateTripDraft(draft, { latitude: 43.8005, longitude: 15.55, accuracy: 5, speedKnots: 7, timestamp: 31_000 }, { shoreDistanceMetres: 450, depthMetres: 10 });
-  draft = noteStoredTrackPoint(noteStoredTrackPoint(draft));
-  const trip = finishTripDraft(draft, 61_000, { startLabel: "Pakoštane", endLabel: "Murter" });
+  draft = updateTripDraft(draft, { latitude: 43.8006, longitude: 15.55, accuracy: 5, speedKnots: 7, timestamp: 31_000 }, { shoreDistanceMetres: 450, depthMetres: 10 });
+  draft = updateTripDraft(draft, { latitude: 43.8012, longitude: 15.55, accuracy: 5, speedKnots: 6, timestamp: 61_000 }, { shoreDistanceMetres: 475, depthMetres: 11 });
+  draft = updateTripDraft(draft, { latitude: 43.8018, longitude: 15.55, accuracy: 5, speedKnots: 4, timestamp: 121_000 }, { shoreDistanceMetres: 490, depthMetres: 11 });
+  draft = noteStoredTrackPoint(noteStoredTrackPoint(noteStoredTrackPoint(noteStoredTrackPoint(noteStoredTrackPoint(draft)))));
+  const trip = finishTripDraft(draft, 151_000, { startLabel: "Pakoštane", endLabel: "Murter" });
   assert.ok(trip);
-  assert.ok(trip.distanceMetres > 40 && trip.distanceMetres < 70);
-  assert.equal(trip.averageSpeedKnots, 6);
+  assert.ok(trip.distanceMetres > 180 && trip.distanceMetres < 220);
+  assert.equal(trip.averageSpeedKnots, 5.5);
   assert.equal(trip.maxSpeedKnots, 7);
   assert.equal(trip.minShoreDistanceMetres, 450);
   assert.equal(trip.minDepthMetres, 10);
-  assert.equal(trip.trackPointCount, 2);
+  assert.equal(trip.trackPointCount, 5);
   assert.equal(trip.startLabel, "Pakoštane");
   assert.equal(trip.endLabel, "Murter");
   assert.deepEqual(trip.startPoint, { latitude: 43.8, longitude: 15.55 });
   assert.equal("lastPoint" in trip, false);
+});
+
+test("automatic recording discards short app checks and GPS drift", () => {
+  let shortCheck = createTripDraft(0);
+  shortCheck = updateTripDraft(shortCheck, { latitude: 43.8, longitude: 15.55, accuracy: 5, speedKnots: 4, timestamp: 0 });
+  shortCheck = updateTripDraft(shortCheck, { latitude: 43.8006, longitude: 15.55, accuracy: 5, speedKnots: 4, timestamp: 30_000 });
+  shortCheck = updateTripDraft(shortCheck, { latitude: 43.8012, longitude: 15.55, accuracy: 5, speedKnots: 4, timestamp: 60_000 });
+  shortCheck = { ...shortCheck, trackPointCount: 8 };
+  assert.equal(finishTripDraft(shortCheck, 75_000), null, "a brief look must not become a trip even while moving");
+
+  let gpsDrift = createTripDraft(0);
+  gpsDrift = updateTripDraft(gpsDrift, { latitude: 43.8, longitude: 15.55, accuracy: 18, speedKnots: 0.4, timestamp: 0 });
+  gpsDrift = updateTripDraft(gpsDrift, { latitude: 43.801, longitude: 15.55, accuracy: 18, speedKnots: 1.2, timestamp: 60_000 });
+  gpsDrift = updateTripDraft(gpsDrift, { latitude: 43.8, longitude: 15.55, accuracy: 18, speedKnots: 0.5, timestamp: 120_000 });
+  gpsDrift = updateTripDraft(gpsDrift, { latitude: 43.801, longitude: 15.55, accuracy: 18, speedKnots: 3.2, timestamp: 180_000 });
+  gpsDrift = { ...gpsDrift, trackPointCount: 20 };
+  assert.equal(isMeaningfulTripDraft(gpsDrift, 240_000), false, "low-speed wandering with one speed spike must be treated as GPS noise");
+  assert.equal(finishTripDraft(gpsDrift, 240_000), null);
+});
+
+test("automatic recording keeps sustained journeys and meaningful loops", () => {
+  let journey = createTripDraft(0);
+  for (let index = 0; index <= 6; index += 1) {
+    journey = updateTripDraft(journey, {
+      latitude: 43.8 + index * 0.0005,
+      longitude: 15.55,
+      accuracy: 5,
+      speedKnots: 4,
+      timestamp: index * 20_000,
+    });
+  }
+  journey = { ...journey, trackPointCount: 7 };
+  assert.equal(isMeaningfulTripDraft(journey, 130_000), true);
+  assert.ok(finishTripDraft(journey, 130_000));
+
+  const loop = {
+    ...journey,
+    distanceMetres: 600,
+    firstPoint: { latitude: 43.8, longitude: 15.55 },
+    lastPoint: { ...journey.lastPoint, latitude: 43.8001, longitude: 15.55 },
+  };
+  assert.equal(isMeaningfulTripDraft(loop, 130_000), true, "a real round trip may end close to where it started");
 });
 
 test("activity persistence rejects malformed data and stays bounded", () => {
