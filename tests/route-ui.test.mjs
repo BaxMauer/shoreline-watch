@@ -18,6 +18,8 @@ import {
   getActiveRouteViewRange,
   getProgressAwareRouteGuidance,
   getRouteMapPreviewTransform,
+  getRouteMapInteractionInterval,
+  getRouteMapRefreshInterval,
   getRouteMapRenderingDetail,
   getRouteReadinessState,
   hasReachedRouteTarget,
@@ -103,9 +105,15 @@ test("map zoom remains inside the supported offline planning range", () => {
 });
 
 test("zoomed-out maps cap coastline and hatch rendering work", () => {
-  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 });
-  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 9, maximumShorelineSegments: 650, maximumLabels: 30 });
-  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 14, maximumShorelineSegments: 280, maximumLabels: 18 });
+  assert.deepEqual(getRouteMapRenderingDetail(9_999), { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 });
+  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 10, maximumShorelineSegments: 0, maximumLabels: 28 });
+  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 20, maximumShorelineSegments: 0, maximumLabels: 18 });
+  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 28, maximumShorelineSegments: 0, maximumLabels: 12 });
+  assert.equal(getRouteMapRefreshInterval(5_000), 80);
+  assert.equal(getRouteMapRefreshInterval(20_000), 160);
+  assert.equal(getRouteMapRefreshInterval(80_000), 240);
+  assert.equal(getRouteMapInteractionInterval(5_000), 16);
+  assert.equal(getRouteMapInteractionInterval(20_000), 32);
 });
 
 test("map preview transform follows pan and pinch without rebuilding geometry", () => {

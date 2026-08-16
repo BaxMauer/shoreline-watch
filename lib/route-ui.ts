@@ -6,10 +6,22 @@ export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 
 export function getRouteMapRenderingDetail(viewRangeMetres: number) {
   const range = Number.isFinite(viewRangeMetres) ? Math.max(0, viewRangeMetres) : MAXIMUM_ROUTE_VIEW_METRES;
-  if (range > 60_000) return { hatchBandHeight: 14, maximumShorelineSegments: 280, maximumLabels: 18 } as const;
-  if (range > 25_000) return { hatchBandHeight: 9, maximumShorelineSegments: 650, maximumLabels: 30 } as const;
-  if (range > 10_000) return { hatchBandHeight: 5, maximumShorelineSegments: 1_500, maximumLabels: 48 } as const;
+  if (range > 60_000) return { hatchBandHeight: 28, maximumShorelineSegments: 0, maximumLabels: 12 } as const;
+  if (range > 25_000) return { hatchBandHeight: 20, maximumShorelineSegments: 0, maximumLabels: 18 } as const;
+  if (range >= 10_000) return { hatchBandHeight: 10, maximumShorelineSegments: 0, maximumLabels: 28 } as const;
   return { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 } as const;
+}
+
+export function getRouteMapRefreshInterval(viewRangeMetres: number) {
+  const range = Number.isFinite(viewRangeMetres) ? Math.max(0, viewRangeMetres) : MAXIMUM_ROUTE_VIEW_METRES;
+  if (range > 40_000) return 240;
+  if (range >= 10_000) return 160;
+  return 80;
+}
+
+export function getRouteMapInteractionInterval(viewRangeMetres: number) {
+  const range = Number.isFinite(viewRangeMetres) ? Math.max(0, viewRangeMetres) : MAXIMUM_ROUTE_VIEW_METRES;
+  return range >= 10_000 ? 32 : 16;
 }
 export const MINIMUM_ACTIVE_ROUTE_VIEW_METRES = 2_500;
 export const MAXIMUM_ACTIVE_ROUTE_VIEW_METRES = 10_000;

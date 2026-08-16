@@ -221,7 +221,7 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind && trackerTab === "distance" && !powerSaveReason\}/);
   assert.match(app, /windReloadSequence/);
   assert.match(app, /windUnavailable/);
-  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} mapView=\{\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\} \/>/);
+  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} mapView=\{\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\} paused=\{mapInteracting\} \/>/);
   assert.match(overlay, /requestAnimationFrame\(callback\)/);
   assert.match(overlay, /document\.visibilityState !== "visible"/);
   assert.match(overlay, /new IntersectionObserver/);
@@ -470,7 +470,7 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
   }
   assert.match(planner, /pinchRouteViewRange\(gesture\.range, gesture\.distance, metrics\.distance, clampMapRange\)/);
   assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, northUpDelta\.x, northUpDelta\.y, clampMapRange\)/);
-  assert.match(planner, /window\.requestAnimationFrame\(\(\) =>/);
+  assert.match(planner, /window\.requestAnimationFrame\(commitMapView\)/);
   assert.match(planner, /scheduleMapView\(/);
   assert.match(planner, /latestMapView\.current = \{ centre: mapCentre, rangeMetres: viewRangeMetres \}/);
   assert.match(planner, /setRenderedMapView\(latestMapView\.current\)/);
