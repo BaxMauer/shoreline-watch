@@ -620,13 +620,13 @@ function ProximityPlot({
     return Array.from(sectors).sort((left, right) => left - right);
   }, [fix, metresPerLatitudeDegree, segments, warningDistanceMetres]);
 
-  const landHatchPath = useMemo(() => {
-    if (!fix || !pack) return "";
+  const landHatchBands = useMemo(() => {
+    if (!fix || !pack) return [];
     const bandHeight = 4;
     const extent = centre * Math.SQRT2;
     const minimumLongitude = fix.longitude - extent / (metresPerLongitudeDegree * pixelsPerMetre);
     const maximumLongitude = fix.longitude + extent / (metresPerLongitudeDegree * pixelsPerMetre);
-    let path = "";
+    const bands: Array<{ x: number; y: number; width: number; height: number }> = [];
 
     for (let y = centre - extent; y < centre + extent; y += bandHeight) {
       const sampleY = y + bandHeight / 2;
@@ -638,10 +638,10 @@ function ProximityPlot({
       for (const [west, east] of intervals) {
         const left = Math.max(centre - extent, centre + (west - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
         const right = Math.min(centre + extent, centre + (east - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
-        if (right > left) path += `M${left} ${top}H${right}V${bottom}H${left}Z`;
+        if (right > left) bands.push({ x: left, y: top, width: right - left, height: bottom - top });
       }
     }
-    return path;
+    return bands;
   }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pack, pixelsPerMetre]);
 
   return (
@@ -671,7 +671,7 @@ function ProximityPlot({
       <g className="proximity-oriented-map" transform={mapTransform}>
 
       <g className="land-hatch-layer" aria-hidden="true">
-        {landHatchPath && <path className="land-hatch-area" d={landHatchPath} />}
+        {landHatchBands.map((band, index) => <rect className="land-hatch-area" key={index} x={band.x} y={band.y} width={band.width} height={band.height} />)}
       </g>
 
       {nearestPoint && (
@@ -1979,9 +1979,15 @@ export default function ShorelineApp() {
           onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten und GPS-Tracks löschen?" : "Clear all activities and GPS tracks?") && clearActivityLog()}
         /> : <>
           <section className="intro">
-            <p className="eyebrow">{copy.eyebrow}</p>
-            <h1>{copy.heroTitle}</h1>
-            <p className="intro-copy">{copy.intro(warningConfig.distanceMetres)}</p>
+            <div className="intro-copy-block">
+              <p className="eyebrow">{copy.eyebrow}</p>
+              <h1>{copy.heroTitle}</h1>
+              <p className="intro-copy">{copy.intro(warningConfig.distanceMetres)}</p>
+            </div>
+            <div className="launch-radar" aria-hidden="true">
+              <i /><i /><i />
+              <span><BoatIcon /></span>
+            </div>
           </section>
 
           <section className="launch-panel" aria-label={copy.startAria}>
