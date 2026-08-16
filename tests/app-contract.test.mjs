@@ -150,13 +150,23 @@ test("explicit anchor watch persists and renders anchor, rode, swing circle, and
 
 test("activity log is local, bounded, and available during and outside tracking", async () => {
   const activity = await readFile(new URL("../lib/activity-log.ts", import.meta.url), "utf8");
+  const tracks = await readFile(new URL("../lib/activity-track.ts", import.meta.url), "utf8");
+  const overview = await readFile(new URL("../app/activity-overview.tsx", import.meta.url), "utf8");
   assert.match(app, /ACTIVITY_LOG_STORAGE_KEY/);
   assert.match(app, /<ActivityOverview/);
   assert.match(app, /trackerTab === "activities"/);
   assert.match(activity, /MAX_ACTIVITY_RECORDS = 200/);
   assert.match(activity, /slice\(0, MAX_ACTIVITY_RECORDS\)/);
-  assert.match(app, /finishTripDraft\(currentTrip\.current/);
+  assert.match(app, /finishTripDraft\(draft, endedAt/);
   assert.match(app, /getAnchorPlace\(mapFeaturePack, fix\)/);
+  assert.match(app, /mode !== "live" \|\| !fix \|\| !currentTrip\.current/);
+  assert.match(app, /saveTripTrackPoint\(trackPoint\)/);
+  assert.doesNotMatch(app.match(/useEffect\(\(\) => \{[\s\S]*?saveTripTrackPoint\(trackPoint\)[\s\S]*?\}, \[[^\]]+\]\);/)?.[0] ?? "", /trackerTab|route/);
+  assert.match(tracks, /indexedDB\.open\(DATABASE_NAME, DATABASE_VERSION\)/);
+  assert.match(tracks, /createIndex\("tripId", "tripId"/);
+  assert.match(overview, /getTripTrack\(trip\.id\)/);
+  assert.match(overview, /buildTripGpx\(title, points\)/);
+  assert.match(overview, /auch ohne aktive Navigation/);
 });
 
 test("anchor drift alarm sounds, vibrates, flashes, and repeats while breached", () => {
