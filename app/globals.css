@@ -586,8 +586,9 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .trip-detail-header button { min-height: 34px; border-radius: 9px; background: rgba(255,255,255,.08); color: var(--foam); padding: 0 10px; cursor: pointer; font-size: .58rem; font-weight: 800; }
 .trip-detail-header button:last-child { background: rgba(115,229,203,.14); color: var(--aqua); font-family: var(--font-geist-mono),monospace; letter-spacing: .08em; }
 .trip-detail-header button:disabled { cursor: default; opacity: .38; }
-.track-map-wrap { position: relative; overflow: hidden; border: 1px solid rgba(115,229,203,.14); border-radius: 17px; background: #0b3943; box-shadow: 0 16px 34px rgba(0,0,0,.2); animation: activity-rise .45s ease-out both; }
-.track-map { display: block; width: 100%; min-height: 220px; }
+.track-map-wrap { position: relative; overflow: hidden; min-height: 246px; border: 1px solid rgba(115,229,203,.14); border-radius: 17px; background: #0b3943; box-shadow: 0 16px 34px rgba(0,0,0,.2); animation: activity-rise .45s ease-out both; }
+.track-map { display: block; width: 100%; min-height: 246px; cursor: grab; touch-action: none; user-select: none; }
+.track-map:active { cursor: grabbing; }
 .track-map-water { fill: #dcecea; }
 .track-map-land { fill: url(#trackLandHatch); opacity: .98; }
 .track-map-land-base { fill: #bac8bd; }
@@ -603,9 +604,15 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .track-marker.end circle { fill: #d48618; }
 .track-marker text { fill: #fff; font-family: var(--font-geist-mono),monospace; font-size: 8px; font-weight: 950; text-anchor: middle; }
 .track-map-scale { fill: #456761; font-family: var(--font-geist-mono),monospace; font-size: 6px; font-weight: 800; letter-spacing: .08em; }
+.track-map-north path { fill: #0d766b; stroke: #fff; stroke-width: .8; }
+.track-map-north text { fill: #244c4b; font-family: var(--font-geist-mono),monospace; font-size: 7px; font-weight: 900; text-anchor: middle; }
+.track-map-controls { position: absolute; top: 10px; right: 10px; display: grid; overflow: hidden; border: 1px solid rgba(255,255,255,.55); border-radius: 12px; background: rgba(5,35,39,.9); box-shadow: 0 7px 18px rgba(4,30,34,.22); backdrop-filter: blur(9px); }
+.track-map-controls button { display: grid; width: 38px; height: 38px; place-items: center; border-bottom: 1px solid rgba(255,255,255,.14); background: transparent; color: #f2fffc; cursor: pointer; font-size: 1.05rem; font-weight: 800; }
+.track-map-controls button:last-child { border-bottom: 0; color: var(--aqua); font-size: .9rem; }
 .track-speed-legend { position: absolute; top: 9px; right: 9px; display: flex; gap: 7px; border-radius: 999px; background: rgba(4,29,34,.78); color: #d9e7e4; padding: 6px 8px; font-size: .42rem; backdrop-filter: blur(8px); }
 .track-speed-legend span { display: flex; align-items: center; gap: 4px; }
 .track-speed-legend span::before { width: 6px; height: 6px; border-radius: 50%; content:""; }
+.track-map-help { position: absolute; right: 54px; bottom: 9px; border-radius: 999px; background: rgba(255,255,255,.82); color: #244c4b; padding: 5px 8px; font-size: .45rem; font-weight: 750; pointer-events: none; }
 .track-map-loading, .track-map-empty { display: grid; min-height: 220px; place-items: center; border: 1px dashed rgba(115,229,203,.2); border-radius: 17px; color: var(--muted); font-size: .68rem; }
 .track-speed-chart { display: grid; min-height: 96px; grid-template-rows: auto 1fr; gap: 4px; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: rgba(255,255,255,.045); padding: 10px 12px 7px; animation: activity-rise .45s .06s ease-out both; }
 .track-speed-chart > span { display: flex; align-items: center; justify-content: space-between; }

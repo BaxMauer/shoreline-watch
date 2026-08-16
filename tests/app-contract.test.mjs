@@ -180,6 +180,13 @@ test("activity log is local, bounded, and available during and outside tracking"
   assert.match(miniMap, /getTripTrack\(trip\.id\)/);
   assert.match(miniMap, /className="activity-mini-map"/);
   assert.match(miniMap, /className="activity-mini-land"/);
+  assert.match(overview, /getMapViewportExtent\(TRACK_MAP_WIDTH, TRACK_MAP_HEIGHT, scale, 4\)/);
+  assert.match(overview, /className="track-map-land">\{map\.landBands\.map/);
+  assert.doesNotMatch(overview, /let landPath =/);
+  assert.match(overview, /onPointerMove=\{handlePointerMove\}/);
+  assert.match(overview, /onWheel=\{handleWheel\}/);
+  assert.match(overview, /aria-label=\{language === "de" \? "Vergrößern" : "Zoom in"\}/);
+  assert.match(overview, /Ziehen · Aufziehen zum Zoomen/);
 });
 
 test("anchor drift alarm sounds, vibrates, flashes, and repeats while breached", () => {
