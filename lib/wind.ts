@@ -20,6 +20,14 @@ export function buildWindRequestUrl(point: GeoPoint) {
   return `https://api.open-meteo.com/v1/forecast?${parameters}`;
 }
 
+export function buildWindProxyRequestUrl(point: GeoPoint) {
+  const parameters = new URLSearchParams({
+    latitude: point.latitude.toFixed(5),
+    longitude: point.longitude.toFixed(5),
+  });
+  return `/api/wind?${parameters}`;
+}
+
 export function parseWindSample(payload: unknown, fetchedAt = Date.now()): WindSample | null {
   if (!payload || typeof payload !== "object") return null;
   const current = (payload as { current?: unknown }).current;
@@ -37,6 +45,47 @@ export function parseWindSample(payload: unknown, fetchedAt = Date.now()): WindS
     observedAt,
     fetchedAt,
   };
+}
+
+export function parseWindProxyResponse(payload: unknown): WindSample | null {
+  if (!payload || typeof payload !== "object") return null;
+  const sample = (payload as { sample?: unknown }).sample;
+  if (!sample || typeof sample !== "object") return null;
+  const values = sample as Record<string, unknown>;
+  const speedKnots = Number(values.speedKnots);
+  const directionDegrees = Number(values.directionDegrees);
+  const gustKnots = Number(values.gustKnots);
+  const fetchedAt = Number(values.fetchedAt);
+  if (![speedKnots, directionDegrees, gustKnots, fetchedAt].every(Number.isFinite) || typeof values.observedAt !== "string") return null;
+  return {
+    speedKnots: Math.max(0, speedKnots),
+    directionDegrees: ((directionDegrees % 360) + 360) % 360,
+    gustKnots: Math.max(0, gustKnots),
+    observedAt: values.observedAt,
+    fetchedAt,
+  };
+}
+
+export async function fetchMapWindSample(
+  point: GeoPoint,
+  fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch,
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await fetcher(buildWindProxyRequestUrl(point), { signal, cache: "no-store" });
+    if (response.ok) {
+      const sample = parseWindProxyResponse(await response.json());
+      if (sample) return sample;
+    }
+  } catch {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  }
+
+  const response = await fetcher(buildWindRequestUrl(point), { signal, cache: "no-store" });
+  if (!response.ok) throw new Error("Wind unavailable");
+  const sample = parseWindSample(await response.json());
+  if (!sample) throw new Error("Wind unavailable");
+  return sample;
 }
 
 export function windCellKey(point: GeoPoint) {

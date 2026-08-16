@@ -35,8 +35,8 @@ test("tablet distance view gives the full instrument height to the map", () => {
 
 test("portrait tablet navigation grows the map between compact controls", () => {
   const journey = cssBlock(".journey-active, .journey-arrived", tabletMedia);
-  assert.match(journey, /display:\s*grid/);
-  assert.match(journey, /"map map"/);
+  assert.match(journey, /grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(journey, /"map"/);
   assert.match(journey, /overflow:\s*hidden/);
 
   const map = cssBlock(".journey-active .route-map-wrap, .journey-arrived .route-map-wrap", tabletMedia);
@@ -46,10 +46,9 @@ test("portrait tablet navigation grows the map between compact controls", () => 
   assert.match(map, /aspect-ratio:\s*auto/);
 });
 
-test("landscape tablet navigation keeps the map as the large primary pane", () => {
+test("landscape tablet navigation keeps map overlays compact", () => {
   assert.ok(landscapeMedia > tabletMedia);
-  const journey = cssBlock(".journey-active, .journey-arrived", landscapeMedia);
-  assert.match(journey, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 34%\)/);
-  assert.match(journey, /"map header"/);
-  assert.match(journey, /"map action"/);
+  assert.match(cssBlock(".journey-active .route-map-wrap, .journey-arrived .route-map-wrap", landscapeMedia), /min-height:\s*0/);
+  assert.match(cssBlock(".route-live-map-top", landscapeMedia), /width:\s*min\(48%, 380px\)/);
+  assert.match(cssBlock(".route-live-map-overlay .route-live-cockpit", landscapeMedia), /width:\s*min\(62%, 520px\)/);
 });

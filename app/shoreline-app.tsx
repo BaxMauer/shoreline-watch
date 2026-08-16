@@ -29,7 +29,7 @@ import WindOverlay from "./wind-overlay";
 import NauticalWeather from "./nautical-weather";
 import MapOrientationControl from "./map-orientation-control";
 import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
-import { buildWindRequestUrl, parseWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
+import { fetchMapWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
   createStationaryState,
   distanceFromStationaryReference,
@@ -968,13 +968,9 @@ export default function ShorelineApp() {
     const controller = new AbortController();
     const load = () => {
       setWindState("loading");
-      fetch(buildWindRequestUrl({ latitude: windLatitude, longitude: windLongitude }), { signal: controller.signal, cache: "no-store" })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Wind unavailable");
-          return parseWindSample(await response.json());
-        })
+      fetchMapWindSample({ latitude: windLatitude, longitude: windLongitude }, fetch, controller.signal)
         .then((sample) => {
-          if (!sample || controller.signal.aborted) throw new Error("Wind unavailable");
+          if (controller.signal.aborted) throw new Error("Wind unavailable");
           setWindSample(sample);
           setWindState("ready");
           localStorage.setItem(WIND_SAMPLE_STORAGE_KEY, JSON.stringify(sample));

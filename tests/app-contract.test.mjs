@@ -161,8 +161,7 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   const overlay = await readFile(new URL("../app/wind-overlay.tsx", import.meta.url), "utf8");
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   const windRoute = await readFile(new URL("../app/api/wind/route.ts", import.meta.url), "utf8");
-  assert.match(app, /fetch\(buildWindRequestUrl\(\{ latitude: windLatitude, longitude: windLongitude \}\)/);
-  assert.match(app, /return parseWindSample\(await response\.json\(\)\)/);
+  assert.match(app, /fetchMapWindSample\(\{ latitude: windLatitude, longitude: windLongitude \}, fetch, controller\.signal\)/);
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapOrientation\.mapRotationDegrees\} \/>/);
   assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
   assert.match(overlay, /requestAnimationFrame\(draw\)/);
@@ -201,6 +200,14 @@ test("active trip map mirrors the distance instrument's clearance geometry", asy
   assert.doesNotMatch(planner, /className="route-distance-label"/);
   assert.match(planner, /getActiveRouteViewRange\(proximityRangeMetres, warningConfig\.distanceMetres\)/);
   assert.match(app, /<RoutePlanner[\s\S]*goNoGoState=\{goNoGoState\}/);
+});
+
+test("active navigation uses a map-first distance instrument layout", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /<div className="route-live-map-overlay">[\s\S]*className="route-live-guidance"[\s\S]*className="route-live-cockpit"/);
+  assert.match(planner, /className="route-live-distance"[\s\S]*copy\.nearestShore/);
+  assert.match(planner, /className=\{`route-live-go-no-go \$\{goNoGoState\}`\}/);
+  assert.match(planner, /className="route-live-footer"[\s\S]*copy\.chartDepth[\s\S]*GPS[\s\S]*copy\.currentSpeed[\s\S]*route-end-trip/);
 });
 
 test("power saver runs only in live mode, honours all recent interaction, and retains GPS tracking", () => {

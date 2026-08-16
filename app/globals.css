@@ -886,24 +886,44 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .route-reset { min-height: 36px; border-radius: 8px; background: rgba(115,229,203,.1); color: var(--aqua); padding: 0 10px; cursor: pointer; font-size: .62rem; font-weight: 700; }
 .route-reset { grid-column: 1 / -1; }
 .route-live-gps-warning { position: sticky; z-index: 8; bottom: 0; margin: 0; border-radius: 9px; background: rgba(139,31,23,.96); color: #fff; padding: 9px 11px; font-size: .65rem; text-align: center; }
-.journey-active, .journey-arrived { gap: 7px; }
-.journey-active .route-screen-header, .journey-arrived .route-screen-header { display: none; }
-.journey-active .route-map-wrap, .journey-arrived .route-map-wrap { width: 100%; max-width: 520px; height: auto; aspect-ratio: 1 / 1; margin-inline: auto; border-radius: 20px; }
+.journey-active, .journey-arrived {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(11,34,42,.88), rgba(6,22,28,.95));
+  isolation: isolate;
+}
+.journey-active .route-screen-header, .journey-arrived .route-screen-header { position: relative; z-index: 7; min-height: 58px; border-bottom: 1px solid rgba(115,229,203,.12); background: rgba(5,20,26,.8); padding: 8px 12px; backdrop-filter: blur(12px); }
+.journey-active .route-screen-header strong, .journey-arrived .route-screen-header strong { font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
+.journey-active .route-map-wrap, .journey-arrived .route-map-wrap { width: 100%; max-width: none; height: 100%; min-height: 0; aspect-ratio: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .journey-active .route-map, .journey-arrived .route-map { cursor: grab; }
 .journey-active .route-map:active, .journey-arrived .route-map:active { cursor: grabbing; }
 .journey-active .route-controls, .journey-arrived .route-controls { display: none; }
-.journey-active .route-zoom, .journey-arrived .route-zoom { top: 10px; display: flex; }
+.journey-active .route-zoom, .journey-arrived .route-zoom { z-index: 7; top: 10px; display: flex; }
 .journey-active .route-zoom button, .journey-arrived .route-zoom button { width: 32px; height: 32px; }
-.journey-active .route-layer-tools, .journey-arrived .route-layer-tools { bottom: 25px; }
+.journey-active .route-layer-tools, .journey-arrived .route-layer-tools { z-index: 7; top: 108px; bottom: auto; }
 .journey-active .route-layer-tools button, .journey-arrived .route-layer-tools button { min-height: 30px; padding-inline: 8px; }
-.journey-active .route-scale, .journey-arrived .route-scale { bottom: 8px; }
-.journey-active .route-map-credit, .journey-arrived .route-map-credit { bottom: 6px; }
-.journey-active .route-summary, .journey-arrived .route-summary { min-height: 42px; padding: 7px 10px; }
-.journey-active .route-progress, .journey-arrived .route-progress { margin-top: 0; }
-.journey-active .route-clearance-chip, .journey-arrived .route-clearance-chip { margin-top: 5px; }
-.journey-active .route-trip-actions button, .journey-arrived .route-trip-actions button { min-height: 48px; }
+.journey-active .route-scale, .journey-arrived .route-scale { right: 12px; bottom: 104px; left: auto; }
+.journey-active .route-map-credit, .journey-arrived .route-map-credit { right: 12px; bottom: 104px; left: auto; }
+.route-live-map-overlay { position: absolute; z-index: 6; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 12px; pointer-events: none; }
+.route-live-map-top { display: grid; width: min(68%, 340px); align-self: flex-start; gap: 5px; }
+.route-live-map-overlay .route-live-guidance { width: 100%; }
+.route-live-map-overlay .route-clearance-chip { margin: 0; background: rgba(7,30,35,.9); color: var(--aqua); backdrop-filter: blur(10px); }
+.route-live-map-overlay .route-live-cockpit { width: 100%; align-self: stretch; }
+.route-live-map-overlay .route-live-distance { min-height: 78px; padding: 10px 15px 12px; }
+.route-live-map-overlay .route-live-distance > span { gap: 8px; }
+.route-live-map-overlay .route-live-distance strong { font-size: clamp(3.25rem, 15vw, 5.3rem); line-height: .78; }
+.route-live-map-overlay .route-live-distance em { margin-bottom: 3px; }
+.route-live-map-overlay .route-live-go-no-go { min-height: 64px; border-width: 3px; border-radius: 999px; padding-right: 14px; }
+.route-live-map-overlay .route-live-go-no-go span { width: 43px; height: 43px; border-radius: 50%; font-size: 1.55rem; }
+.route-live-footer { grid-template-columns: repeat(3,minmax(0,1fr)) auto; border: 0; border-top: 1px solid rgba(115,229,203,.1); border-radius: 0; background: rgba(5,20,26,.78); padding: 7px 10px; backdrop-filter: blur(10px); }
+.route-live-footer button { min-width: 76px; min-height: 48px; border-radius: 11px; color: #fff; padding: 0 10px; cursor: pointer; font-size: .62rem; font-weight: 850; }
+.route-live-footer .route-finish-trip { color: #063f36; }
+.journey-active .route-live-gps-warning, .journey-arrived .route-live-gps-warning { position: absolute; z-index: 9; right: 10px; bottom: 78px; left: 10px; }
 
 .sunlight-mode .route-map-wrap, .sunlight-mode .route-water { background: #f7fbfa; fill: #f7fbfa; }
+.sunlight-mode .journey-active .route-screen-header, .sunlight-mode .journey-arrived .route-screen-header { border-color: rgba(13,77,76,.1); background: rgba(255,255,255,.92); }
 .sunlight-mode .route-land-fill-mark { fill: #d6d1b8; }
 .sunlight-mode .route-screen-header strong, .sunlight-mode .route-panel > summary strong, .sunlight-mode .route-speed strong, .sunlight-mode .route-speed input, .sunlight-mode .route-metrics strong, .sunlight-mode .route-point-fields strong, .sunlight-mode .route-point-fields input, .sunlight-mode .route-option strong { color: #071b22; }
 .sunlight-mode .route-map-wrap { border-color: rgba(13,77,76,.12); box-shadow: 0 10px 25px rgba(18,62,63,.1); }
@@ -1010,43 +1030,25 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
   .route-map-wrap { border-radius: 20px; }
   .journey-active, .journey-arrived {
     position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(170px, .32fr);
-    grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     grid-template-areas:
-      "header header"
-      "cockpit cockpit"
-      "map map"
-      "guidance guidance"
-      "footer action"
-      "progress progress";
+      "header"
+      "map"
+      "footer";
+    gap: 0;
     overflow: hidden;
   }
   .journey-active .route-screen-header, .journey-arrived .route-screen-header { grid-area: header; }
-  .journey-active .route-live-cockpit, .journey-arrived .route-live-cockpit { grid-area: cockpit; }
   .journey-active .route-map-wrap, .journey-arrived .route-map-wrap { width: 100%; max-width: none; height: 100%; min-height: 320px; grid-area: map; aspect-ratio: auto; margin: 0; }
-  .journey-active .route-live-guidance, .journey-arrived .route-live-guidance { grid-area: guidance; }
   .journey-active .route-live-footer, .journey-arrived .route-live-footer { min-height: 60px; grid-area: footer; }
-  .journey-active .route-summary, .journey-arrived .route-summary { grid-area: progress; }
-  .journey-active .route-trip-actions, .journey-arrived .route-trip-actions { grid-area: action; }
-  .journey-active .route-trip-actions button, .journey-arrived .route-trip-actions button { height: 100%; min-height: 60px; }
-  .journey-active .route-live-gps-warning, .journey-arrived .route-live-gps-warning { z-index: 9; grid-area: map; align-self: end; margin: 10px; }
 }
 
 @media (min-width: 600px) and (max-width: 1199px) and (orientation: landscape) {
-  .journey-active, .journey-arrived {
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 34%);
-    grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
-    grid-template-areas:
-      "map header"
-      "map cockpit"
-      "map guidance"
-      "map footer"
-      "map progress"
-      "map action";
-  }
   .journey-active .route-map-wrap, .journey-arrived .route-map-wrap { min-height: 0; }
-  .journey-active .route-trip-actions, .journey-arrived .route-trip-actions { align-self: end; }
+  .route-live-map-overlay { padding-inline: 18px; }
+  .route-live-map-top { width: min(48%, 380px); }
+  .route-live-map-overlay .route-live-cockpit { width: min(62%, 520px); }
 }
 
 @media (max-width: 390px) {
