@@ -205,6 +205,9 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(overlay, /new IntersectionObserver/);
   assert.match(overlay, /createAnimationFrameLoop/);
   assert.match(overlay, /motionQuery\.addEventListener\("change"/);
+  assert.match(overlay, /context\.setTransform\(1, 0, 0, 1, 0, 0\)/);
+  assert.match(overlay, /Math\.min\(1\.5, devicePixelRatio/);
+  assert.match(overlay, /const scheduleResize/);
   assert.doesNotMatch(overlay, /ResizeObserver\(\(\) => \{ resize\(\); draw\(\); \}\)/);
   assert.match(overlay, /length: 96/);
   assert.match(overlay, /--wind-flow-colour/);
@@ -212,6 +215,15 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(overlay, /prefers-reduced-motion: reduce/);
   assert.match(windRoute, /AbortSignal\.timeout\(6_500\)/);
   assert.match(windRoute, /max-age=600, stale-while-revalidate=1800/);
+});
+
+test("launch screen is compact and uses a motion-safe radar treatment", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(app, /className="launch-radar"/);
+  assert.match(css, /\.intro\s*\{[^}]*min-height:\s*210px[^}]*grid-template-columns:/s);
+  assert.match(css, /@keyframes launch-sweep/);
+  assert.match(css, /@keyframes launch-button-shine/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("wide launch and tab icons use an intentional shared layout contract", async () => {

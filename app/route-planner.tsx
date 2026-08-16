@@ -631,23 +631,23 @@ export default function RoutePlanner({
   const segments = useMemo(() => pack ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, mapDataRangeMetres * 1.1, renderingDetail.maximumShorelineSegments) : [], [mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderingDetail.maximumShorelineSegments]);
   const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(renderedCentre, mapDataRangeMetres, 720) : [], [mapDataRangeMetres, renderedCentre, showDepths]);
   const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
-  const hatchPath = useMemo(() => {
-    if (!pack) return "";
+  const hatchBands = useMemo(() => {
+    if (!pack) return [];
     const bandHeight = renderingDetail.hatchBandHeight;
     const extent = centre * Math.SQRT2;
     const minimumLongitude = renderedCentre.longitude - mapDataRangeMetres / renderedMetresPerLongitudeDegree;
     const maximumLongitude = renderedCentre.longitude + mapDataRangeMetres / renderedMetresPerLongitudeDegree;
-    let path = "";
+    const bands: Array<{ x: number; y: number; width: number; height: number }> = [];
     for (let y = centre - extent; y < centre + extent; y += bandHeight) {
       const latitude = renderedCentre.latitude + (centre - y - bandHeight / 2) / (110_540 * renderedPixelsPerMetre);
       const intervals = getLandIntervalsAtLatitude(pack, latitude, minimumLongitude, maximumLongitude);
       for (const [west, east] of intervals) {
         const left = Math.max(centre - extent, centre + (west - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
         const right = Math.min(centre + extent, centre + (east - renderedCentre.longitude) * renderedMetresPerLongitudeDegree * renderedPixelsPerMetre);
-        if (right > left) path += `M${left} ${y}H${right}V${y + bandHeight + .5}H${left}Z`;
+        if (right > left) bands.push({ x: left, y, width: right - left, height: bandHeight + .5 });
       }
     }
-    return path;
+    return bands;
   }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderingDetail.hatchBandHeight]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
     getMapFeaturesInView(mapFeaturePack, renderedCentre, mapDataRangeMetres).slice(0, renderingDetail.maximumLabels),
@@ -702,7 +702,7 @@ export default function RoutePlanner({
       const southEast = renderedPoint({ longitude: tile.east, latitude: tile.south });
       return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
     })}</g>}
-    {hatchPath && <path className="route-land-area" d={hatchPath} />}
+    <g className="route-land-bands" aria-hidden="true">{hatchBands.map((band, index) => <rect key={index} className="route-land-area" x={band.x} y={band.y} width={band.width} height={band.height} />)}</g>
     <g className="route-coast-layer">{segments.map((segment, index) => {
       const start = renderedPoint({ longitude: segment[0], latitude: segment[1] });
       const end = renderedPoint({ longitude: segment[2], latitude: segment[3] });
@@ -718,7 +718,7 @@ export default function RoutePlanner({
     {journeyState === "planning" && focusedPlacePoint && <g className="route-search-marker" transform={`translate(${focusedPlacePoint.x} ${focusedPlacePoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="7" /><path d="M0 7 0 15" /><text y="-11">{focusedPlace?.name ?? ""}</text></g></g>}
     {startPoint && <g className="route-start" transform={`translate(${startPoint.x} ${startPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="10" /><text y="3.5">A</text></g></g>}
     {targetPoint && <g className="route-target" transform={`translate(${targetPoint.x} ${targetPoint.y})`}><g transform={`rotate(${-mapRotationDegrees})`}><circle r="11" /><text y="3.5">B</text></g></g>}
-  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, focusedPlace?.name, focusedPlacePoint, hatchPath, journeyState, mapLabels, mapRotationDegrees, renderedPoint, route?.mode, routePoints, segments, showDepths, startPoint, targetPoint]);
+  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, focusedPlace?.name, focusedPlacePoint, hatchBands, journeyState, mapLabels, mapRotationDegrees, renderedPoint, route?.mode, routePoints, segments, showDepths, startPoint, targetPoint]);
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
