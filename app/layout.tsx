@@ -29,7 +29,7 @@ export const metadata: Metadata = {
       { url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
     ],
   },
-  manifest: "/manifest.webmanifest?v=19",
+  manifest: "/manifest.webmanifest?v=20",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -48,7 +48,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="de" className="dark">
+    <html lang="de" className="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('shoreline-theme');if(['ocean','xp','dark','nautical'].includes(t))document.documentElement.dataset.theme=t;}catch(e){}})();` }} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

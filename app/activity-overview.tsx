@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { activityTotals, type ActivityRecord, type TripActivity, type TripDraft } from "../lib/activity-log";
 import { buildTripGpx, getTripTrack, type TripTrackPoint } from "../lib/activity-track";
 import type { AnchorWatch } from "../lib/anchor-watch";
-import { getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
+import { getLandIntervalsAtLatitude, getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
 
 type Props = {
   language: "de" | "en";
@@ -48,7 +48,20 @@ function TrackMap({ points, coastline, language }: { points: TripTrackPoint[]; c
       y: 110 - (latitude - centre.latitude) * latitudeScale * scale,
     });
     const shore = coastline ? getNearbyShorelineSegments(coastline, centre.longitude, centre.latitude, halfRange * 1.7, 3_000) : [];
-    return { project, shore, halfRange };
+    let landPath = "";
+    if (coastline) {
+      const west = centre.longitude - halfRange / longitudeScale;
+      const east = centre.longitude + halfRange / longitudeScale;
+      for (let y = 0; y < 220; y += 4) {
+        const latitude = centre.latitude + (110 - y - 2) / (latitudeScale * scale);
+        for (const [landWest, landEast] of getLandIntervalsAtLatitude(coastline, latitude, west, east)) {
+          const left = Math.max(0, project(landWest, latitude).x);
+          const right = Math.min(360, project(landEast, latitude).x);
+          if (right > left) landPath += `M${left} ${y}H${right}V${y + 4.5}H${left}Z`;
+        }
+      }
+    }
+    return { project, shore, halfRange, landPath };
   }, [coastline, points]);
 
   if (!map) return <div className="track-map-empty">{language === "de" ? "Noch keine GPS-Punkte" : "No GPS points available"}</div>;
@@ -56,8 +69,9 @@ function TrackMap({ points, coastline, language }: { points: TripTrackPoint[]; c
   const end = map.project(points.at(-1)!.longitude, points.at(-1)!.latitude);
   return <div className="track-map-wrap">
     <svg className="track-map" viewBox="0 0 360 220" role="img" aria-label={language === "de" ? "Aufgezeichnete GPS-Fahrt" : "Recorded GPS trip"}>
-      <defs><filter id="trackGlow"><feGaussianBlur stdDeviation="2.3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter></defs>
+      <defs><filter id="trackGlow"><feGaussianBlur stdDeviation="2.3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter><pattern id="trackLandHatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><rect width="9" height="9" className="track-map-land-base"/><line x1="0" y1="0" x2="0" y2="9" className="track-map-land-line"/></pattern></defs>
       <rect className="track-map-water" width="360" height="220" rx="16" />
+      <path className="track-map-land" d={map.landPath} />
       <g className="track-map-shore">{map.shore.map((segment, index) => {
         const startPoint = map.project(segment[0], segment[1]);
         const endPoint = map.project(segment[2], segment[3]);
@@ -72,17 +86,17 @@ function TrackMap({ points, coastline, language }: { points: TripTrackPoint[]; c
       })}</g>
       <g className="track-marker start" transform={`translate(${start.x} ${start.y})`}><circle r="9" /><text y="3">A</text></g>
       <g className="track-marker end" transform={`translate(${end.x} ${end.y})`}><circle r="9" /><text y="3">B</text></g>
-      <text className="track-map-scale" x="12" y="205">GPS TRACK · {distance(map.halfRange * 2)}</text>
+      <text className="track-map-scale" x="12" y="205">{language === "de" ? "GPS-TRACK" : "GPS TRACK"} · {distance(map.halfRange * 2)}</text>
     </svg>
     <div className="track-speed-legend"><span className="slow">≤8 kn</span><span className="cruise">8–15 kn</span><span className="fast">&gt;15 kn</span></div>
   </div>;
 }
 
-function SpeedChart({ points }: { points: TripTrackPoint[] }) {
+function SpeedChart({ points, language }: { points: TripTrackPoint[]; language: "de" | "en" }) {
   const values = points.map((point) => point.speedKnots ?? 0);
   const maximum = Math.max(1, ...values);
   const polyline = values.map((value, index) => `${values.length === 1 ? 0 : index / (values.length - 1) * 320},${58 - value / maximum * 52}`).join(" ");
-  return <div className="track-speed-chart"><span><small>GESCHWINDIGKEIT</small><b>max {maximum.toFixed(1)} kn</b></span><svg viewBox="0 0 320 62" preserveAspectRatio="none" aria-label="Geschwindigkeitsverlauf"><path d="M0 58H320" /><polyline points={polyline} /></svg></div>;
+  return <div className="track-speed-chart"><span><small>{language === "de" ? "GESCHWINDIGKEIT" : "SPEED"}</small><b>max {maximum.toFixed(1)} kn</b></span><svg viewBox="0 0 320 62" preserveAspectRatio="none" role="img" aria-label={language === "de" ? "Geschwindigkeitsverlauf" : "Speed over time"}><path d="M0 58H320" /><polyline points={polyline} /></svg></div>;
 }
 
 function TripDetail({ trip, language, coastline, onBack }: { trip: TripActivity; language: "de" | "en"; coastline: CoastlinePack | null; onBack: () => void }) {
@@ -109,7 +123,7 @@ function TripDetail({ trip, language, coastline, onBack }: { trip: TripActivity;
     [de ? "Strecke" : "Distance", distance(trip.distanceMetres)],
     [de ? "Gesamtdauer" : "Duration", duration(trip.durationMs, language)],
     [de ? "In Bewegung" : "Moving", duration(trip.movingDurationMs, language)],
-    ["Ø Tempo", `${trip.averageSpeedKnots.toFixed(1)} kn`],
+    [de ? "Ø Tempo" : "Average speed", `${trip.averageSpeedKnots.toFixed(1)} kn`],
     [de ? "Max. Tempo" : "Top speed", `${trip.maxSpeedKnots.toFixed(1)} kn`],
     [de ? "Kleinster Küstenabstand" : "Closest shore", trip.minShoreDistanceMetres === null ? "—" : distance(trip.minShoreDistanceMetres)],
     [de ? "Geringste Kartentiefe" : "Minimum chart depth", trip.minDepthMetres === null ? "—" : `${trip.minDepthMetres.toFixed(1)} m`],
@@ -120,7 +134,7 @@ function TripDetail({ trip, language, coastline, onBack }: { trip: TripActivity;
   return <section className="trip-detail">
     <header className="trip-detail-header"><button type="button" onClick={onBack}>‹ {de ? "Logbuch" : "Logbook"}</button><span><small>{new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(trip.startedAt)}</small><strong>{title}</strong></span><button type="button" disabled={!points.length} onClick={exportGpx}>GPX</button></header>
     {loading ? <div className="track-map-loading">{de ? "GPS-Track wird geladen …" : "Loading GPS track…"}</div> : <TrackMap points={points} coastline={coastline} language={language} />}
-    {points.length > 1 && <SpeedChart points={points} />}
+    {points.length > 1 && <SpeedChart points={points} language={language} />}
     <div className="trip-detail-grid">{metrics.map(([label, value]) => <span key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
     <div className="trip-route-note"><span>⌖</span><p><strong>{de ? "Automatisch aufgezeichnet" : "Recorded automatically"}</strong><small>{de ? "Dieser GPS-Track läuft bei jedem Live-Tracking – auch ohne aktive Navigation." : "This GPS track runs during every live session, even without active navigation."}</small></p></div>
   </section>;
@@ -141,7 +155,7 @@ export default function ActivityOverview({ language, records, currentTrip, curre
       const date = new Intl.DateTimeFormat(language, { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(record.startedAt);
       const isTrip = record.kind === "trip";
       const place = !isTrip ? [record.bayName, record.islandName].filter(Boolean).join(" · ") : "";
-      const content = <><span className="activity-icon" aria-hidden="true">{isTrip ? "↗" : "⚓"}</span><div className="activity-row-main"><small>{date}</small><strong>{isTrip ? ([record.startLabel, record.endLabel].filter(Boolean).join(" → ") || (de ? "Fahrt" : "Trip")) : (place || (de ? "Ankern" : "Anchored"))}</strong><span>{isTrip ? `${distance(record.distanceMetres)} · Ø ${record.averageSpeedKnots.toFixed(1)} kn · ${record.trackPointCount ?? 0} GPS` : `${duration(record.durationMs, language)} · max ${Math.round(record.maxDriftMetres)} m ${de ? "Drift" : "drift"}`}</span><div className="activity-meter"><i style={{ width: `${Math.min(100, isTrip ? record.maxSpeedKnots * 4 : record.maxDriftMetres / Math.max(1, record.radiusMetres) * 100)}%` }} /></div></div><b>{isTrip ? "›" : duration(record.durationMs, language)}</b></>;
+      const content = <><span className="activity-icon" aria-hidden="true">{isTrip ? "↗" : "⚓"}</span><div className="activity-row-main"><small>{date}</small><strong>{isTrip ? ([record.startLabel, record.endLabel].filter(Boolean).join(" → ") || (de ? "Fahrt" : "Trip")) : (place || (de ? "Ankern" : "Anchored"))}</strong><span>{isTrip ? `${distance(record.distanceMetres)} · ${de ? "Ø" : "avg"} ${record.averageSpeedKnots.toFixed(1)} kn · ${record.trackPointCount ?? 0} GPS` : `${duration(record.durationMs, language)} · max ${Math.round(record.maxDriftMetres)} m ${de ? "Drift" : "drift"}`}</span><div className="activity-meter"><i style={{ width: `${Math.min(100, isTrip ? record.maxSpeedKnots * 4 : record.maxDriftMetres / Math.max(1, record.radiusMetres) * 100)}%` }} /></div></div><b>{isTrip ? "›" : duration(record.durationMs, language)}</b></>;
       return isTrip ? <button type="button" className="activity-row trip" key={record.id} onClick={() => setSelectedTripId(record.id)} style={{ "--activity-index": index } as CSSProperties}>{content}</button> : <article className="activity-row anchor" key={record.id} style={{ "--activity-index": index } as CSSProperties}>{content}</article>;
     })}</div>
     <footer className="activity-privacy"><span>⌂</span><p><strong>{de ? "Nur auf diesem Gerät" : "Only on this device"}</strong><small>{de ? "Detaillierte GPS-Tracks werden lokal gespeichert und nie übertragen. Maximal 200 Logbucheinträge." : "Detailed GPS tracks stay on this device and are never transmitted. Maximum 200 logbook entries."}</small></p>{records.length > 0 && <button type="button" onClick={onClear}>{de ? "Löschen" : "Clear"}</button>}</footer>

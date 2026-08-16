@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, parseWindProxyResponse, parseWindSample, windCellKey, windCompassLabel, windFlowAngleRadians, windSampleCanBeReused } from "../lib/wind.ts";
+import { buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, parseWindProxyResponse, parseWindSample, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windSampleCanBeReused } from "../lib/wind.ts";
 
 test("wind request uses current 10-m speed, direction, gusts, and knots", () => {
   const url = new URL(buildWindRequestUrl({ latitude: 43.8, longitude: 15.55 }));
@@ -18,6 +18,14 @@ test("wind response is normalized and invalid samples fail closed", () => {
     fetchedAt: 123,
   });
   assert.equal(parseWindSample({ current: { wind_speed_10m: "bad" } }), null);
+});
+
+test("wind parsers reject coercible null, empty, and boolean values", () => {
+  const base = { current: { wind_speed_10m: 8, wind_direction_10m: 90, wind_gusts_10m: 12, time: "2026-08-16T12:00" } };
+  for (const invalid of [null, "", false]) {
+    assert.equal(parseWindSample({ current: { ...base.current, wind_speed_10m: invalid } }), null);
+    assert.equal(parseWindProxyResponse({ sample: { speedKnots: invalid, directionDegrees: 90, gustKnots: 12, observedAt: "2026-08-16T12:00", fetchedAt: Date.now() } }), null);
+  }
 });
 
 test("map wind uses the same-origin proxy and validates its sample", () => {
@@ -59,4 +67,16 @@ test("offline wind is reused for at most three hours", () => {
   const sample = { speedKnots: 10, directionDegrees: 0, gustKnots: 15, observedAt: "now", fetchedAt: 1_000 };
   assert.equal(windSampleCanBeReused(sample, 1_000 + 3 * 60 * 60 * 1_000), true);
   assert.equal(windSampleCanBeReused(sample, 1_001 + 3 * 60 * 60 * 1_000), false);
+});
+
+test("offline wind never crosses a location cell", () => {
+  const sample = { speedKnots: 10, directionDegrees: 0, gustKnots: 15, observedAt: "now", fetchedAt: 1_000, cellKey: "43.80:15.55" };
+  assert.equal(windSampleCanBeReused(sample, 2_000, "43.80:15.55"), true);
+  assert.equal(windSampleCanBeReused(sample, 2_000, "43.88:15.64"), false);
+  assert.equal(windSampleCanBeReused({ ...sample, cellKey: undefined }, 2_000, "43.80:15.55"), false);
+});
+
+test("wind flow is calm-aware and gust-responsive", () => {
+  assert.equal(windFlowSpeedPixelsPerSecond(0, 0), 0);
+  assert.ok(windFlowSpeedPixelsPerSecond(12, 26) > windFlowSpeedPixelsPerSecond(12, 12));
 });
