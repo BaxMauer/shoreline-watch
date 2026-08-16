@@ -90,6 +90,8 @@ const TEXT = {
     mapDetail: "Räumliche Modellwerte rund um das Boot",
     temperature: "Temperatur",
     mapLoading: "Lokale Kartenwerte werden geladen",
+    weatherOnly: "Wetter verfügbar · Marinewerte fehlen",
+    mapRetry: "Kartenwerte erneut laden",
     close: "Schließen",
   },
   en: {
@@ -144,6 +146,8 @@ const TEXT = {
     mapDetail: "Spatial model values around the boat",
     temperature: "Temperature",
     mapLoading: "Loading local map values",
+    weatherOnly: "Weather available · marine values missing",
+    mapRetry: "Reload map values",
     close: "Close",
   },
 };
@@ -199,9 +203,10 @@ export default function NauticalWeather({ point, active, language, online, coast
   const [state, setState] = useState<"idle" | "loading" | "ready" | "offline" | "error">("idle");
   const [mapState, setMapState] = useState<"idle" | "loading" | "ready" | "offline" | "error">("idle");
   const [selectedDay, setSelectedDay] = useState(0);
-  const [selectedMetric, setSelectedMetric] = useState<NauticalWeatherMetric | null>(null);
+  const [selectedMetric, setSelectedMetric] = useState<NauticalWeatherMetric | null>("wind");
   const [selectedHourIndex, setSelectedHourIndex] = useState<number | null>(null);
   const [reloadSequence, setReloadSequence] = useState(0);
+  const [marinePartial, setMarinePartial] = useState(false);
   const cellKey = point ? nauticalWeatherCellKey(point) : null;
   const queryPoint = useMemo<GeoPoint | null>(() => {
     if (!cellKey) return null;
@@ -250,15 +255,17 @@ export default function NauticalWeather({ point, active, language, online, coast
       setState((current) => current === "offline" ? current : "loading");
       const urls = buildNauticalWeatherRequestUrls(queryPoint);
       try {
-        const [weatherResponse, marineResponse] = await Promise.all([
-          fetch(urls.weather, { signal: controller.signal, cache: "no-store" }),
-          fetch(urls.marine, { signal: controller.signal, cache: "no-store" }),
+        const [weatherResult, marineResult] = await Promise.allSettled([
+          fetch(urls.weather, { signal: controller.signal, cache: "no-store" }).then((response) => response.ok ? response.json() : Promise.reject(new Error("Weather unavailable"))),
+          fetch(urls.marine, { signal: controller.signal, cache: "no-store" }).then((response) => response.ok ? response.json() : Promise.reject(new Error("Marine unavailable"))),
         ]);
-        if (!weatherResponse.ok || !marineResponse.ok) throw new Error("Forecast unavailable");
-        const parsed = parseNauticalWeatherForecast(await weatherResponse.json(), await marineResponse.json(), queryPoint);
+        if (weatherResult.status !== "fulfilled") throw new Error("Forecast unavailable");
+        const marinePayload = marineResult.status === "fulfilled" ? marineResult.value : null;
+        const parsed = parseNauticalWeatherForecast(weatherResult.value, marinePayload, queryPoint);
         if (!parsed) throw new Error("Forecast invalid");
         if (controller.signal.aborted) return;
         setForecast(parsed);
+        setMarinePartial(marineResult.status !== "fulfilled");
         setState("ready");
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
       } catch {
@@ -290,12 +297,12 @@ export default function NauticalWeather({ point, active, language, online, coast
       const urls = buildNauticalWeatherMapRequestUrls(queryPoint);
       if (!urls) { setMapState("error"); return; }
       try {
-        const [weatherResponse, marineResponse] = await Promise.all([
-          fetch(urls.weather, { signal: controller.signal, cache: "no-store" }),
-          fetch(urls.marine, { signal: controller.signal, cache: "no-store" }),
+        const [weatherResult, marineResult] = await Promise.allSettled([
+          fetch(urls.weather, { signal: controller.signal, cache: "no-store" }).then((response) => response.ok ? response.json() : Promise.reject(new Error("Weather map unavailable"))),
+          fetch(urls.marine, { signal: controller.signal, cache: "no-store" }).then((response) => response.ok ? response.json() : Promise.reject(new Error("Marine map unavailable"))),
         ]);
-        if (!weatherResponse.ok || !marineResponse.ok) throw new Error("Map forecast unavailable");
-        const parsed = parseNauticalWeatherMapForecast(await weatherResponse.json(), await marineResponse.json(), queryPoint);
+        if (weatherResult.status !== "fulfilled") throw new Error("Map forecast unavailable");
+        const parsed = parseNauticalWeatherMapForecast(weatherResult.value, marineResult.status === "fulfilled" ? marineResult.value : null, queryPoint);
         if (!parsed) throw new Error("Map forecast invalid");
         if (controller.signal.aborted) return;
         setMapForecast(parsed);
@@ -322,19 +329,20 @@ export default function NauticalWeather({ point, active, language, online, coast
     return () => { window.clearTimeout(timer); window.clearInterval(interval); controller.abort(); };
   }, [active, cellKey, queryPoint, reloadSequence]);
 
-  const day = forecast?.days[selectedDay] ?? null;
+  const activeForecast = forecast?.cellKey === cellKey ? forecast : null;
+  const day = activeForecast?.days[selectedDay] ?? null;
   const conditions = useMemo(() => day ? classifyNauticalConditions(dayRiskHours(day)) : "good", [day]);
   const conditionCopy = riskCopy(conditions, copy);
   const bestWindow = day ? getBestBoatingWindow(day) : null;
   const selectedCurrent = day
-    ? selectedDay === 0 && forecast?.current
-      ? forecast.current
+    ? selectedDay === 0 && activeForecast?.current
+      ? activeForecast.current
       : day.hours.find((hour) => hour.time.endsWith("T12:00")) ?? day.hours[0] ?? null
     : null;
   const riskHours = day ? dayRiskHours(day) : [];
   const hourly = day?.hours.filter((hour, index) => {
     const hourOfDay = Number(hour.time.slice(11, 13));
-    if (selectedDay === 0 && forecast?.current && hour.time < forecast.current.time.slice(0, 13) + ":00") return false;
+    if (selectedDay === 0 && activeForecast?.current && hour.time < activeForecast.current.time.slice(0, 13) + ":00") return false;
     return index % 3 === 0 && hourOfDay >= 6 && hourOfDay <= 21;
   }) ?? [];
   const maxRain = maxOf(riskHours, (hour) => hour.precipitationProbabilityPercent);
@@ -360,7 +368,7 @@ export default function NauticalWeather({ point, active, language, online, coast
   ];
   const visualMetric = selectedMetric ?? "wind";
   const visualMetricConfig = metricOptions.find((entry) => entry.id === visualMetric) ?? metricOptions[1];
-  const effectiveHourIndex = selectedHourIndex ?? Math.max(0, Math.min(23, selectedDay === 0 ? Number(forecast?.current?.time.slice(11, 13) ?? 12) : 12));
+  const effectiveHourIndex = selectedHourIndex ?? Math.max(0, Math.min(23, selectedDay === 0 ? Number(activeForecast?.current?.time.slice(11, 13) ?? 12) : 12));
   const selectedMapTime = day?.hours[effectiveHourIndex]?.time ?? day?.hours[0]?.time ?? "";
   const mapLocations = mapForecast?.cellKey === cellKey ? mapForecast.locations : [];
   const mapSegments = useMemo(() => coastline && queryPoint
@@ -369,16 +377,16 @@ export default function NauticalWeather({ point, active, language, online, coast
 
   if (!point) return <section className="weather-panel weather-empty"><span className="weather-empty-symbol" aria-hidden="true">⌖</span><strong>{copy.waiting}</strong><p>{copy.waitingDetail}</p></section>;
   if (!forecast && state === "loading") return <section className="weather-panel weather-empty weather-loading"><span className="weather-loader" aria-hidden="true" /><strong>{copy.loading}</strong><small>{point.latitude.toFixed(4)}° N · {point.longitude.toFixed(4)}° E</small></section>;
-  if (!forecast || !day || !selectedCurrent) return <section className="weather-panel weather-empty"><span className="weather-empty-symbol" aria-hidden="true">≋</span><strong>{copy.unavailable}</strong><button type="button" onClick={() => setReloadSequence((current) => current + 1)}>{copy.retry}</button></section>;
+  if (!activeForecast || !day || !selectedCurrent) return <section className="weather-panel weather-empty"><span className="weather-empty-symbol" aria-hidden="true">≋</span><strong>{copy.unavailable}</strong><button type="button" onClick={() => setReloadSequence((current) => current + 1)}>{copy.retry}</button></section>;
 
   return <section className={`weather-panel weather-${conditions}`}>
     <header className="weather-header">
       <span><strong>{copy.title}</strong><small>{copy.local}</small></span>
-      <span className={`weather-freshness ${state}`}><i />{state === "offline" || !online ? copy.offline : `${copy.updated} ${new Date(forecast.fetchedAt).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" })}`}</span>
+      <span className={`weather-freshness ${state}`}><i />{state === "offline" || !online ? copy.offline : `${copy.updated} ${new Date(activeForecast.fetchedAt).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" })}`}</span>
     </header>
 
     <div className="weather-day-switch" role="tablist" aria-label={copy.title}>
-      {forecast.days.slice(0, 2).map((entry, index) => <button key={entry.date} type="button" role="tab" aria-selected={selectedDay === index} className={selectedDay === index ? "active" : ""} onClick={() => { setSelectedDay(index); setSelectedHourIndex(null); }}>
+      {activeForecast.days.slice(0, 2).map((entry, index) => <button key={entry.date} type="button" role="tab" aria-selected={selectedDay === index} className={selectedDay === index ? "active" : ""} onClick={() => { setSelectedDay(index); setSelectedHourIndex(null); }}>
         <span>{index === 0 ? copy.today : copy.tomorrow}</span>
         <small>{new Date(`${entry.date}T12:00:00`).toLocaleDateString(language, { weekday: "short", day: "2-digit", month: "2-digit" })}</small>
       </button>)}
@@ -403,7 +411,7 @@ export default function NauticalWeather({ point, active, language, online, coast
     </div>
 
     {selectedMetric && <section className="weather-visual-section weather-course-section">
-      <div className="weather-section-title"><span><strong>{copy.dailyCourse}</strong><small>{visualMetricConfig.label} · {forecast.timezone}</small></span><button type="button" onClick={() => setSelectedMetric(null)} aria-label={copy.close}>×</button></div>
+      <div className="weather-section-title"><span><strong>{copy.dailyCourse}</strong><small>{visualMetricConfig.label} · {activeForecast.timezone}</small></span><button type="button" onClick={() => setSelectedMetric(null)} aria-label={copy.close}>×</button></div>
       <WeatherChart hours={day.hours} metric={selectedMetric} label={visualMetricConfig.label} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} selectedIndex={effectiveHourIndex} onSelect={setSelectedHourIndex} language={language} />
     </section>}
 
@@ -412,7 +420,11 @@ export default function NauticalWeather({ point, active, language, online, coast
       <div className="weather-metric-tabs" role="tablist" aria-label={copy.weatherMap}>
         {metricOptions.map((entry) => <button key={entry.id} type="button" role="tab" aria-selected={visualMetric === entry.id} className={visualMetric === entry.id ? "active" : ""} onClick={() => setSelectedMetric(entry.id)}><span aria-hidden="true">{entry.symbol}</span>{entry.label}</button>)}
       </div>
-      {mapLocations.length && selectedMapTime ? <WeatherMap point={point} locations={mapLocations} segments={mapSegments} coastline={coastline} mapFeatures={mapFeatures} metric={visualMetric} metricLabel={visualMetricConfig.label} time={selectedMapTime} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} language={language} loading={mapState === "loading"} /> : <div className="weather-map-placeholder"><span className="weather-loader" aria-hidden="true"/><small>{mapState === "error" ? copy.unavailable : copy.mapLoading}</small></div>}
+      {mapLocations.length && selectedMapTime ? <WeatherMap point={point} locations={mapLocations} segments={mapSegments} coastline={coastline} mapFeatures={mapFeatures} metric={visualMetric} metricLabel={visualMetricConfig.label} time={selectedMapTime} unit={visualMetricConfig.unit} digits={visualMetricConfig.digits} language={language} loading={mapState === "loading"} /> : <div className={`weather-map-placeholder ${mapState}`}>
+        {mapState !== "error" && <span className="weather-loader" aria-hidden="true"/>}
+        <small>{mapState === "error" ? copy.unavailable : copy.mapLoading}</small>
+        {mapState === "error" && <button type="button" onClick={() => setReloadSequence((current) => current + 1)}>{copy.mapRetry}</button>}
+      </div>}
     </section>
 
     {bestWindow && <article className={`weather-window ${bestWindow.level}`}>
@@ -422,7 +434,7 @@ export default function NauticalWeather({ point, active, language, online, coast
     </article>}
 
     <section className="weather-hourly-section">
-      <div className="weather-section-title"><strong>{copy.hourly}</strong><small>{forecast.timezone}</small></div>
+      <div className="weather-section-title"><strong>{copy.hourly}</strong><small>{activeForecast.timezone}</small></div>
       <div className="weather-hourly-strip">
         {hourly.map((hour) => <article key={hour.time} className={`weather-hour ${classifyNauticalConditions([hour])}`}>
           <time>{time(hour.time)}</time>
@@ -442,6 +454,6 @@ export default function NauticalWeather({ point, active, language, online, coast
       <article><small>{copy.sunrise} / {copy.sunset}</small><strong>{time(day.sunrise)}</strong><span>{time(day.sunset)}</span></article>
     </section>
 
-    <footer className="weather-source"><span>{copy.source}</span><small>{forecast.latitude.toFixed(3)}°, {forecast.longitude.toFixed(3)}° · {copy.scope}</small></footer>
+    <footer className="weather-source"><span>{marinePartial ? copy.weatherOnly : copy.source}</span><small>{activeForecast.latitude.toFixed(3)}°, {activeForecast.longitude.toFixed(3)}° · {copy.scope}</small></footer>
   </section>;
 }

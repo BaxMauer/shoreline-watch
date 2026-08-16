@@ -9,7 +9,7 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "prefer_related_applications": false,
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#06151b",
   "theme_color": "#06151b",
   "categories": ["navigation", "utilities"],

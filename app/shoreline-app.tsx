@@ -124,6 +124,12 @@ const PENDING_TRACK_POINT_STORAGE_KEY = "shoreline-pending-track-point-v1";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
+const THEME_CHROME_COLOURS: Record<Theme, string> = {
+  ocean: "#06151b",
+  dark: "#030405",
+  xp: "#245ed7",
+  nautical: "#cbb98e",
+};
 
 const COPY = {
   de: {
@@ -134,6 +140,7 @@ const COPY = {
     intro: (distance: number) => `Nächste Küste, ein ${distance}-m-Alarm, vollständig offline verfügbar.`,
     startAria: "Küstenüberwachung starten",
     coastError: "Küstendaten nicht verfügbar",
+    retryLoad: "Erneut laden",
     coastReady: "Kroatische Küste offline bereit",
     coastLoading: "Kroatische Küste wird geladen",
     startLive: "Live starten",
@@ -201,6 +208,7 @@ const COPY = {
     wind: "Wind",
     windGust: "Böe",
     windWaiting: "Winddaten laden",
+    windUnavailable: "Wind nicht verfügbar · erneut versuchen",
     diagnosticsSection: "Diagnose",
     debugMode: "Debug-Daten anzeigen",
     debugModeHint: "Zeigt lokale Live-, GPS-, Tiefen-, Alarm- und Ankerdaten. Es werden keine Daten übertragen.",
@@ -284,6 +292,7 @@ const COPY = {
     intro: (distance: number) => `Nearest shoreline, one ${distance} m alarm, fully available offline.`,
     startAria: "Start shoreline tracking",
     coastError: "Coastline data unavailable",
+    retryLoad: "Try again",
     coastReady: "Croatia shoreline ready offline",
     coastLoading: "Loading Croatia shoreline",
     startLive: "Start live",
@@ -351,6 +360,7 @@ const COPY = {
     wind: "Wind",
     windGust: "Gust",
     windWaiting: "Loading wind",
+    windUnavailable: "Wind unavailable · retry",
     diagnosticsSection: "Diagnostics",
     debugMode: "Show debug data",
     debugModeHint: "Shows local live, GPS, depth, alarm and anchor data. No data is transmitted.",
@@ -755,6 +765,7 @@ export default function ShorelineApp() {
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [pack, setPack] = useState<CoastlinePack | null>(null);
   const [packError, setPackError] = useState<string | null>(null);
+  const [packReloadSequence, setPackReloadSequence] = useState(0);
   const [mapFeaturePack, setMapFeaturePack] = useState<MapFeaturePack | null>(null);
   const [mapFeatureError, setMapFeatureError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
@@ -779,8 +790,9 @@ export default function ShorelineApp() {
   const [depthDebug, setDepthDebug] = useState({ requestedAt: null as number | null, respondedAt: null as number | null, error: null as string | null });
   const [anchorWatch, setAnchorWatch] = useState<AnchorWatch | null>(null);
   const [windSample, setWindSample] = useState<WindSample | null>(null);
-  const [windState, setWindState] = useState<"idle" | "loading" | "ready" | "offline">("idle");
+  const [windState, setWindState] = useState<"idle" | "loading" | "ready" | "offline" | "error">("idle");
   const [showWind, setShowWind] = useState(true);
+  const [windReloadSequence, setWindReloadSequence] = useState(0);
   const [headingUp, setHeadingUp] = useState(false);
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>([]);
   const [showActivityOverview, setShowActivityOverview] = useState(false);
@@ -802,6 +814,8 @@ export default function ShorelineApp() {
   const warningSoundAvailableForDangerEpisode = useRef(false);
   const depthQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
   const windQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
+  const cachedWind = useRef<WindSample | null>(null);
+  const windSampleRef = useRef<WindSample | null>(null);
   const previousAnchorBreach = useRef(false);
   const lastAnchorAlarmAt = useRef<number | null>(null);
   const anchorStats = useRef({ maxDriftMetres: 0, driftAlarmCount: 0 });
@@ -810,6 +824,8 @@ export default function ShorelineApp() {
   const lastStoredTrackPoint = useRef<TripTrackPoint | null>(null);
   const activityRecordsRef = useRef<ActivityRecord[]>([]);
   const copy = COPY[language];
+
+  useEffect(() => { windSampleRef.current = windSample; }, [windSample]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -847,7 +863,7 @@ export default function ShorelineApp() {
       if (savedWind) {
         try {
           const cached = JSON.parse(savedWind) as WindSample;
-          if (windSampleCanBeReused(cached)) { setWindSample(cached); setWindState("offline"); }
+          if (windSampleCanBeReused(cached)) cachedWind.current = cached;
           else window.localStorage.removeItem(WIND_SAMPLE_STORAGE_KEY);
         } catch { window.localStorage.removeItem(WIND_SAMPLE_STORAGE_KEY); }
       }
@@ -979,7 +995,7 @@ export default function ShorelineApp() {
         if (!response.ok) throw new Error("Coastline pack could not be loaded.");
         return response.json() as Promise<CoastlinePack>;
       })
-      .then((data) => setPack(data))
+      .then((data) => { setPack(data); setPackError(null); })
       .catch((error: unknown) => setPackError(error instanceof Error ? error.message : "Coastline pack could not be loaded."));
 
     fetch("/data/croatia-map-features.json")
@@ -991,7 +1007,7 @@ export default function ShorelineApp() {
       .catch((error: unknown) => setMapFeatureError(error instanceof Error ? error.message : "Map feature pack could not be loaded."));
 
     return () => navigator.serviceWorker?.removeEventListener("controllerchange", refreshForUpdate);
-  }, []);
+  }, [packReloadSequence]);
 
   const nearest = useMemo<NearestShore | null>(() => {
     if (!pack || !fix) return null;
@@ -1027,6 +1043,24 @@ export default function ShorelineApp() {
     fix?.latitude ?? null,
     fix?.longitude ?? null,
   );
+
+  useEffect(() => {
+    document.documentElement.dataset.sunlight = sunlightActive ? "active" : "inactive";
+    const themeMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    themeMeta?.setAttribute("content", sunlightActive ? "#f8fbfa" : THEME_CHROME_COLOURS[theme]);
+    return () => { delete document.documentElement.dataset.sunlight; };
+  }, [sunlightActive, theme]);
+
+  useEffect(() => {
+    const cached = cachedWind.current;
+    if (!currentWindCellKey || !cached || !windSampleCanBeReused(cached, Date.now(), currentWindCellKey)) return;
+    const timer = window.setTimeout(() => {
+      setWindSample(cached);
+      setWindState("offline");
+      cachedWind.current = null;
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [currentWindCellKey]);
 
   useEffect(() => {
     if (mode === "idle" || gpsSignalState !== "fresh" || depthLatitude === null || depthLongitude === null) {
@@ -1068,22 +1102,36 @@ export default function ShorelineApp() {
 
   useEffect(() => {
     if (mode === "idle" || windLatitude === null || windLongitude === null) return;
-    const controller = new AbortController();
+    let disposed = false;
+    let inFlight = false;
+    let requestController: AbortController | null = null;
     const load = () => {
+      if (inFlight) return;
+      inFlight = true;
+      requestController = new AbortController();
+      const deadline = window.setTimeout(() => requestController?.abort(), 12_000);
       setWindState("loading");
-      fetchMapWindSample({ latitude: windLatitude, longitude: windLongitude }, fetch, controller.signal)
+      fetchMapWindSample({ latitude: windLatitude, longitude: windLongitude }, fetch, requestController.signal)
         .then((sample) => {
-          if (controller.signal.aborted) throw new Error("Wind unavailable");
-          setWindSample(sample);
+          if (disposed || requestController?.signal.aborted) throw new Error("Wind unavailable");
+          const locatedSample = { ...sample, cellKey: currentWindCellKey ?? undefined };
+          setWindSample(locatedSample);
           setWindState("ready");
-          localStorage.setItem(WIND_SAMPLE_STORAGE_KEY, JSON.stringify(sample));
+          localStorage.setItem(WIND_SAMPLE_STORAGE_KEY, JSON.stringify(locatedSample));
         })
-        .catch(() => { if (!controller.signal.aborted) setWindState("offline"); });
+        .catch(() => {
+          if (disposed) return;
+          const fallback = windSampleRef.current;
+          const reusable = Boolean(fallback && windSampleCanBeReused(fallback, Date.now(), currentWindCellKey));
+          setWindSample(reusable ? fallback : null);
+          setWindState(reusable ? "offline" : "error");
+        })
+        .finally(() => { window.clearTimeout(deadline); inFlight = false; });
     };
     const timer = window.setTimeout(load, 0);
     const interval = window.setInterval(load, 600_000);
-    return () => { window.clearTimeout(timer); window.clearInterval(interval); controller.abort(); };
-  }, [currentWindCellKey, mode, windLatitude, windLongitude]);
+    return () => { disposed = true; window.clearTimeout(timer); window.clearInterval(interval); requestController?.abort(); };
+  }, [currentWindCellKey, mode, windLatitude, windLongitude, windReloadSequence]);
 
   useEffect(() => {
     if (!nearest || !fix || mode === "idle") return;
@@ -1746,8 +1794,16 @@ export default function ShorelineApp() {
           ? `${copy.chartDepth} ${currentDepthDisplay} m`
           : copy.depthWaiting;
   const windLabel = windSample
-    ? `${windState === "offline" ? "Offline · " : ""}${windCompassLabel(windSample.directionDegrees, language)} ${Math.round(windSample.speedKnots)} · ${copy.windGust} ${Math.round(windSample.gustKnots)} kn`
-    : copy.windWaiting;
+    ? `${windState === "offline" ? `Offline · ${Math.max(0, Math.round((clockNow - windSample.fetchedAt) / 60_000))} min · ${windSample.cellKey?.replace(":", "/") ?? "—"} · ` : ""}${windCompassLabel(windSample.directionDegrees, language)} ${Math.round(windSample.speedKnots)} kn · ${copy.windGust} ${Math.round(windSample.gustKnots)} kn`
+    : windState === "error" ? copy.windUnavailable : copy.windWaiting;
+  const toggleWindLayer = () => {
+    if (windState === "error") {
+      setShowWind(true);
+      setWindReloadSequence((value) => value + 1);
+      return;
+    }
+    setShowWind((value) => !value);
+  };
   const mapOrientation = getMapOrientation(fix?.heading, headingUp);
   const debugSnapshot = {
     schemaVersion: 1,
@@ -1842,6 +1898,17 @@ export default function ShorelineApp() {
     : visualSignal?.kind === "safe"
       ? { title: copy.visualSafe, detail: copy.visualSafeDetail(warningConfig.distanceMetres) }
       : { title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) };
+  const globalSafetyAlert = gpsNavigationProblem
+    ? { kind: `gps-${gpsNavigationState}`, title: gpsNavigationState === "lost" ? copy.gpsLost : gpsNavigationState === "stale" ? copy.gpsStale : gpsNavigationState === "inaccurate" ? copy.weakGps : copy.waitingGps, detail: gpsNavigationDetail }
+    : anchorWatchSnapshot.breached
+      ? { kind: "anchor", title: copy.anchorAlarm, detail: copy.anchorAlarmDetail(Math.round(anchorWatchSnapshot.distanceMetres ?? 0), anchorWatchSnapshot.radiusMetres) }
+      : activeSpeedViolation
+        ? { kind: "speed", title: copy.speedDanger, detail: copy.speedDangerDetail(speedKnots?.toFixed(1) ?? "—", warningConfig.maxSpeedKnots.toFixed(1), warningConfig.distanceMetres) }
+        : insideLimit && gpsReliable
+          ? { kind: "distance", title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) }
+        : courseRisk.level !== "none"
+          ? { kind: `course-${courseRisk.level}`, title: courseRisk.label, detail: courseRisk.detail }
+          : null;
 
   return (
     <main
@@ -1922,6 +1989,7 @@ export default function ShorelineApp() {
               <span className="readiness-dot" />
               {packError ? copy.coastError : pack ? copy.coastReady : copy.coastLoading}
             </div>
+            {packError && <button className="readiness-retry" type="button" onClick={() => { setPackError(null); setPackReloadSequence((value) => value + 1); }}>{copy.retryLoad}</button>}
             <div className="preferences">
               <label className="preference-field">
                 <span>{copy.language}</span>
@@ -2047,20 +2115,21 @@ export default function ShorelineApp() {
               <button className="primary-button" disabled={!pack} onClick={startLive}>{copy.startLive}</button>
               <button className="secondary-button" disabled={!pack} onClick={startDemo}>{copy.demo}</button>
             </div>
+            {(trackingError || alarmError) && <div className="launch-error" role="alert">{trackingError || alarmError}</div>}
             <button className="activity-entry-button" type="button" onClick={() => setShowActivityOverview(true)}><span aria-hidden="true">◷</span><b>{copy.activitiesOpen}</b><small>{activityRecords.length} {language === "de" ? "Einträge · lokal gespeichert" : "entries · stored locally"}</small></button>
             <p className="fine-print">{copy.finePrint}</p>
           </section>
         </>
       ) : (
         <section className="tracker" data-alarm-count={alarmPlayCount} data-alarm-playback={alarmPlayback}>
+          {visualSignal && (
+            <div key={visualSignal.sequence} className={`visual-signal ${visualSignal.kind}`} role={visualSignal.kind === "safe" ? "status" : "alert"} aria-live={visualSignal.kind === "safe" ? "polite" : "assertive"} aria-atomic="true">
+              <span className="visual-signal-card"><strong>{visualSignalCopy.title}</strong><small>{visualSignalCopy.detail}</small></span>
+            </div>
+          )}
+          {globalSafetyAlert && <div className={`global-safety-alert ${globalSafetyAlert.kind}`} role="alert" aria-live="assertive" aria-atomic="true"><span aria-hidden="true">!</span><span><strong>{globalSafetyAlert.title}</strong><small>{globalSafetyAlert.detail}</small></span></div>}
           <div className="tracker-content">
           <section hidden={trackerTab !== "distance"} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties} className={`instrument ${insideLimit && gpsReliable ? "inside-limit" : ""} ${activeSpeedViolation ? "speed-danger" : ""} ${gpsNavigationProblem ? `gps-${gpsNavigationState}` : ""} course-${courseRisk.level}`} aria-label={copy.nearestShore}>
-            {visualSignal && (
-              <div key={visualSignal.sequence} className={`visual-signal ${visualSignal.kind}`} role="status" aria-live={visualSignal.kind === "safe" ? "polite" : "assertive"}>
-                <span className="visual-signal-card"><strong>{visualSignalCopy.title}</strong><small>{visualSignalCopy.detail}</small></span>
-              </div>
-            )}
-
             <div className="instrument-summary">
               <div className="summary-status-row">
                 <div className={`status-pill ${gpsNavigationState === "lost" || (gpsReliable && (insideLimit || activeSpeedViolation)) ? "danger" : ""} ${gpsNavigationState === "stale" || gpsNavigationState === "inaccurate" ? "stale" : ""} ${gpsNavigationState === "waiting" || (!nearest && gpsReliable) ? "waiting" : ""}`} aria-live="assertive">
@@ -2075,11 +2144,14 @@ export default function ShorelineApp() {
                 <span><small>{copy.anchorWatch}</small><b>{anchorWatchSnapshot.breached ? copy.anchorDragging : copy.anchorHolding}</b></span>
                 <span className="anchor-watch-distance"><strong>{anchorWatchSnapshot.distanceMetres === null ? "—" : Math.round(anchorWatchSnapshot.distanceMetres)}</strong><small>m {copy.anchorDistance}</small></span>
                 <button type="button" onClick={() => releaseAnchor()}>{copy.anchorRelease}</button>
-              </div> : anchorTimerVisible ? <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
-                <small>{copy.anchorTimer}</small>
-                <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
-                <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
-              </div> : <button className="anchor-set-button" type="button" disabled={!fix || !gpsReliable} onClick={setAnchorAtCurrentPosition}><span aria-hidden="true">⚓</span>{copy.anchorSet}</button>}
+              </div> : <div className="anchor-ready-controls">
+                {anchorTimerVisible && <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
+                  <small>{copy.anchorTimer}</small>
+                  <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
+                  <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
+                </div>}
+                <button className="anchor-set-button" type="button" disabled={!fix || !gpsReliable} onClick={setAnchorAtCurrentPosition}><span aria-hidden="true">⚓</span>{copy.anchorSet}</button>
+              </div>}
             </div>
 
             <div className="map-stage">
@@ -2101,9 +2173,9 @@ export default function ShorelineApp() {
                 language={language}
                 headingUp={headingUp}
               />
-              <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapOrientation.mapRotationDegrees} />
+              <WindOverlay sample={windSample} visible={showWind && trackerTab === "distance" && !powerSaveReason} mapRotationDegrees={mapOrientation.mapRotationDegrees} />
               {showWind && windSample && <span className="wind-source-credit">Wind: Open-Meteo</span>}
-              <button className={`wind-map-control ${showWind ? "active" : ""} ${windState}`} type="button" aria-pressed={showWind} onClick={() => setShowWind((value) => !value)}>
+              <button className={`wind-map-control ${showWind ? "active" : ""} ${windState}`} type="button" aria-pressed={showWind} onClick={toggleWindLayer}>
                 <span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }} aria-hidden="true">↓</span>
                 <span><small>{copy.wind}</small><b>{windLabel}</b></span>
               </button>
@@ -2163,8 +2235,9 @@ export default function ShorelineApp() {
               mapFeaturePack={mapFeaturePack}
               goNoGoState={goNoGoState}
               windSample={windSample}
-              showWind={showWind}
-              onToggleWind={() => setShowWind((value) => !value)}
+              windState={windState}
+              showWind={showWind && trackerTab === "route" && !powerSaveReason}
+              onToggleWind={toggleWindLayer}
               headingUp={headingUp}
               onToggleHeadingUp={() => setHeadingUp((value) => !value)}
             />
@@ -2207,7 +2280,7 @@ export default function ShorelineApp() {
       )}
 
       {powerSaveReason && (
-        <button className="power-save-screen" type="button" onClick={wakePowerDisplay} aria-label={copy.tapToWake}>
+        <button className="power-save-screen" type="button" onClick={wakePowerDisplay} aria-label={`${copy.powerSavingActive}. ${powerSaveReason === "far-shore" ? copy.powerFar : copy.powerStationary}. ${formatDistance(nearest?.distance ?? null, language)} ${distanceUnit}. ${copy.tapToWake}`}>
           <span className="power-save-mode">{copy.powerSavingActive}</span>
           <span className={`power-save-go ${goNoGoState}`}><i aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</i> {goNoGoState === "go" ? copy.go : goNoGoState === "no-go" ? copy.noGo : copy.goUnknown}</span>
           <span className="power-save-scope">{copy.powerNavigationScope}</span>

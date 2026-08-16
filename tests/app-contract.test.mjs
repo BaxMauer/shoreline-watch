@@ -136,7 +136,8 @@ test("anchor timer stays in debug data but appears in the overview only after tw
   assert.match(app, /const anchorTimerVisible = mode === "live" && shouldShowAnchorTimer\(anchorTimer\.elapsedMs\)/);
   assert.match(app, /visibleInOverview: anchorTimerVisible/);
   assert.match(app, /anchorWatch \? <div className=\{`anchor-watch-card/);
-  assert.match(app, /: anchorTimerVisible \? <div className=\{`anchor-timer-chip/);
+  assert.match(app, /\{anchorTimerVisible && <div className=\{`anchor-timer-chip/);
+  assert.match(app, /<button className="anchor-set-button"/);
 });
 
 test("explicit anchor watch persists and renders anchor, rode, swing circle, and breach state", () => {
@@ -194,16 +195,29 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   const overlay = await readFile(new URL("../app/wind-overlay.tsx", import.meta.url), "utf8");
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   const windRoute = await readFile(new URL("../app/api/wind/route.ts", import.meta.url), "utf8");
-  assert.match(app, /fetchMapWindSample\(\{ latitude: windLatitude, longitude: windLongitude \}, fetch, controller\.signal\)/);
-  assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapOrientation\.mapRotationDegrees\} \/>/);
+  assert.match(app, /fetchMapWindSample\(\{ latitude: windLatitude, longitude: windLongitude \}, fetch, requestController\.signal\)/);
+  assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind && trackerTab === "distance" && !powerSaveReason\}/);
+  assert.match(app, /windReloadSequence/);
+  assert.match(app, /windUnavailable/);
   assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
-  assert.match(overlay, /requestAnimationFrame\(draw\)/);
+  assert.match(overlay, /requestAnimationFrame\(callback\)/);
+  assert.match(overlay, /document\.visibilityState !== "visible"/);
+  assert.match(overlay, /new IntersectionObserver/);
+  assert.match(overlay, /createAnimationFrameLoop/);
+  assert.match(overlay, /motionQuery\.addEventListener\("change"/);
+  assert.doesNotMatch(overlay, /ResizeObserver\(\(\) => \{ resize\(\); draw\(\); \}\)/);
   assert.match(overlay, /length: 96/);
   assert.match(overlay, /--wind-flow-colour/);
   assert.match(overlay, /context\.arc\(x, y, 1\.45/);
   assert.match(overlay, /prefers-reduced-motion: reduce/);
   assert.match(windRoute, /AbortSignal\.timeout\(6_500\)/);
   assert.match(windRoute, /max-age=600, stale-while-revalidate=1800/);
+});
+
+test("wide launch and tab icons use an intentional shared layout contract", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(min-width: 1200px\)[\s\S]*\.app-shell:not\(\.is-tracking\):has\(\.launch-panel\)[^{]*\{[^}]*grid-template-columns:/);
+  assert.match(css, /\.tracker-tabs button > span:first-child\s*\{[^}]*width:\s*30px[^}]*border-radius:\s*50%/s);
 });
 
 test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map data", () => {
@@ -278,8 +292,8 @@ test("tracking exposes distance, route, and nautical weather tabs", async () => 
   assert.match(app, /<nav className="tracker-tabs"/);
   assert.match(app, /<NauticalWeather point=\{fix\} active=\{trackerTab === "weather"\}/);
   assert.match(app, /<RoutePlanner[\s\S]*warningConfig=\{warningConfig\}/);
-  assert.match(weather, /Promise\.all\(\[/);
-  assert.match(weather, /forecast\.days\.slice\(0, 2\)/);
+  assert.match(weather, /Promise\.allSettled\(\[/);
+  assert.match(weather, /activeForecast\.days\.slice\(0, 2\)/);
   assert.match(weather, /getBestBoatingWindow\(day\)/);
   assert.match(weather, /setSelectedMetric\("wind"\)/);
   assert.match(weather, /<WeatherChart hours=\{day\.hours\}/);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { findNearestShore, getLandIntervalsAtLatitude, getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
 import {
   formatRouteDistance,
@@ -147,6 +147,7 @@ const COPY = {
     depthSource: "EMODnet 2024 · Übersicht",
     shallow: "SEICHT",
     wind: "Wind",
+    windUnavailable: "Wind nicht verfügbar · erneut versuchen",
     gust: "Böen",
     pointsPanel: "Start & Ziel",
     optionsPanel: "Routenoptionen",
@@ -244,6 +245,7 @@ const COPY = {
     depthSource: "EMODnet 2024 · overview",
     shallow: "SHALLOW",
     wind: "Wind",
+    windUnavailable: "Wind unavailable · retry",
     gust: "Gusts",
     pointsPanel: "Start & destination",
     optionsPanel: "Route options",
@@ -290,6 +292,7 @@ export default function RoutePlanner({
   mapFeaturePack,
   goNoGoState,
   windSample,
+  windState,
   showWind,
   onToggleWind,
   headingUp,
@@ -307,6 +310,7 @@ export default function RoutePlanner({
   mapFeaturePack: MapFeaturePack | null;
   goNoGoState: GoNoGoState;
   windSample: WindSample | null;
+  windState: "idle" | "loading" | "ready" | "offline" | "error";
   showWind: boolean;
   onToggleWind: () => void;
   headingUp: boolean;
@@ -339,6 +343,7 @@ export default function RoutePlanner({
   const [placeResults, setPlaceResults] = useState<PlaceSearchResult[]>([]);
   const [placeSearchState, setPlaceSearchState] = useState<"idle" | "loading" | "ready" | "offline">("idle");
   const [placeSearchOpen, setPlaceSearchOpen] = useState(false);
+  const [activePlaceIndex, setActivePlaceIndex] = useState(-1);
   const [focusedPlace, setFocusedPlace] = useState<PlaceSearchResult | null>(null);
   const plannedFrom = useRef<GeoPoint | null>(null);
   const [journeyProgressMetres, setJourneyProgressMetres] = useState(0);
@@ -496,10 +501,34 @@ export default function RoutePlanner({
     setFocusedPlace({ ...result, ...destination });
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
+    setActivePlaceIndex(-1);
     selectTarget(destination);
     if (!effectiveStart) {
       setViewCentre(destination);
       setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
+    }
+  };
+
+  const handlePlaceSearchKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setPlaceSearchOpen(false);
+      setActivePlaceIndex(-1);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!visiblePlaceResults.length) return;
+      event.preventDefault();
+      setPlaceSearchOpen(true);
+      setActivePlaceIndex((current) => event.key === "ArrowDown"
+        ? (current + 1 + visiblePlaceResults.length) % visiblePlaceResults.length
+        : (current - 1 + visiblePlaceResults.length) % visiblePlaceResults.length);
+      return;
+    }
+    if (event.key === "Enter" && placeSearchOpen && activePlaceIndex >= 0) {
+      const result = visiblePlaceResults[activePlaceIndex];
+      if (!result) return;
+      event.preventDefault();
+      focusPlaceResult(result);
     }
   };
 
@@ -956,7 +985,7 @@ export default function RoutePlanner({
   const currentDepthDisplay = formatCurrentDepth(currentDepthMetres, language);
 
   return (
-    <section ref={routePlanner} className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
+    <section ref={routePlanner} className={`route-planner journey-${journeyState}`} aria-label={copy.title} style={{ "--distance-scale": warningConfig.distanceTextScalePercent / 100 } as CSSProperties}>
       <header className="route-screen-header">
         <div className="route-screen-heading">
           <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : `${copy.following} · ${copy.progress} ${Math.round(progressPercent)}%`}</small></span>
@@ -978,6 +1007,11 @@ export default function RoutePlanner({
             value={placeQuery}
             placeholder={copy.placeSearch}
             aria-label={copy.placeSearch}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={placeSearchOpen && normalizePlaceSearchText(placeQuery).length >= 2}
+            aria-controls="route-place-results"
+            aria-activedescendant={activePlaceIndex >= 0 ? `route-place-result-${activePlaceIndex}` : undefined}
             autoComplete="off"
             onFocus={() => setPlaceSearchOpen(true)}
             onChange={(event) => {
@@ -985,13 +1019,15 @@ export default function RoutePlanner({
               setPlaceResults([]);
               setPlaceSearchState("idle");
               setPlaceSearchOpen(true);
+              setActivePlaceIndex(-1);
             }}
+            onKeyDown={handlePlaceSearchKey}
           />
           <button type="submit" disabled={normalizePlaceSearchText(placeQuery).length < 2 || placeSearchState === "loading"}>{copy.search}</button>
         </form>
-        {placeSearchOpen && normalizePlaceSearchText(placeQuery).length >= 2 && <div className="route-place-results" role="listbox" aria-label={copy.placeSearch}>
+        {placeSearchOpen && normalizePlaceSearchText(placeQuery).length >= 2 && <div id="route-place-results" className="route-place-results" role="listbox" aria-label={copy.placeSearch}>
           {placeSearchState === "loading" && <p>{copy.searchLoading}</p>}
-          {visiblePlaceResults.map((result) => <button key={result.id} type="button" role="option" aria-selected="false" onClick={() => focusPlaceResult(result)}>
+          {visiblePlaceResults.map((result, index) => <button id={`route-place-result-${index}`} key={result.id} type="button" role="option" aria-selected={activePlaceIndex === index} onMouseEnter={() => setActivePlaceIndex(index)} onClick={() => focusPlaceResult(result)}>
             <i>{result.kind === "bay" ? "≈" : result.kind === "island" ? "◇" : "●"}</i>
             <span><strong>{result.name}</strong><small>{formatPlaceSearchDetail(result, language)}</small></span>
             <b>›</b>
@@ -1029,23 +1065,23 @@ export default function RoutePlanner({
         </div>
         <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
         {activeJourney && <div className="summary-primary-row distance-map-overlay route-live-map-overlay">
-          <div className="distance-readout route-live-distance" aria-live="polite">
+          <div className="distance-readout route-live-distance">
             <span>{copy.nearestShore}</span>
             <span className="distance-value"><strong>{activeDistanceValue}</strong><small>{activeDistanceUnit}</small></span>
           </div>
-          <div className={`go-no-go route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+          <div className={`go-no-go route-live-go-no-go ${goNoGoState}`}>
             <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
             <b>{activeGoNoGoLabel}</b>
           </div>
         </div>}
         {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
-          <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
-          <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
+          <button type="button" aria-pressed={mapEditMode === "start"} className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
+          <button type="button" aria-pressed={mapEditMode === "target"} className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
         </div>}
         {journeyState === "planning" && <div className={`route-long-press-hint ${longPressActive ? "active" : ""}`} role="status"><span />{longPressActive ? copy.holdingPoint : mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget}</div>}
         <div className="route-layer-tools">
           <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
-          <button type="button" className={showWind ? "active wind" : "wind"} aria-pressed={showWind} onClick={onToggleWind} title={windSample ? `${copy.gust}: ${Math.round(windSample.gustKnots)} kn` : copy.wind}><span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }}>↓</span>{windSample ? `${copy.wind} ${windCompassLabel(windSample.directionDegrees, language)} · ${Math.round(windSample.speedKnots)} kn` : copy.wind}</button>
+          <button type="button" className={showWind ? "active wind" : "wind"} aria-pressed={showWind} onClick={onToggleWind} title={windSample ? `${windState === "offline" ? "Offline · " : ""}${copy.gust}: ${Math.round(windSample.gustKnots)} kn` : windState === "error" ? copy.windUnavailable : copy.wind}><span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }}>↓</span>{windSample ? `${windState === "offline" ? "Offline · " : ""}${copy.wind} ${windCompassLabel(windSample.directionDegrees, language)} · ${Math.round(windSample.speedKnots)} kn` : windState === "error" ? copy.windUnavailable : copy.wind}</button>
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
         </div>
         <div className="route-zoom" aria-label="Zoom">
@@ -1058,7 +1094,7 @@ export default function RoutePlanner({
         <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}{showWind && windSample ? " · Wind: Open-Meteo" : ""}</div>
       </div>
 
-      {activeJourney && <div className="instrument-footer route-live-footer" aria-live="polite">
+      {activeJourney && <div className="instrument-footer route-live-footer">
         <div className="instrument-meta route-live-meta">
           <span className={`${currentDepthState} ${liveShallow ? "shallow" : ""}`}><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay}` : "—"}</strong> m · {liveShallow ? copy.shallow : copy.chartDepth}</span>
           <span><strong>±{gpsAccuracyLabel}</strong> m GPS</span>

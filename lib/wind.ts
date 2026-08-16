@@ -6,7 +6,12 @@ export type WindSample = {
   gustKnots: number;
   observedAt: string;
   fetchedAt: number;
+  cellKey?: string;
 };
+
+function finiteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 export function buildWindRequestUrl(point: GeoPoint) {
   const parameters = new URLSearchParams({
@@ -33,11 +38,11 @@ export function parseWindSample(payload: unknown, fetchedAt = Date.now()): WindS
   const current = (payload as { current?: unknown }).current;
   if (!current || typeof current !== "object") return null;
   const values = current as Record<string, unknown>;
-  const speedKnots = Number(values.wind_speed_10m);
-  const directionDegrees = Number(values.wind_direction_10m);
-  const gustKnots = Number(values.wind_gusts_10m);
+  const speedKnots = finiteNumber(values.wind_speed_10m);
+  const directionDegrees = finiteNumber(values.wind_direction_10m);
+  const gustKnots = finiteNumber(values.wind_gusts_10m);
   const observedAt = values.time;
-  if (![speedKnots, directionDegrees, gustKnots].every(Number.isFinite) || typeof observedAt !== "string") return null;
+  if (speedKnots === null || directionDegrees === null || gustKnots === null || typeof observedAt !== "string") return null;
   return {
     speedKnots: Math.max(0, speedKnots),
     directionDegrees: ((directionDegrees % 360) + 360) % 360,
@@ -52,11 +57,11 @@ export function parseWindProxyResponse(payload: unknown): WindSample | null {
   const sample = (payload as { sample?: unknown }).sample;
   if (!sample || typeof sample !== "object") return null;
   const values = sample as Record<string, unknown>;
-  const speedKnots = Number(values.speedKnots);
-  const directionDegrees = Number(values.directionDegrees);
-  const gustKnots = Number(values.gustKnots);
-  const fetchedAt = Number(values.fetchedAt);
-  if (![speedKnots, directionDegrees, gustKnots, fetchedAt].every(Number.isFinite) || typeof values.observedAt !== "string") return null;
+  const speedKnots = finiteNumber(values.speedKnots);
+  const directionDegrees = finiteNumber(values.directionDegrees);
+  const gustKnots = finiteNumber(values.gustKnots);
+  const fetchedAt = finiteNumber(values.fetchedAt);
+  if (speedKnots === null || directionDegrees === null || gustKnots === null || fetchedAt === null || typeof values.observedAt !== "string") return null;
   return {
     speedKnots: Math.max(0, speedKnots),
     directionDegrees: ((directionDegrees % 360) + 360) % 360,
@@ -93,12 +98,22 @@ export function windCellKey(point: GeoPoint) {
   return `${(Math.round(point.latitude * 20) / 20).toFixed(2)}:${(Math.round(point.longitude * 20) / 20).toFixed(2)}`;
 }
 
-export function windSampleCanBeReused(sample: WindSample, now = Date.now()) {
-  return Number.isFinite(sample.fetchedAt) && now >= sample.fetchedAt && now - sample.fetchedAt <= 3 * 60 * 60 * 1_000;
+export function windSampleCanBeReused(sample: WindSample, now = Date.now(), cellKey?: string | null) {
+  return Number.isFinite(sample.fetchedAt)
+    && (!cellKey || sample.cellKey === cellKey)
+    && now >= sample.fetchedAt
+    && now - sample.fetchedAt <= 3 * 60 * 60 * 1_000;
 }
 
 export function windFlowAngleRadians(directionDegrees: number) {
   return ((directionDegrees + 90) % 360) * Math.PI / 180;
+}
+
+export function windFlowSpeedPixelsPerSecond(speedKnots: number, gustKnots = speedKnots) {
+  const sustained = Math.max(0, speedKnots);
+  const gustLift = Math.max(0, gustKnots - sustained) * .45;
+  if (sustained < 1) return 0;
+  return Math.min(105, 16 + sustained * 2.6 + gustLift);
 }
 
 export function windCompassLabel(directionDegrees: number, language: "de" | "en") {

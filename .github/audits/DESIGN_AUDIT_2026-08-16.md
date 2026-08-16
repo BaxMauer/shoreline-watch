@@ -334,36 +334,67 @@ A still screenshot proves only that a canvas is present. Use a deterministic `/a
 
 ### P0
 
-- [ ] **SAFE-001:** Move persistent safety alerts/status outside tab panels; prove every danger and recovery state on every tab.
-- [ ] **THEME-001:** Replace unpaired theme colors; meet rendered AA contrast in Launch, all tabs, active Navigation, and trip detail.
-- [ ] **POWER-001:** Raise power-save contrast and preserve the navigation summary in its accessible name.
-- [ ] **WIND-001:** Eliminate duplicate/leaked frame loops with runtime lifecycle tests.
+- [x] **SAFE-001:** Move persistent safety alerts/status outside tab panels; prove every danger and recovery state on every tab.
+- [x] **THEME-001:** Replace unpaired theme colors; meet rendered AA contrast in Launch, all tabs, active Navigation, and trip detail.
+- [x] **POWER-001:** Raise power-save contrast and preserve the navigation summary in its accessible name.
+- [x] **WIND-001:** Eliminate duplicate/leaked frame loops with runtime lifecycle tests.
 
 ### P1
 
-- [ ] **WIND-002:** Stop canvas work for hidden tabs, hidden pages, power save, and off-screen canvases.
-- [ ] **WIND-003:** Bind wind and forecast caches to a location cell and show cache age/location.
-- [ ] **WIND-004:** Fix Route wind contrast, overlap, direction semantics, and offline/source status.
-- [ ] **NAV-001:** Reserve collision-free active-map overlay zones at all phone widths.
-- [ ] **NAV-002:** Keep an operable anchor-arm action after the stationary timer completes.
-- [ ] **NAV-003:** Add large-tablet, landscape, inline safe-area, and shared distance-scale behavior.
-- [ ] **WEATHER-001:** Accept partial weather/marine data and implement honest stale/error/retry UI.
-- [ ] **START-001:** Separate loading from terminal errors and provide visible recovery actions.
-- [ ] **DESIGN-001:** Adopt one semantic map theme contract across all four map renderers.
-- [ ] **ACCESS-001:** Standardize outdoor-readable text and `44/48px` targets; verify 200% zoom.
-- [ ] **ACCESS-002:** Complete keyboard, focus, and screen-reader patterns.
-- [ ] **TEST-001:** Add deterministic screenshot, geometry, computed-contrast, canvas frame-diff, and loop-count tests.
+- [x] **WIND-002:** Stop canvas work for hidden tabs, hidden pages, power save, and off-screen canvases.
+- [x] **WIND-003:** Bind wind and forecast caches to a location cell and show cache age/location.
+- [x] **WIND-004:** Fix Route wind contrast, overlap, direction semantics, and offline/source status.
+- [x] **NAV-001:** Reserve collision-free active-map overlay zones at all phone widths.
+- [x] **NAV-002:** Keep an operable anchor-arm action after the stationary timer completes.
+- [x] **NAV-003:** Add large-tablet, landscape, inline safe-area, and shared distance-scale behavior.
+- [x] **WEATHER-001:** Accept partial weather/marine data and implement honest stale/error/retry UI.
+- [x] **START-001:** Separate loading from terminal errors and provide visible recovery actions.
+- [x] **DESIGN-001:** Adopt one semantic map theme contract across all four map renderers.
+- [x] **ACCESS-001:** Standardize outdoor-readable text and `44/48px` targets; verify 200% zoom.
+- [x] **ACCESS-002:** Complete keyboard, focus, and screen-reader patterns.
+- [x] **TEST-001:** Add deterministic screenshot, geometry, computed-contrast, canvas frame-diff, and loop-count tests.
 
 ### P2
 
-- [ ] **THEME-002:** Resolve theme + sunlight composition before first paint and update PWA chrome colors.
-- [ ] **WEATHER-002:** Make the overview/null metric state visually honest.
-- [ ] **DESIGN-002:** Standardize tab headers, status/loading language, and icons.
-- [ ] **ACT-001:** Align Logbook map/hero/localization with the rest of the app.
-- [ ] **WIND-005:** Make motion time-based, calm/gust-aware, stable across heading changes, and reactive to reduced-motion changes.
-- [ ] **DESIGN-003:** Create an intentional wide launch layout.
-- [ ] **DATA-001:** Reject null/empty/boolean wind values and test parsing failures.
-- [ ] **A11Y-003:** Define and test a deliberate live-region announcement policy.
+- [x] **THEME-002:** Resolve theme + sunlight composition before first paint and update PWA chrome colors.
+- [x] **WEATHER-002:** Make the overview/null metric state visually honest.
+- [x] **DESIGN-002:** Standardize tab headers, status/loading language, and icons.
+- [x] **ACT-001:** Align Logbook map/hero/localization with the rest of the app.
+- [x] **WIND-005:** Make motion time-based, calm/gust-aware, stable across heading changes, and reactive to reduced-motion changes.
+- [x] **DESIGN-003:** Create an intentional wide launch layout.
+- [x] **DATA-001:** Reject null/empty/boolean wind values and test parsing failures.
+- [x] **A11Y-003:** Define and test a deliberate live-region announcement policy.
+
+## Resolution record — v1.22.2
+
+All 24 implementation items above were completed on 2026-08-16. The audit remains the source-of-truth list; there are no open release TODOs from this review.
+
+| Area | Delivered result | Verification |
+| --- | --- | --- |
+| Safety | Distance, speed, course, GPS, and anchor alerts now live outside tab panels; the anchor action remains operable after the timer. | Browser review confirmed an active distance warning remained visible on Weather; source contracts cover the global alert and anchor action. |
+| Themes | Launch, Distance, Route, active Navigation, Weather, Logbook, and trip surfaces have paired foreground/background values in Ocean, Dark, XP, Nautical, and sunlight compositions. | Browser screenshots reviewed every tab in XP and Nautical, plus Ocean sunlight and active Navigation; computed contrast contracts pass. |
+| Navigation | Phone overlay zones, scale, attribution, GO control, wide-tablet geometry, inline safe areas, and the shared distance scale no longer collide. | Route planning and active Navigation screenshots reviewed with wind, scale, attribution, and global warning visible. |
+| Wind | One delta-time frame loop, no hidden/power-save/page-hidden canvas work, stable heading updates, reactive reduced-motion, calm/gust behavior, location-bound cache, explicit offline age/location, and retry UI. | Two normal-motion frames differed; hidden Route canvas computed invisible while Distance was active; lifecycle and pure-behavior contracts pass. |
+| Weather | Forecast and marine requests degrade independently, old-cell forecasts cannot render, map errors stop spinning and expose a retry, and Wind is the honest default metric. | Ready forecast/map/chart and error branches reviewed; source and parser contracts pass. |
+| Start/PWA | Terminal load errors have recovery actions, saved theme is applied before paint, browser chrome follows theme/sunlight, and landscape is permitted. | Launch screenshots reviewed in Ocean, XP, and Nautical; manifest and release checks cover PWA metadata. |
+| Maps/Logbook | Distance, Route, Weather, and activity maps share coastline/land/water semantics; Logbook hero, track hatch, speed chart, and labels are localized. | Empty/populated Logbook and themed hero/track screenshots reviewed in all targeted themes. |
+| Accessibility | Consistent focus rings, 44 px controls, readable supporting text, listbox keyboard behavior, pressed states, map hit targets, and one deliberate live-announcement channel. | Keyboard/source contracts and accessible browser snapshots pass; duplicate live regions were removed. |
+| Responsive design | The tracker scales through 1600 px, planning maps use landscape geometry where appropriate, phone overlays reserve space, and Launch becomes an intentional two-column composition on wide screens. | Wide Launch, landscape route, tablet-width tracker, and narrow-phone geometry were checked visually or by deterministic CSS contracts. |
+| Regression coverage | Wind parser/cell/calm/gust tests, tab/alert/layout source contracts, theme contrast tests, full build, lint, typecheck, and artifact validation cover the fixed failure modes. | See the implementing pull request checks and release validation output. |
+
+### Screenshot review log
+
+The browser review used the real preview build and covered these distinct rendered branches rather than relying on source inspection alone:
+
+- Ocean: Launch; sunlight Distance with live wind; Route planning; Weather ready; Logbook; persistent danger alert on a non-Distance tab.
+- Windows XP: Launch; Distance with wind; Route planning; Logbook; corrected light route/activity surfaces.
+- Nautical: Launch; Distance with wind; Route planning; active Navigation; Weather; Logbook; corrected readiness and supporting copy.
+- Motion: two separated frames with deterministic live wind changed; the inactive Route canvas was hidden; reduced-motion retains a static field by contract.
+- Geometry: wide Launch, `320–430 px` collision rules, landscape planning aspect ratio, `600–1600 px` tracker sizing, active-map scale/credit/GO zones, and safe-area insets.
+
+### Remaining TODOs
+
+None from this audit. Future design changes must extend the screenshot matrix and keep the regression contracts green.
 
 ## Definition of done
 
