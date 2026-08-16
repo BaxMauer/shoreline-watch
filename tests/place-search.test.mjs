@@ -79,6 +79,27 @@ test("an island search result resolves to nearby water instead of its land centr
   assert.ok(route.route, route.failure);
 });
 
+test("a route start on land is moved to the nearest navigable sea point", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const requestedStart = { latitude: 43.830668, longitude: 15.515315 };
+  const destination = { latitude: 43.82, longitude: 15.5 };
+  const originalShore = findNearestShore(coastline, requestedStart.longitude, requestedStart.latitude);
+  assert.equal(isPointOnLand(coastline, requestedStart.longitude, requestedStart.latitude), true);
+
+  const start = resolvePlaceSearchTarget(coastline, requestedStart, undefined, destination);
+  assert.equal(isPointOnLand(coastline, start.longitude, start.latitude), false);
+  assert.ok(originalShore && geoDistanceMetres(requestedStart, start) <= originalShore.distance + PLACE_TARGET_WATER_OFFSET_METRES + 3);
+
+  const result = planWaterRoute(coastline, start, destination, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  });
+  assert.ok(result.route, result.failure);
+  assert.deepEqual(result.route.points[0], start);
+});
+
 test("an island target uses the water-facing side nearest the route start", async () => {
   const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const ljutac = { latitude: 43.789751, longitude: 15.659253 };

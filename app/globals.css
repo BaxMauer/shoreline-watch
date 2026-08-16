@@ -409,8 +409,8 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .theme-nautical .wind-overlay { --wind-flow-colour: rgba(0,85,105,.9); }
 .wind-map-control { position: absolute; z-index: 5; top: 14px; right: 12px; display: flex; min-height: 42px; align-items: center; gap: 7px; border: 1px solid rgba(115,229,203,.18); border-radius: 12px; background: rgba(7,28,33,.82); color: #d7e6e5; padding: 5px 9px; cursor: pointer; backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(2,20,24,.18); }
 .wind-map-control > span:last-child { display: grid; gap: 1px; text-align: left; }
-.wind-map-control small { color: #9eb5b4; font-size: .42rem; font-weight: 750; text-transform: uppercase; }
-.wind-map-control b { font-family: var(--font-geist-mono), monospace; font-size: .55rem; white-space: nowrap; }
+.wind-map-control small { color: #9eb5b4; font-size: .48rem; font-weight: 750; text-transform: uppercase; }
+.wind-map-control b { font-family: var(--font-geist-mono), monospace; font-size: .68rem; white-space: nowrap; }
 .wind-map-control.active { border-color: rgba(115,229,203,.5); background: rgba(4,83,79,.9); color: #fff; }
 .wind-map-control.offline { border-color: rgba(255,210,122,.35); }
 .wind-source-credit { position: absolute; z-index: 4; bottom: 5px; left: 50%; transform: translateX(-50%); color: rgba(230,246,241,.72); font-size: .38rem; text-shadow: 0 1px 3px #06151b; pointer-events: none; }
@@ -479,7 +479,7 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .current-depth-footer.unavailable, .current-depth-footer.error,
 .current-depth-footer.unavailable strong, .current-depth-footer.error strong { color: var(--amber); }
 .current-depth-footer.shallow, .current-depth-footer.shallow strong, .route-live-footer .shallow strong, .route-live-footer .shallow small { color: var(--danger); }
-.current-speed-footer strong { color: var(--aqua); }
+.current-speed-footer strong { color: var(--aqua); font-size: 1.05rem; font-weight: 750; }
 .current-speed-footer.danger, .current-speed-footer.danger strong { color: var(--danger); }
 .course-alert { display: flex; min-height: 64px; align-items: center; gap: 12px; border-radius: 11px; background: rgba(61,47,15,.94); padding: 9px 12px; backdrop-filter: blur(9px); box-shadow: 0 8px 28px rgba(0,0,0,.22); }
 .course-alert.danger { background: rgba(55,22,19,.9); }
@@ -941,11 +941,12 @@ button.activity-row-open:focus-visible { outline: 2px solid var(--aqua); outline
 .route-live-footer > span + span { border-left: 1px solid rgba(115,229,203,.12); }
 .route-live-footer small { overflow: hidden; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: .42rem; font-weight: 750; letter-spacing: .05em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .route-live-footer strong { overflow: hidden; color: var(--foam); font-size: .82rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.route-live-footer .current-speed-footer strong { color: var(--aqua); font-size: 1.02rem; }
 .route-live-footer .error strong, .route-live-footer .unavailable strong { color: var(--danger); }
 .route-layer-tools { position: absolute; z-index: 4; bottom: 27px; left: 10px; display: grid; gap: 3px; pointer-events: none; }
 .route-layer-tools button { display: flex; min-height: 34px; width: max-content; align-items: center; gap: 7px; border-radius: 10px; background: rgba(8,28,32,.82); color: #d7e6e5; padding: 0 10px; backdrop-filter: blur(10px); cursor: pointer; font-size: .57rem; font-weight: 800; pointer-events: auto; }
 .route-layer-tools button.active { background: rgba(5,92,108,.92); color: #fff; }
-.route-layer-tools button.wind { background: rgba(8,45,51,.88); }
+.route-layer-tools button.wind { background: rgba(8,45,51,.88); font-size: .66rem; }
 .route-layer-tools button.wind.active { background: rgba(9,104,91,.92); }
 .route-layer-tools button.wind .wind-arrow { width: 20px; height: 20px; font-size: .75rem; }
 .route-layer-status { width: 7px; height: 7px; border-radius: 50%; background: #667c7e; }
@@ -1354,7 +1355,7 @@ button.activity-row-open:focus-visible { outline: 2px solid var(--aqua); outline
 @media (max-width: 430px) {
   .distance-map-overlay > .distance-readout, .route-live-map-overlay > .route-live-distance { width: 54%; padding-inline: 10px; }
   .wind-map-control { right: 8px; max-width: 41%; padding-inline: 7px; }
-  .wind-map-control b { font-size: .5rem; }
+  .wind-map-control b { font-size: .59rem; }
   .distance-map-overlay .distance-readout strong { font-size: min(clamp(calc(4.6rem * var(--distance-scale,1)),calc(24vw * var(--distance-scale,1)),calc(6.4rem * var(--distance-scale,1))),calc((100cqi - 2rem) * .45)); }
   .global-safety-alert { right: 6px; left: 6px; }
   .activity-hero { min-height: 168px; grid-template-columns: 1fr 1fr; gap: 10px; }

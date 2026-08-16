@@ -11,8 +11,9 @@ export function getRouteMapRenderingDetail(viewRangeMetres: number) {
   if (range > 10_000) return { hatchBandHeight: 5, maximumShorelineSegments: 1_500, maximumLabels: 48 } as const;
   return { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 } as const;
 }
-export const MINIMUM_ACTIVE_ROUTE_VIEW_METRES = 3_500;
+export const MINIMUM_ACTIVE_ROUTE_VIEW_METRES = 2_500;
 export const MAXIMUM_ACTIVE_ROUTE_VIEW_METRES = 10_000;
+export const ACTIVE_ROUTE_DEFAULT_ZOOM_FACTOR = 0.75;
 export const MINIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES = 250;
 export const MAXIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES = 10_000;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
@@ -207,7 +208,7 @@ export function getRouteMapPreviewTransform(
 export function getActiveRouteViewRange(proximityRangeMetres: number, warningDistanceMetres: number) {
   const fallback = Math.max(1, Number.isFinite(warningDistanceMetres) ? warningDistanceMetres : 300) * 1.35;
   const requested = Number.isFinite(proximityRangeMetres) ? proximityRangeMetres : fallback;
-  return Math.max(MINIMUM_ACTIVE_ROUTE_VIEW_METRES, Math.min(MAXIMUM_ACTIVE_ROUTE_VIEW_METRES, requested));
+  return Math.max(MINIMUM_ACTIVE_ROUTE_VIEW_METRES, Math.min(MAXIMUM_ACTIVE_ROUTE_VIEW_METRES, requested * ACTIVE_ROUTE_DEFAULT_ZOOM_FACTOR));
 }
 
 export function routeViewRangeForTarget(current: number, start: GeoPoint, destination: GeoPoint) {

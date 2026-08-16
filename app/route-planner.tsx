@@ -419,30 +419,32 @@ export default function RoutePlanner({
   }, [clearPendingReroute, gpsReliable, journeyState, startMode]);
 
   const calculate = useCallback((destination: GeoPoint, startOverride?: GeoPoint, activateJourney = false) => {
-    const start = startOverride ?? effectiveStart;
+    const requestedStart = startOverride ?? effectiveStart;
     const controller = routeWorker.current;
-    if (!controller || !pack || !start || !routeCoordinateIsValid(start) || !routeCoordinateIsValid(destination)) return;
-    if (start === fix && !gpsReliable) return;
+    if (!controller || !pack || !requestedStart || !routeCoordinateIsValid(requestedStart) || !routeCoordinateIsValid(destination)) return;
+    const gpsStart = requestedStart === fix;
+    if (gpsStart && !gpsReliable) return;
+    const routingStart = resolvePlaceSearchTarget(pack, requestedStart, undefined, destination);
     const wasActiveJourney = journeyState === "active";
     setPlanning(true);
     setFailure(null);
     controller.calculate({
       pack,
-      start,
+      start: routingStart,
       destination,
       options: {
         clearanceMetres: warningConfig.distanceMetres,
         cruiseSpeedKnots,
         speedWarningEnabled: warningConfig.speedWarningEnabled,
         nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
-        startAccuracyMetres: start === fix ? fix?.accuracy : undefined,
+        startAccuracyMetres: gpsStart ? fix?.accuracy : undefined,
         conditionalPassagesEnabled,
       },
     }, {
       onResult: (result) => {
         setRoute(result.route ?? null);
         setFailure(result.failure ?? null);
-        plannedFrom.current = start;
+        plannedFrom.current = requestedStart;
         setJourneyProgressMetres(0);
         setPlanning(false);
         setStartingJourney(false);
@@ -483,17 +485,18 @@ export default function RoutePlanner({
   }, [calculate, effectiveStart, fitRoute, pack]);
 
   const selectStart = useCallback((start: GeoPoint) => {
+    const navigableStart = resolvePlaceSearchTarget(pack, start, undefined, target);
     setStartMode("manual");
-    setManualStart(start);
-    setStartLatitude(coordinateText(start.latitude));
-    setStartLongitude(coordinateText(start.longitude));
+    setManualStart(navigableStart);
+    setStartLatitude(coordinateText(navigableStart.latitude));
+    setStartLongitude(coordinateText(navigableStart.longitude));
     setInputError(false);
     setMapEditMode("target");
     if (target) {
-      fitRoute(start, target);
-      calculate(target, start);
+      fitRoute(navigableStart, target);
+      calculate(target, navigableStart);
     }
-  }, [calculate, fitRoute, target]);
+  }, [calculate, fitRoute, pack, target]);
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
     const destination = resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
@@ -900,13 +903,18 @@ export default function RoutePlanner({
       setInputError(true);
       return;
     }
-    const start = startMode === "gps" && fix ? fix : { latitude: parsedStartLatitude, longitude: parsedStartLongitude };
+    const requestedStart = startMode === "gps" && fix ? fix : { latitude: parsedStartLatitude, longitude: parsedStartLongitude };
     const destination = { latitude: parsedTargetLatitude, longitude: parsedTargetLongitude };
-    if (!routeCoordinateIsValid(start) || !routeCoordinateIsValid(destination) || (startMode === "gps" && !gpsReliable)) {
+    if (!routeCoordinateIsValid(requestedStart) || !routeCoordinateIsValid(destination) || (startMode === "gps" && !gpsReliable)) {
       setInputError(true);
       return;
     }
-    if (startMode === "manual") setManualStart(start);
+    const start = resolvePlaceSearchTarget(pack, requestedStart, undefined, destination);
+    if (startMode === "manual") {
+      setManualStart(start);
+      setStartLatitude(coordinateText(start.latitude));
+      setStartLongitude(coordinateText(start.longitude));
+    }
     setTarget(destination);
     setInputError(false);
     if (routeEditor.current) routeEditor.current.open = false;
@@ -1098,7 +1106,7 @@ export default function RoutePlanner({
         <div className="instrument-meta route-live-meta">
           <span className={`${currentDepthState} ${liveShallow ? "shallow" : ""}`}><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay}` : "—"}</strong> m · {liveShallow ? copy.shallow : copy.chartDepth}</span>
           <span><strong>±{gpsAccuracyLabel}</strong> m GPS</span>
-          <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
+          <span className="current-speed-footer"><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
         </div>
         {route && <button className={journeyState === "arrived" ? "route-finish-trip" : "route-end-trip"} type="button" onClick={endJourney}>{journeyState === "arrived" ? copy.finishJourney : copy.endJourney}</button>}
       </div>}
