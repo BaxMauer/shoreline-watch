@@ -221,7 +221,7 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind && trackerTab === "distance" && !powerSaveReason\}/);
   assert.match(app, /windReloadSequence/);
   assert.match(app, /windUnavailable/);
-  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
+  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} mapView=\{\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\} \/>/);
   assert.match(overlay, /requestAnimationFrame\(callback\)/);
   assert.match(overlay, /document\.visibilityState !== "visible"/);
   assert.match(overlay, /new IntersectionObserver/);
@@ -234,6 +234,8 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(overlay, /if \(changed \|\| reducedMotion\) draw\(\)/);
   assert.match(overlay, /observer\.observe\(canvas\.parentElement \?\? canvas\)/);
   assert.match(overlay, /advanceWindParticle\(particle, angle, speed, elapsedSeconds, width, height\)/);
+  assert.match(overlay, /getWindMapOffset\(mapViewRef\.current, width, height\)/);
+  assert.match(overlay, /wrapWindCoordinate\(particle\.x \* width \+ mapOffset\.x, width\)/);
   assert.doesNotMatch(overlay, /ResizeObserver\(\(\) => \{ resize\(\); draw\(\); \}\)/);
   assert.match(overlay, /length: 96/);
   assert.match(overlay, /--wind-flow-colour/);
@@ -272,7 +274,7 @@ test("OSM feature catalog loads non-blockingly and labels both map modes", async
   assert.match(app, /fetch\("\/data\/croatia-map-features\.json"\)/);
   assert.match(app, /mapFeatureError/);
   assert.match(app, /<ProximityPlot[\s\S]*mapFeaturePack=\{mapFeaturePack\}/);
-  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, renderedCentre, mapDataRangeMetres\)\.slice\(0, renderingDetail\.maximumLabels\)/);
+  assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, mapCentre, currentMapDataRangeMetres\)\.slice\(0, currentRenderingDetail\.maximumLabels\)/);
   assert.match(planner, /© OpenStreetMap contributors/);
   const depthLayer = planner.indexOf("className=\"route-bathymetry-layer\"");
   const landLayer = planner.indexOf("className=\"route-land-area\"");
@@ -447,9 +449,9 @@ test("route map controls are bounded and can edit either route point", async () 
 
 test("route planning snaps land starts to navigable water before using the worker", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const routingStart = resolvePlaceSearchTarget\(pack, requestedStart, undefined, destination\)/);
+  assert.match(planner, /const routingStart = resolveNearestNavigableWater\(pack, requestedStart\)/);
   assert.match(planner, /start: routingStart/);
-  assert.match(planner, /const navigableStart = resolvePlaceSearchTarget\(pack, start, undefined, target\)/);
+  assert.match(planner, /const navigableStart = resolveNearestNavigableWater\(pack, start\)/);
 });
 
 test("navigation makes speed and wind readings easier to scan", async () => {
@@ -457,7 +459,7 @@ test("navigation makes speed and wind readings easier to scan", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(planner, /className="current-speed-footer"><strong>\{speedKnots/);
   assert.match(css, /\.wind-map-control b\s*\{[^}]*font-size:\s*\.68rem/s);
-  assert.match(css, /\.route-layer-tools button\.wind\s*\{[^}]*font-size:\s*\.66rem/s);
+  assert.match(css, /\.route-layer-tools button\.wind\s*\{[^}]*font-size:\s*\.68rem/s);
   assert.match(css, /\.current-speed-footer strong\s*\{[^}]*font-size:\s*1\.05rem/s);
 });
 
@@ -470,12 +472,22 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
   assert.match(planner, /panRouteMapCentre\(gesture\.centre, gesture\.range, size, northUpDelta\.x, northUpDelta\.y, clampMapRange\)/);
   assert.match(planner, /window\.requestAnimationFrame\(\(\) =>/);
   assert.match(planner, /scheduleMapView\(/);
-  assert.match(planner, /setRenderedMapView\(\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\)/);
+  assert.match(planner, /latestMapView\.current = \{ centre: mapCentre, rangeMetres: viewRangeMetres \}/);
+  assert.match(planner, /setRenderedMapView\(latestMapView\.current\)/);
   assert.match(planner, /const staticMapLayers = useMemo\(\(\) => <>/);
   assert.match(planner, /className="route-static-map" transform=\{staticMapTransform\}/);
+  assert.match(planner, /className="route-dynamic-map"/);
   assert.match(planner, /className="route-recenter"[\s\S]*onClick=\{recenterMap\}/);
   assert.match(planner, /journeyState === "planning" \? clampRouteViewRange : clampActiveRouteViewRange/);
   assert.doesNotMatch(planner, /journeyState === "planning" && <button type="button" aria-label=\{copy\.zoomIn\}/);
+});
+
+test("compact app typography has one readable minimum", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const remSizes = [...css.matchAll(/font-size:\s*(\.\d+)rem/g)].map((match) => Number(match[1]));
+  assert.ok(remSizes.length > 0);
+  assert.ok(remSizes.every((size) => size >= .68), `found font size below .68rem: ${Math.min(...remSizes)}`);
+  assert.match(css, /\.map-feature-label text\s*\{[^}]*font-size:\s*8\.5px/s);
 });
 
 test("distance and route maps share a persisted heading-up compass mode", async () => {

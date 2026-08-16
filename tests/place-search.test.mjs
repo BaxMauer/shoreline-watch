@@ -9,6 +9,7 @@ import {
   mergePlaceSearchResults,
   normalizePlaceSearchText,
   parsePhotonPlaceSearchPayload,
+  resolveNearestNavigableWater,
   resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
 } from "../lib/place-search.ts";
@@ -86,7 +87,7 @@ test("a route start on land is moved to the nearest navigable sea point", async 
   const originalShore = findNearestShore(coastline, requestedStart.longitude, requestedStart.latitude);
   assert.equal(isPointOnLand(coastline, requestedStart.longitude, requestedStart.latitude), true);
 
-  const start = resolvePlaceSearchTarget(coastline, requestedStart, undefined, destination);
+  const start = resolveNearestNavigableWater(coastline, requestedStart);
   assert.equal(isPointOnLand(coastline, start.longitude, start.latitude), false);
   assert.ok(originalShore && geoDistanceMetres(requestedStart, start) <= originalShore.distance + PLACE_TARGET_WATER_OFFSET_METRES + 3);
 
@@ -98,6 +99,21 @@ test("a route start on land is moved to the nearest navigable sea point", async 
   });
   assert.ok(result.route, result.failure);
   assert.deepEqual(result.route.points[0], start);
+});
+
+test("a Jezera land start uses the closest coast instead of crossing the island towards the destination", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const requestedStart = { latitude: 43.7869, longitude: 15.6431 };
+  const destination = { latitude: 43.6876, longitude: 15.6131 };
+  const shore = findNearestShore(coastline, requestedStart.longitude, requestedStart.latitude);
+  assert.equal(isPointOnLand(coastline, requestedStart.longitude, requestedStart.latitude), true);
+
+  const start = resolveNearestNavigableWater(coastline, requestedStart);
+  const destinationFacingWater = resolvePlaceSearchTarget(coastline, requestedStart, undefined, destination);
+
+  assert.equal(isPointOnLand(coastline, start.longitude, start.latitude), false);
+  assert.ok(shore && geoDistanceMetres(requestedStart, start) <= shore.distance + PLACE_TARGET_WATER_OFFSET_METRES + 1);
+  assert.ok(geoDistanceMetres(requestedStart, start) < geoDistanceMetres(requestedStart, destinationFacingWater) / 5);
 });
 
 test("an island target uses the water-facing side nearest the route start", async () => {
