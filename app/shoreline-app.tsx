@@ -37,6 +37,7 @@ import {
   finishTripDraft,
   noteStoredTrackPoint,
   parseActivityLog,
+  removeActivityRecord,
   updateTripDraft,
   type ActivityRecord,
   type TripDraft,
@@ -1762,6 +1763,14 @@ export default function ShorelineApp() {
     void clearTripTracks().catch(() => undefined);
   }, []);
 
+  const deleteActivityLogEntry = useCallback((record: ActivityRecord) => {
+    const nextRecords = removeActivityRecord(activityRecordsRef.current, record.id);
+    activityRecordsRef.current = nextRecords;
+    window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(nextRecords));
+    setActivityRecords(nextRecords);
+    if (record.kind === "trip") void deleteTripTrack(record.id).catch(() => undefined);
+  }, []);
+
   const distanceUnit = nearest && nearest.distance >= 1_000 ? copy.kilometres : copy.metres;
   const statusLabel = gpsNavigationState === "lost"
     ? copy.gpsLost
@@ -1976,6 +1985,7 @@ export default function ShorelineApp() {
           now={clockNow}
           coastline={pack}
           onBack={() => setShowActivityOverview(false)}
+          onDelete={(record) => window.confirm(language === "de" ? "Diesen Logbucheintrag dauerhaft löschen?" : "Permanently delete this logbook entry?") && deleteActivityLogEntry(record)}
           onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten und GPS-Tracks löschen?" : "Clear all activities and GPS tracks?") && clearActivityLog()}
         /> : <>
           <section className="intro">
@@ -2259,6 +2269,7 @@ export default function ShorelineApp() {
               currentAnchor={anchorWatch}
               now={clockNow}
               coastline={pack}
+              onDelete={(record) => window.confirm(language === "de" ? "Diesen Logbucheintrag dauerhaft löschen?" : "Permanently delete this logbook entry?") && deleteActivityLogEntry(record)}
               onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten und GPS-Tracks löschen?" : "Clear all activities and GPS tracks?") && clearActivityLog()}
             />
           </div>

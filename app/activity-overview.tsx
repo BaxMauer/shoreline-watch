@@ -16,6 +16,7 @@ type Props = {
   coastline: CoastlinePack | null;
   onBack?: () => void;
   onClear: () => void;
+  onDelete: (record: ActivityRecord) => void;
 };
 
 function duration(milliseconds: number, language: "de" | "en") {
@@ -233,7 +234,7 @@ function TripDetail({ trip, language, coastline, onBack }: { trip: TripActivity;
   </section>;
 }
 
-export default function ActivityOverview({ language, records, currentTrip, currentAnchor, now, coastline, onBack, onClear }: Props) {
+export default function ActivityOverview({ language, records, currentTrip, currentAnchor, now, coastline, onBack, onClear, onDelete }: Props) {
   const de = language === "de";
   const totals = activityTotals(records);
   const hasLive = Boolean(currentTrip || currentAnchor);
@@ -249,7 +250,10 @@ export default function ActivityOverview({ language, records, currentTrip, curre
       const isTrip = record.kind === "trip";
       const place = !isTrip ? [record.bayName, record.islandName].filter(Boolean).join(" · ") : "";
       const content = <><span className="activity-icon" aria-hidden="true">{isTrip ? "↗" : "⚓"}</span><div className="activity-row-main"><small>{date}</small><strong>{isTrip ? ([record.startLabel, record.endLabel].filter(Boolean).join(" → ") || (de ? "Fahrt" : "Trip")) : (place || (de ? "Ankern" : "Anchored"))}</strong><span>{isTrip ? `${distance(record.distanceMetres)} · ${de ? "Ø" : "avg"} ${record.averageSpeedKnots.toFixed(1)} kn · ${record.trackPointCount ?? 0} GPS` : `${duration(record.durationMs, language)} · max ${Math.round(record.maxDriftMetres)} m ${de ? "Drift" : "drift"}`}</span><div className="activity-meter"><i style={{ width: `${Math.min(100, isTrip ? record.maxSpeedKnots * 4 : record.maxDriftMetres / Math.max(1, record.radiusMetres) * 100)}%` }} /></div></div>{isTrip ? <ActivityMiniMap trip={record} coastline={coastline} language={language} /> : <b>{duration(record.durationMs, language)}</b>}</>;
-      return isTrip ? <button type="button" className="activity-row trip" key={record.id} onClick={() => setSelectedTripId(record.id)} style={{ "--activity-index": index } as CSSProperties}>{content}</button> : <article className="activity-row anchor" key={record.id} style={{ "--activity-index": index } as CSSProperties}>{content}</article>;
+      return <article className={`activity-row ${record.kind}`} key={record.id} style={{ "--activity-index": index } as CSSProperties}>
+        {isTrip ? <button type="button" className="activity-row-open" onClick={() => setSelectedTripId(record.id)} aria-label={`${[record.startLabel, record.endLabel].filter(Boolean).join(" → ") || (de ? "Fahrt" : "Trip")}. ${de ? "Details öffnen" : "Open details"}`}>{content}</button> : <div className="activity-row-open">{content}</div>}
+        <button type="button" className="activity-delete" onClick={() => onDelete(record)} aria-label={de ? "Diesen Logbucheintrag löschen" : "Delete this logbook entry"} title={de ? "Eintrag löschen" : "Delete entry"}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 10v7m4-7v7" /></svg></button>
+      </article>;
     })}</div>
     <footer className="activity-privacy"><span>⌂</span><p><strong>{de ? "Nur auf diesem Gerät" : "Only on this device"}</strong><small>{de ? "Detaillierte GPS-Tracks werden lokal gespeichert und nie übertragen. Maximal 200 Logbucheinträge." : "Detailed GPS tracks stay on this device and are never transmitted. Maximum 200 logbook entries."}</small></p>{records.length > 0 && <button type="button" onClick={onClear}>{de ? "Löschen" : "Clear"}</button>}</footer>
   </section>;

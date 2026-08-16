@@ -143,6 +143,10 @@ export function addActivityRecord(records: ActivityRecord[], record: ActivityRec
     .slice(0, MAX_ACTIVITY_RECORDS);
 }
 
+export function removeActivityRecord(records: ActivityRecord[], id: string) {
+  return records.filter((record) => record.id !== id);
+}
+
 export function parseActivityLog(raw: string | null): ActivityRecord[] {
   if (!raw) return [];
   try {

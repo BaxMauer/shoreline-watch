@@ -8,6 +8,7 @@ import {
   finishTripDraft,
   noteStoredTrackPoint,
   parseActivityLog,
+  removeActivityRecord,
   updateTripDraft,
 } from "../lib/activity-log.ts";
 
@@ -39,6 +40,15 @@ test("activity persistence rejects malformed data and stays bounded", () => {
   const bounded = addActivityRecord(records, { ...records[0], id: "new", startedAt: 999 });
   assert.equal(bounded.length, MAX_ACTIVITY_RECORDS);
   assert.equal(bounded[0].id, "new");
+});
+
+test("individual log entries can be removed without affecting the remaining records", () => {
+  const records = [
+    { id: "trip-1", kind: "trip", startedAt: 2, endedAt: 3 },
+    { id: "anchor-1", kind: "anchor", startedAt: 1, endedAt: 2 },
+  ];
+  assert.deepEqual(removeActivityRecord(records, "trip-1"), [records[1]]);
+  assert.equal(removeActivityRecord(records, "missing").length, 2);
 });
 
 test("totals combine trip and anchor summaries", () => {
