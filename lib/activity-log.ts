@@ -18,6 +18,7 @@ export type TripDraft = {
   minShoreDistanceMetres: number | null;
   minDepthMetres: number | null;
   warningCount: number;
+  trackPointCount: number;
 };
 
 export type TripActivity = {
@@ -33,6 +34,11 @@ export type TripActivity = {
   minShoreDistanceMetres: number | null;
   minDepthMetres: number | null;
   warningCount: number;
+  trackPointCount: number;
+  startPoint: GeoPoint | null;
+  endPoint: GeoPoint | null;
+  startLabel: string | null;
+  endLabel: string | null;
 };
 
 export type AnchorActivity = {
@@ -64,7 +70,12 @@ export function createTripDraft(startedAt = Date.now()): TripDraft {
     minShoreDistanceMetres: null,
     minDepthMetres: null,
     warningCount: 0,
+    trackPointCount: 0,
   };
+}
+
+export function noteStoredTrackPoint(draft: TripDraft) {
+  return { ...draft, trackPointCount: draft.trackPointCount + 1 };
 }
 
 function minimum(current: number | null, value: number | null) {
@@ -99,7 +110,11 @@ export function updateTripDraft(
   };
 }
 
-export function finishTripDraft(draft: TripDraft, endedAt = Date.now()): TripActivity | null {
+export function finishTripDraft(
+  draft: TripDraft,
+  endedAt = Date.now(),
+  labels: { startLabel?: string | null; endLabel?: string | null } = {},
+): TripActivity | null {
   if (!draft.firstPoint && endedAt - draft.startedAt < 10_000) return null;
   return {
     id: draft.id,
@@ -114,6 +129,11 @@ export function finishTripDraft(draft: TripDraft, endedAt = Date.now()): TripAct
     minShoreDistanceMetres: draft.minShoreDistanceMetres,
     minDepthMetres: draft.minDepthMetres,
     warningCount: draft.warningCount,
+    trackPointCount: Number.isFinite(draft.trackPointCount) ? draft.trackPointCount : 0,
+    startPoint: draft.firstPoint,
+    endPoint: draft.lastPoint ? { latitude: draft.lastPoint.latitude, longitude: draft.lastPoint.longitude } : null,
+    startLabel: labels.startLabel ?? null,
+    endLabel: labels.endLabel ?? null,
   };
 }
 

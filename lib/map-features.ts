@@ -144,3 +144,16 @@ export function getAnchorPlace(pack: MapFeaturePack | null, point: GeoPoint) {
   };
   return { bayName: nearest("bay", 6_000), islandName: nearest("island", 25_000) };
 }
+
+export function getTripPlaceLabel(pack: MapFeaturePack | null, point: GeoPoint | null) {
+  if (!pack || !point) return null;
+  let match: { feature: MapFeature; distanceMetres: number } | null = null;
+  for (const feature of pack.features) {
+    if (feature.kind === "restaurant") continue;
+    const distanceMetres = geoDistanceMetres(point, feature);
+    const maximumDistance = feature.kind === "bay" ? 7_000 : feature.kind === "island" ? 25_000 : 15_000;
+    if (distanceMetres > maximumDistance || (match && distanceMetres >= match.distanceMetres)) continue;
+    match = { feature, distanceMetres };
+  }
+  return match?.feature.name ?? null;
+}

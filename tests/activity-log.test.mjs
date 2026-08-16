@@ -6,21 +6,27 @@ import {
   addActivityRecord,
   createTripDraft,
   finishTripDraft,
+  noteStoredTrackPoint,
   parseActivityLog,
   updateTripDraft,
 } from "../lib/activity-log.ts";
 
-test("trip log aggregates plausible GPS samples without retaining a raw track", () => {
+test("trip log aggregates plausible GPS samples while retaining track metadata separately", () => {
   let draft = createTripDraft(1_000);
   draft = updateTripDraft(draft, { latitude: 43.8, longitude: 15.55, accuracy: 5, speedKnots: 5, timestamp: 1_000 }, { shoreDistanceMetres: 500, depthMetres: 12 });
   draft = updateTripDraft(draft, { latitude: 43.8005, longitude: 15.55, accuracy: 5, speedKnots: 7, timestamp: 31_000 }, { shoreDistanceMetres: 450, depthMetres: 10 });
-  const trip = finishTripDraft(draft, 61_000);
+  draft = noteStoredTrackPoint(noteStoredTrackPoint(draft));
+  const trip = finishTripDraft(draft, 61_000, { startLabel: "Pakoštane", endLabel: "Murter" });
   assert.ok(trip);
   assert.ok(trip.distanceMetres > 40 && trip.distanceMetres < 70);
   assert.equal(trip.averageSpeedKnots, 6);
   assert.equal(trip.maxSpeedKnots, 7);
   assert.equal(trip.minShoreDistanceMetres, 450);
   assert.equal(trip.minDepthMetres, 10);
+  assert.equal(trip.trackPointCount, 2);
+  assert.equal(trip.startLabel, "Pakoštane");
+  assert.equal(trip.endLabel, "Murter");
+  assert.deepEqual(trip.startPoint, { latitude: 43.8, longitude: 15.55 });
   assert.equal("lastPoint" in trip, false);
 });
 

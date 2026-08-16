@@ -35,11 +35,20 @@ import {
   addActivityRecord,
   createTripDraft,
   finishTripDraft,
+  noteStoredTrackPoint,
   parseActivityLog,
   updateTripDraft,
   type ActivityRecord,
   type TripDraft,
 } from "../lib/activity-log";
+import {
+  clearTripTracks,
+  deleteTripTrack,
+  pruneTripTracks,
+  saveTripTrackPoint,
+  shouldStoreTrackPoint,
+  type TripTrackPoint,
+} from "../lib/activity-track";
 import { fetchMapWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
   createStationaryState,
@@ -56,6 +65,7 @@ import {
 import {
   getMapFeaturesInView,
   getAnchorPlace,
+  getTripPlaceLabel,
   placeMapFeatureLabels,
   type MapFeaturePack,
 } from "../lib/map-features";
@@ -796,6 +806,7 @@ export default function ShorelineApp() {
   const anchorStats = useRef({ maxDriftMetres: 0, driftAlarmCount: 0 });
   const currentTrip = useRef<TripDraft | null>(null);
   const lastLoggedFixTimestamp = useRef<number | null>(null);
+  const lastStoredTrackPoint = useRef<TripTrackPoint | null>(null);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -887,6 +898,9 @@ export default function ShorelineApp() {
   useEffect(() => {
     if (!preferencesLoaded) return;
     window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(activityRecords));
+    const validTripIds = activityRecords.filter((record) => record.kind === "trip").map((record) => record.id);
+    if (currentTrip.current) validTripIds.push(currentTrip.current.id);
+    void pruneTripTracks(validTripIds).catch(() => undefined);
   }, [activityRecords, preferencesLoaded]);
 
   useEffect(() => {
@@ -1141,6 +1155,23 @@ export default function ShorelineApp() {
       shoreDistanceMetres: nearest?.distance ?? null,
       depthMetres: currentDepthState === "ready" ? currentDepthMetres : null,
     });
+    const trackPoint: TripTrackPoint = {
+      tripId: currentTrip.current.id,
+      sequence: currentTrip.current.trackPointCount,
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      timestamp: fix.timestamp,
+      accuracy: fix.accuracy,
+      speedKnots,
+      heading: fix.heading,
+      shoreDistanceMetres: nearest?.distance ?? null,
+      depthMetres: currentDepthState === "ready" ? currentDepthMetres : null,
+    };
+    if (shouldStoreTrackPoint(lastStoredTrackPoint.current, trackPoint)) {
+      lastStoredTrackPoint.current = trackPoint;
+      currentTrip.current = noteStoredTrackPoint(currentTrip.current);
+      void saveTripTrackPoint(trackPoint).catch(() => undefined);
+    }
     window.localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(currentTrip.current));
   }, [currentDepthMetres, currentDepthState, fix, mode, nearest?.distance, speedKnots]);
 
@@ -1466,10 +1497,16 @@ export default function ShorelineApp() {
 
   const stopTracking = useCallback(() => {
     const endedAt = Date.now();
-    const trip = currentTrip.current ? finishTripDraft(currentTrip.current, endedAt) : null;
+    const draft = currentTrip.current;
+    const trip = draft ? finishTripDraft(draft, endedAt, {
+      startLabel: getTripPlaceLabel(mapFeaturePack, draft.firstPoint),
+      endLabel: getTripPlaceLabel(mapFeaturePack, draft.lastPoint),
+    }) : null;
     if (trip) setActivityRecords((records) => addActivityRecord(records, trip));
+    else if (draft) void deleteTripTrack(draft.id).catch(() => undefined);
     currentTrip.current = null;
     lastLoggedFixTimestamp.current = null;
+    lastStoredTrackPoint.current = null;
     window.localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
     releaseAnchor(endedAt);
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
@@ -1500,7 +1537,7 @@ export default function ShorelineApp() {
     setPowerSaveWakeUntil(0);
     setStationaryState(createStationaryState());
     setTrackerTab("distance");
-  }, [releaseAnchor]);
+  }, [mapFeaturePack, releaseAnchor]);
 
   useEffect(() => () => {
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
@@ -1530,6 +1567,7 @@ export default function ShorelineApp() {
     const startedAt = Date.now();
     currentTrip.current = createTripDraft(startedAt);
     lastLoggedFixTimestamp.current = null;
+    lastStoredTrackPoint.current = null;
     window.localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(currentTrip.current));
     setStationaryState(createStationaryState(startedAt));
     setPowerSaveWakeUntil(startedAt + POWER_SAVE_INTERACTION_GUARD_MS);
@@ -1601,6 +1639,7 @@ export default function ShorelineApp() {
     demoTimestamp.current = Date.now();
     currentTrip.current = null;
     lastLoggedFixTimestamp.current = null;
+    lastStoredTrackPoint.current = null;
     setClockNow(demoTimestamp.current);
     setTrackingStartedAt(demoTimestamp.current);
     setClosingRateMetresPerSecond(null);
@@ -1618,6 +1657,11 @@ export default function ShorelineApp() {
     setDemoIndex(next);
     setDemoFix(next, demoTimestamp.current);
   }, [demoIndex, setDemoFix]);
+
+  const clearActivityLog = useCallback(() => {
+    setActivityRecords([]);
+    void clearTripTracks().catch(() => undefined);
+  }, []);
 
   const distanceUnit = nearest && nearest.distance >= 1_000 ? copy.kilometres : copy.metres;
   const statusLabel = gpsNavigationState === "lost"
@@ -1812,8 +1856,9 @@ export default function ShorelineApp() {
           currentTrip={null}
           currentAnchor={anchorWatch}
           now={clockNow}
+          coastline={pack}
           onBack={() => setShowActivityOverview(false)}
-          onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten löschen?" : "Clear all activities?") && setActivityRecords([])}
+          onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten und GPS-Tracks löschen?" : "Clear all activities and GPS tracks?") && clearActivityLog()}
         /> : <>
           <section className="intro">
             <p className="eyebrow">{copy.eyebrow}</p>
@@ -2083,7 +2128,8 @@ export default function ShorelineApp() {
               currentTrip={currentTrip.current}
               currentAnchor={anchorWatch}
               now={clockNow}
-              onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten löschen?" : "Clear all activities?") && setActivityRecords([])}
+              coastline={pack}
+              onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten und GPS-Tracks löschen?" : "Clear all activities and GPS tracks?") && clearActivityLog()}
             />
           </div>
           </div>

@@ -525,6 +525,8 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .activity-live > b { font-family: var(--font-geist-mono),monospace; font-size: .7rem; }
 .activity-timeline { display: grid; gap: 7px; }
 .activity-row { display: grid; min-height: 84px; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 10px; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: var(--activity-card); padding: 9px 11px; animation: activity-rise .42s calc(var(--activity-index) * 55ms) ease-out both; }
+.activity-row.trip { width: 100%; color: inherit; cursor: pointer; text-align: left; transition: border-color .2s ease, background .2s ease, transform .2s ease; }
+.activity-row.trip:hover, .activity-row.trip:focus-visible { border-color: rgba(115,229,203,.34); background: rgba(115,229,203,.09); outline: none; transform: translateY(-1px); }
 .activity-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: rgba(63,170,180,.14); color: var(--aqua); font-size: 1.05rem; }
 .activity-row.anchor .activity-icon { background: rgba(255,210,122,.12); color: var(--amber); }
 .activity-row-main { display: grid; min-width: 0; gap: 2px; }
@@ -545,6 +547,54 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .activity-privacy strong { font-size: .55rem; }
 .activity-privacy small { color: var(--muted); font-size: .46rem; }
 .activity-privacy button { min-height: 30px; border-radius: 8px; background: rgba(255,116,95,.1); color: #ffaaa0; padding: 0 9px; cursor: pointer; font-size: .5rem; }
+.trip-detail { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: 9px; overflow-y: auto; background: radial-gradient(circle at 85% 0,rgba(35,136,145,.2),transparent 22rem),linear-gradient(180deg,#08232b,#06171d); color: var(--foam); padding: 9px 10px max(14px,env(safe-area-inset-bottom)); }
+.trip-detail-header { display: grid; min-height: 52px; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 9px; }
+.trip-detail-header > span { display: grid; min-width: 0; gap: 2px; text-align: center; }
+.trip-detail-header small { color: var(--muted); font-size: .47rem; text-transform: uppercase; }
+.trip-detail-header strong { overflow: hidden; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.trip-detail-header button { min-height: 34px; border-radius: 9px; background: rgba(255,255,255,.08); color: var(--foam); padding: 0 10px; cursor: pointer; font-size: .58rem; font-weight: 800; }
+.trip-detail-header button:last-child { background: rgba(115,229,203,.14); color: var(--aqua); font-family: var(--font-geist-mono),monospace; letter-spacing: .08em; }
+.trip-detail-header button:disabled { cursor: default; opacity: .38; }
+.track-map-wrap { position: relative; overflow: hidden; border: 1px solid rgba(115,229,203,.14); border-radius: 17px; background: #0b3943; box-shadow: 0 16px 34px rgba(0,0,0,.2); animation: activity-rise .45s ease-out both; }
+.track-map { display: block; width: 100%; min-height: 220px; }
+.track-map-water { fill: #dcecea; }
+.track-map-shore line { stroke: #546e69; stroke-width: 1.8; stroke-linecap: round; }
+.track-route-underlay { fill: none; stroke: rgba(3,29,34,.55); stroke-width: 5.5; stroke-linecap: round; stroke-linejoin: round; }
+.track-route-segments line { stroke-width: 3.2; stroke-linecap: round; }
+.track-route-segments .slow, .track-speed-legend .slow::before { stroke: #087d68; background: #087d68; }
+.track-route-segments .cruise, .track-speed-legend .cruise::before { stroke: #e59b2f; background: #e59b2f; }
+.track-route-segments .fast, .track-speed-legend .fast::before { stroke: #db4d3f; background: #db4d3f; }
+.track-marker circle { stroke: #fff; stroke-width: 1.6; }
+.track-marker.start circle { fill: #087d68; }
+.track-marker.end circle { fill: #d48618; }
+.track-marker text { fill: #fff; font-family: var(--font-geist-mono),monospace; font-size: 8px; font-weight: 950; text-anchor: middle; }
+.track-map-scale { fill: #456761; font-family: var(--font-geist-mono),monospace; font-size: 6px; font-weight: 800; letter-spacing: .08em; }
+.track-speed-legend { position: absolute; top: 9px; right: 9px; display: flex; gap: 7px; border-radius: 999px; background: rgba(4,29,34,.78); color: #d9e7e4; padding: 6px 8px; font-size: .42rem; backdrop-filter: blur(8px); }
+.track-speed-legend span { display: flex; align-items: center; gap: 4px; }
+.track-speed-legend span::before { width: 6px; height: 6px; border-radius: 50%; content:""; }
+.track-map-loading, .track-map-empty { display: grid; min-height: 220px; place-items: center; border: 1px dashed rgba(115,229,203,.2); border-radius: 17px; color: var(--muted); font-size: .68rem; }
+.track-speed-chart { display: grid; min-height: 96px; grid-template-rows: auto 1fr; gap: 4px; border: 1px solid rgba(115,229,203,.1); border-radius: 14px; background: rgba(255,255,255,.045); padding: 10px 12px 7px; animation: activity-rise .45s .06s ease-out both; }
+.track-speed-chart > span { display: flex; align-items: center; justify-content: space-between; }
+.track-speed-chart small { color: var(--aqua); font-size: .46rem; font-weight: 850; letter-spacing: .12em; }
+.track-speed-chart b { font-family: var(--font-geist-mono),monospace; font-size: .55rem; }
+.track-speed-chart svg { width: 100%; height: 58px; overflow: visible; }
+.track-speed-chart path { fill: none; stroke: rgba(255,255,255,.1); stroke-width: 1; }
+.track-speed-chart polyline { fill: none; stroke: var(--aqua); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+.trip-detail-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+.trip-detail-grid > span { display: grid; min-height: 58px; align-content: center; gap: 3px; border: 1px solid rgba(115,229,203,.09); border-radius: 11px; background: rgba(255,255,255,.04); padding: 8px 10px; animation: activity-rise .4s ease-out both; }
+.trip-detail-grid small { color: var(--muted); font-size: .46rem; text-transform: uppercase; }
+.trip-detail-grid strong { font-family: var(--font-geist-mono),monospace; font-size: .7rem; }
+.trip-route-note { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; border-radius: 11px; background: rgba(115,229,203,.08); color: var(--aqua); padding: 9px 11px; }
+.trip-route-note p { display: grid; gap: 2px; color: var(--foam); }
+.trip-route-note strong { font-size: .58rem; }
+.trip-route-note small { color: var(--muted); font-size: .48rem; line-height: 1.35; }
+.sunlight-mode .activity-overview, .sunlight-mode .trip-detail { --activity-card: rgba(255,255,255,.72); background: radial-gradient(circle at 85% 0,rgba(0,120,110,.12),transparent 20rem),linear-gradient(180deg,#e6f2ef,#d8e9e6); color: #102d31; }
+.sunlight-mode .activity-row-main > span, .sunlight-mode .activity-header small, .sunlight-mode .track-speed-chart small { color: #076e63; }
+.sunlight-mode .activity-row-main > small, .sunlight-mode .activity-hero small, .sunlight-mode .activity-hero em, .sunlight-mode .trip-detail-grid small, .sunlight-mode .trip-route-note small, .sunlight-mode .trip-detail-header small { color: #53716f; }
+.sunlight-mode .activity-header button, .sunlight-mode .trip-detail-header button { background: rgba(255,255,255,.8); color: #173a3b; }
+.sunlight-mode .trip-detail-grid > span, .sunlight-mode .track-speed-chart { background: rgba(255,255,255,.65); }
+.sunlight-mode .trip-route-note { background: rgba(0,107,84,.1); }
+.sunlight-mode .trip-route-note p { color: #173a3b; }
 @keyframes activity-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes activity-sweep { to { transform: rotate(360deg); } }
 @keyframes activity-live-pulse { 50% { opacity: .45; transform: scale(.8); } }

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   getMapFeaturesInView,
   getAnchorPlace,
+  getTripPlaceLabel,
   placeMapFeatureLabels,
   searchCroatianMapFeatures,
 } from "../lib/map-features.ts";
@@ -25,6 +26,11 @@ test("anchor place lookup adds nearby bay and island names", () => {
   const place = getAnchorPlace(catalog, { latitude: 43.8826, longitude: 15.2849 });
   assert.equal(typeof place, "object");
   assert.ok(place.bayName || place.islandName);
+});
+
+test("trip place lookup names nearby places without requiring navigation", () => {
+  assert.equal(typeof getTripPlaceLabel(catalog, { latitude: 43.8826, longitude: 15.2849 }), "string");
+  assert.equal(getTripPlaceLabel(null, { latitude: 43.8, longitude: 15.5 }), null);
 });
 
 test("catalog search handles Croatian diacritics and transposed characters", () => {
