@@ -1,5 +1,5 @@
 import { fuzzyPlaceScore, normalizePlaceSearchText, type PlaceSearchResult } from "./place-search.ts";
-import type { GeoPoint } from "./route-planning.ts";
+import { geoDistanceMetres, type GeoPoint } from "./route-planning.ts";
 
 export type MapFeatureKind = "island" | "bay" | "settlement" | "restaurant";
 export type MapFeature = GeoPoint & {
@@ -128,4 +128,19 @@ export function searchCroatianMapFeatures(pack: MapFeaturePack | null, query: st
       longitude: feature.longitude,
       source: "local",
     }));
+}
+
+export function getAnchorPlace(pack: MapFeaturePack | null, point: GeoPoint) {
+  if (!pack) return { bayName: null, islandName: null };
+  const nearest = (kind: "bay" | "island", maximumDistanceMetres: number) => {
+    let match: { name: string; distanceMetres: number } | null = null;
+    for (const feature of pack.features) {
+      if (feature.kind !== kind) continue;
+      const distanceMetres = geoDistanceMetres(point, feature);
+      if (distanceMetres > maximumDistanceMetres || (match && distanceMetres >= match.distanceMetres)) continue;
+      match = { name: feature.name, distanceMetres };
+    }
+    return match?.name ?? null;
+  };
+  return { bayName: nearest("bay", 6_000), islandName: nearest("island", 25_000) };
 }

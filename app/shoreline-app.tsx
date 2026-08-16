@@ -28,7 +28,18 @@ import OfflinePackageManager from "./offline-package-manager";
 import WindOverlay from "./wind-overlay";
 import NauticalWeather from "./nautical-weather";
 import MapOrientationControl from "./map-orientation-control";
-import { createAnchorWatch, getAnchorWatchSnapshot, type AnchorWatch } from "../lib/anchor-watch";
+import ActivityOverview from "./activity-overview";
+import { createAnchorWatch, getAnchorWatchSnapshot, shouldSoundAnchorDriftAlarm, type AnchorWatch } from "../lib/anchor-watch";
+import {
+  ACTIVITY_LOG_STORAGE_KEY,
+  addActivityRecord,
+  createTripDraft,
+  finishTripDraft,
+  parseActivityLog,
+  updateTripDraft,
+  type ActivityRecord,
+  type TripDraft,
+} from "../lib/activity-log";
 import { fetchMapWindSample, windCellKey, windCompassLabel, windSampleCanBeReused, type WindSample } from "../lib/wind";
 import {
   createStationaryState,
@@ -44,6 +55,7 @@ import {
 } from "../lib/navigation-display";
 import {
   getMapFeaturesInView,
+  getAnchorPlace,
   placeMapFeatureLabels,
   type MapFeaturePack,
 } from "../lib/map-features";
@@ -68,8 +80,8 @@ type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
 type RiskLevel = "none" | "warning" | "danger";
 type Language = "de" | "en";
 type Theme = "ocean" | "xp" | "dark" | "nautical";
-type VisualSignalKind = "distance" | "speed" | "safe";
-type TrackerTab = "distance" | "route" | "weather";
+type VisualSignalKind = "distance" | "speed" | "safe" | "anchor";
+type TrackerTab = "distance" | "route" | "weather" | "activities";
 type Fix = {
   longitude: number;
   latitude: number;
@@ -97,6 +109,7 @@ const ANCHOR_WATCH_STORAGE_KEY = "shoreline-anchor-watch-v1";
 const WIND_SAMPLE_STORAGE_KEY = "shoreline-last-wind-v1";
 const WIND_LAYER_STORAGE_KEY = "shoreline-wind-layer";
 const MAP_HEADING_UP_STORAGE_KEY = "shoreline-map-heading-up";
+const ACTIVE_TRIP_STORAGE_KEY = "shoreline-active-trip-v1";
 const DEMO_DISTANCE_FACTORS = [1.4, 1.05, 0.95, 0.82, 1.07, 0.95];
 const DEMO_SPEEDS = [12.2, 10.1, 7.8, 6.4, 8.2, 7.5];
 const DEMO_ANCHOR = { longitude: 15.55, latitude: 43.803 };
@@ -170,6 +183,8 @@ const COPY = {
     anchorRelease: "Anker lösen",
     anchorHolding: "Anker hält",
     anchorDragging: "Anker driftet",
+    anchorAlarm: "ANKER-DRIFTALARM",
+    anchorAlarmDetail: (distance: number, radius: number) => `${distance} m vom Anker · Kreis ${radius} m`,
     anchorDistance: "vom Anker",
     shallow: "SEICHT",
     wind: "Wind",
@@ -247,6 +262,8 @@ const COPY = {
     distanceTab: "Abstand",
     routeTab: "Route",
     weatherTab: "Wetter",
+    activitiesTab: "Logbuch",
+    activitiesOpen: "Aktivitäten ansehen",
   },
   en: {
     online: "Online",
@@ -316,6 +333,8 @@ const COPY = {
     anchorRelease: "Release anchor",
     anchorHolding: "Anchor holding",
     anchorDragging: "Anchor dragging",
+    anchorAlarm: "ANCHOR DRIFT ALARM",
+    anchorAlarmDetail: (distance: number, radius: number) => `${distance} m from anchor · ${radius} m circle`,
     anchorDistance: "from anchor",
     shallow: "SHALLOW",
     wind: "Wind",
@@ -393,6 +412,8 @@ const COPY = {
     distanceTab: "Distance",
     routeTab: "Route",
     weatherTab: "Weather",
+    activitiesTab: "Logbook",
+    activitiesOpen: "View activities",
   },
 } as const;
 
@@ -750,6 +771,8 @@ export default function ShorelineApp() {
   const [windState, setWindState] = useState<"idle" | "loading" | "ready" | "offline">("idle");
   const [showWind, setShowWind] = useState(true);
   const [headingUp, setHeadingUp] = useState(false);
+  const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>([]);
+  const [showActivityOverview, setShowActivityOverview] = useState(false);
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -769,6 +792,10 @@ export default function ShorelineApp() {
   const depthQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
   const windQueryPoint = useRef<{ key: string; latitude: number; longitude: number } | null>(null);
   const previousAnchorBreach = useRef(false);
+  const lastAnchorAlarmAt = useRef<number | null>(null);
+  const anchorStats = useRef({ maxDriftMetres: 0, driftAlarmCount: 0 });
+  const currentTrip = useRef<TripDraft | null>(null);
+  const lastLoggedFixTimestamp = useRef<number | null>(null);
   const copy = COPY[language];
 
   useEffect(() => {
@@ -782,6 +809,7 @@ export default function ShorelineApp() {
       const savedWind = window.localStorage.getItem(WIND_SAMPLE_STORAGE_KEY);
       const savedWindLayer = window.localStorage.getItem(WIND_LAYER_STORAGE_KEY);
       const savedHeadingUp = window.localStorage.getItem(MAP_HEADING_UP_STORAGE_KEY);
+      const savedActivities = window.localStorage.getItem(ACTIVITY_LOG_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -797,7 +825,7 @@ export default function ShorelineApp() {
       if (savedAnchorWatch) {
         try {
           const saved = JSON.parse(savedAnchorWatch) as AnchorWatch;
-          setAnchorWatch(createAnchorWatch(saved.point, saved.setAt));
+          setAnchorWatch(createAnchorWatch(saved.point, saved.setAt, saved));
         } catch {
           window.localStorage.removeItem(ANCHOR_WATCH_STORAGE_KEY);
         }
@@ -811,6 +839,19 @@ export default function ShorelineApp() {
       }
       if (savedWindLayer === "false") setShowWind(false);
       if (savedHeadingUp === "true") setHeadingUp(true);
+      let restoredActivities = parseActivityLog(savedActivities);
+      const savedTrip = window.localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
+      if (savedTrip) {
+        try {
+          const draft = JSON.parse(savedTrip) as TripDraft;
+          const recovered = finishTripDraft(draft, draft.lastPoint?.timestamp ?? Date.now());
+          if (recovered) restoredActivities = addActivityRecord(restoredActivities, recovered);
+        } catch {
+          // Ignore an incomplete write and keep the validated activity history.
+        }
+        window.localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+      }
+      setActivityRecords(restoredActivities);
       setPreferencesLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -842,6 +883,11 @@ export default function ShorelineApp() {
     if (!preferencesLoaded) return;
     window.localStorage.setItem(MAP_HEADING_UP_STORAGE_KEY, String(headingUp));
   }, [headingUp, preferencesLoaded]);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    window.localStorage.setItem(ACTIVITY_LOG_STORAGE_KEY, JSON.stringify(activityRecords));
+  }, [activityRecords, preferencesLoaded]);
 
   useEffect(() => {
     if (mode === "idle") return;
@@ -1081,6 +1127,23 @@ export default function ShorelineApp() {
     now: clockNow,
   });
 
+  useEffect(() => {
+    if (mode !== "live" || !fix || !currentTrip.current) return;
+    if (lastLoggedFixTimestamp.current === fix.timestamp) return;
+    lastLoggedFixTimestamp.current = fix.timestamp;
+    currentTrip.current = updateTripDraft(currentTrip.current, {
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      timestamp: fix.timestamp,
+      accuracy: fix.accuracy,
+      speedKnots,
+    }, {
+      shoreDistanceMetres: nearest?.distance ?? null,
+      depthMetres: currentDepthState === "ready" ? currentDepthMetres : null,
+    });
+    window.localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(currentTrip.current));
+  }, [currentDepthMetres, currentDepthState, fix, mode, nearest?.distance, speedKnots]);
+
   const registerInteraction = useCallback(() => {
     const interactedAt = Date.now();
     setClockNow(interactedAt);
@@ -1270,9 +1333,20 @@ export default function ShorelineApp() {
   }, [warningConfig.vibrationEnabled]);
 
   useEffect(() => {
-    if (anchorWatchSnapshot.breached && !previousAnchorBreach.current) triggerVibration("danger");
-    previousAnchorBreach.current = anchorWatchSnapshot.breached;
-  }, [anchorWatchSnapshot.breached, triggerVibration]);
+    const breached = mode !== "idle" && gpsReliable && anchorWatchSnapshot.breached;
+    if (anchorWatchSnapshot.distanceMetres !== null) {
+      anchorStats.current.maxDriftMetres = Math.max(anchorStats.current.maxDriftMetres, anchorWatchSnapshot.distanceMetres);
+    }
+    if (shouldSoundAnchorDriftAlarm(breached, previousAnchorBreach.current, clockNow, lastAnchorAlarmAt.current)) {
+      lastAnchorAlarmAt.current = clockNow;
+      anchorStats.current.driftAlarmCount += 1;
+      triggerVisualSignal("anchor");
+      triggerVibration("danger");
+      if (warningConfig.warningSoundEnabled && warningConfig.alertVolumePercent > 0) void soundAlarm();
+    }
+    if (!breached) lastAnchorAlarmAt.current = null;
+    previousAnchorBreach.current = breached;
+  }, [anchorWatchSnapshot.breached, anchorWatchSnapshot.distanceMetres, clockNow, gpsReliable, mode, soundAlarm, triggerVibration, triggerVisualSignal, warningConfig.alertVolumePercent, warningConfig.warningSoundEnabled]);
 
   const testWarningOutputs = useCallback(() => {
     triggerVisualSignal("distance");
@@ -1304,6 +1378,7 @@ export default function ShorelineApp() {
     );
     warningSoundAvailableForDangerEpisode.current = gatedSound.availableForDangerEpisode;
     if (outputPlan.visual) triggerVisualSignal(outputPlan.visual);
+    if (outputPlan.visual && outputPlan.visual !== "safe" && currentTrip.current) currentTrip.current.warningCount += 1;
     if (outputPlan.vibration) triggerVibration(outputPlan.vibration);
     if (gatedSound.sound === "warning") void soundAlarm();
     if (gatedSound.sound === "safe") void soundSafeChime();
@@ -1357,7 +1432,46 @@ export default function ShorelineApp() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [requestWakeLock]);
 
+  const releaseAnchor = useCallback((endedAt = Date.now()) => {
+    if (anchorWatch && modeRef.current === "live") {
+      setActivityRecords((records) => addActivityRecord(records, {
+        id: `anchor-${anchorWatch.setAt}`,
+        kind: "anchor",
+        startedAt: anchorWatch.setAt,
+        endedAt: Math.max(anchorWatch.setAt, endedAt),
+        durationMs: Math.max(0, endedAt - anchorWatch.setAt),
+        bayName: anchorWatch.bayName ?? null,
+        islandName: anchorWatch.islandName ?? null,
+        maxDriftMetres: Math.round(anchorStats.current.maxDriftMetres),
+        radiusMetres: warningConfig.powerSaveAnchorRadiusMetres,
+        driftAlarmCount: anchorStats.current.driftAlarmCount,
+      }));
+    }
+    setAnchorWatch(null);
+    anchorStats.current = { maxDriftMetres: 0, driftAlarmCount: 0 };
+    lastAnchorAlarmAt.current = null;
+    previousAnchorBreach.current = false;
+  }, [anchorWatch, warningConfig.powerSaveAnchorRadiusMetres]);
+
+  const setAnchorAtCurrentPosition = useCallback(() => {
+    if (!fix) return;
+    const place = getAnchorPlace(mapFeaturePack, fix);
+    const next = createAnchorWatch(fix, Date.now(), place);
+    if (!next) return;
+    anchorStats.current = { maxDriftMetres: 0, driftAlarmCount: 0 };
+    lastAnchorAlarmAt.current = null;
+    previousAnchorBreach.current = false;
+    setAnchorWatch(next);
+  }, [fix, mapFeaturePack]);
+
   const stopTracking = useCallback(() => {
+    const endedAt = Date.now();
+    const trip = currentTrip.current ? finishTripDraft(currentTrip.current, endedAt) : null;
+    if (trip) setActivityRecords((records) => addActivityRecord(records, trip));
+    currentTrip.current = null;
+    lastLoggedFixTimestamp.current = null;
+    window.localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+    releaseAnchor(endedAt);
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
     watchId.current = null;
     modeRef.current = "idle";
@@ -1385,10 +1499,8 @@ export default function ShorelineApp() {
     setWarningZoneInside(null);
     setPowerSaveWakeUntil(0);
     setStationaryState(createStationaryState());
-    setAnchorWatch(null);
-    previousAnchorBreach.current = false;
     setTrackerTab("distance");
-  }, []);
+  }, [releaseAnchor]);
 
   useEffect(() => () => {
     if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
@@ -1416,6 +1528,9 @@ export default function ShorelineApp() {
     warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     const startedAt = Date.now();
+    currentTrip.current = createTripDraft(startedAt);
+    lastLoggedFixTimestamp.current = null;
+    window.localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(currentTrip.current));
     setStationaryState(createStationaryState(startedAt));
     setPowerSaveWakeUntil(startedAt + POWER_SAVE_INTERACTION_GUARD_MS);
     setClockNow(startedAt);
@@ -1484,6 +1599,8 @@ export default function ShorelineApp() {
     warningSoundAvailableForDangerEpisode.current = false;
     setWarningZoneInside(null);
     demoTimestamp.current = Date.now();
+    currentTrip.current = null;
+    lastLoggedFixTimestamp.current = null;
     setClockNow(demoTimestamp.current);
     setTrackingStartedAt(demoTimestamp.current);
     setClosingRateMetresPerSecond(null);
@@ -1625,6 +1742,8 @@ export default function ShorelineApp() {
           : copy.notReady;
   const visualSignalCopy = visualSignal?.kind === "speed"
     ? { title: copy.visualSpeed, detail: copy.visualSpeedDetail(warningConfig.maxSpeedKnots) }
+    : visualSignal?.kind === "anchor"
+      ? { title: copy.anchorAlarm, detail: copy.anchorAlarmDetail(Math.round(anchorWatchSnapshot.distanceMetres ?? 0), anchorWatchSnapshot.radiusMetres) }
     : visualSignal?.kind === "safe"
       ? { title: copy.visualSafe, detail: copy.visualSafeDetail(warningConfig.distanceMetres) }
       : { title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) };
@@ -1687,7 +1806,15 @@ export default function ShorelineApp() {
       </header>
 
       {mode === "idle" ? (
-        <>
+        showActivityOverview ? <ActivityOverview
+          language={language}
+          records={activityRecords}
+          currentTrip={null}
+          currentAnchor={anchorWatch}
+          now={clockNow}
+          onBack={() => setShowActivityOverview(false)}
+          onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten löschen?" : "Clear all activities?") && setActivityRecords([])}
+        /> : <>
           <section className="intro">
             <p className="eyebrow">{copy.eyebrow}</p>
             <h1>{copy.heroTitle}</h1>
@@ -1824,6 +1951,7 @@ export default function ShorelineApp() {
               <button className="primary-button" disabled={!pack} onClick={startLive}>{copy.startLive}</button>
               <button className="secondary-button" disabled={!pack} onClick={startDemo}>{copy.demo}</button>
             </div>
+            <button className="activity-entry-button" type="button" onClick={() => setShowActivityOverview(true)}><span aria-hidden="true">◷</span><b>{copy.activitiesOpen}</b><small>{activityRecords.length} {language === "de" ? "Einträge · lokal gespeichert" : "entries · stored locally"}</small></button>
             <p className="fine-print">{copy.finePrint}</p>
           </section>
         </>
@@ -1850,12 +1978,12 @@ export default function ShorelineApp() {
                 <span className="anchor-watch-symbol" aria-hidden="true">⚓</span>
                 <span><small>{copy.anchorWatch}</small><b>{anchorWatchSnapshot.breached ? copy.anchorDragging : copy.anchorHolding}</b></span>
                 <span className="anchor-watch-distance"><strong>{anchorWatchSnapshot.distanceMetres === null ? "—" : Math.round(anchorWatchSnapshot.distanceMetres)}</strong><small>m {copy.anchorDistance}</small></span>
-                <button type="button" onClick={() => setAnchorWatch(null)}>{copy.anchorRelease}</button>
+                <button type="button" onClick={() => releaseAnchor()}>{copy.anchorRelease}</button>
               </div> : anchorTimerVisible ? <div className={`anchor-timer-chip ${anchorTimer.active ? "active" : anchorTimer.blocker ? "blocked" : "running"}`} role="status">
                 <small>{copy.anchorTimer}</small>
                 <b>{formatTimer(anchorTimer.elapsedMs)} / {formatTimer(anchorTimer.thresholdMs)}</b>
                 <em>{anchorTimer.active ? copy.anchorReady : anchorTimer.blocker ? copy.anchorBlocked : copy.anchorRunning}</em>
-              </div> : <button className="anchor-set-button" type="button" disabled={!fix || !gpsReliable} onClick={() => fix && setAnchorWatch(createAnchorWatch(fix, Date.now()))}><span aria-hidden="true">⚓</span>{copy.anchorSet}</button>}
+              </div> : <button className="anchor-set-button" type="button" disabled={!fix || !gpsReliable} onClick={setAnchorAtCurrentPosition}><span aria-hidden="true">⚓</span>{copy.anchorSet}</button>}
             </div>
 
             <div className="map-stage">
@@ -1948,6 +2076,16 @@ export default function ShorelineApp() {
           <div hidden={trackerTab !== "weather"} className="weather-tab-panel">
             <NauticalWeather point={fix} active={trackerTab === "weather"} language={language} online={online} coastline={pack} mapFeatures={mapFeaturePack} />
           </div>
+          <div hidden={trackerTab !== "activities"} className="activity-tab-panel">
+            <ActivityOverview
+              language={language}
+              records={activityRecords}
+              currentTrip={currentTrip.current}
+              currentAnchor={anchorWatch}
+              now={clockNow}
+              onClear={() => window.confirm(language === "de" ? "Alle Aktivitäten löschen?" : "Clear all activities?") && setActivityRecords([])}
+            />
+          </div>
           </div>
 
           {(trackingError || alarmError) && <div className="compact-error">{trackingError || alarmError}</div>}
@@ -1956,6 +2094,7 @@ export default function ShorelineApp() {
             <button type="button" className={trackerTab === "distance" ? "active" : ""} aria-current={trackerTab === "distance" ? "page" : undefined} onClick={() => setTrackerTab("distance")}><span aria-hidden="true">◎</span>{copy.distanceTab}</button>
             <button type="button" className={trackerTab === "route" ? "active" : ""} aria-current={trackerTab === "route" ? "page" : undefined} onClick={() => setTrackerTab("route")}><span aria-hidden="true">↗</span>{copy.routeTab}</button>
             <button type="button" className={trackerTab === "weather" ? "active" : ""} aria-current={trackerTab === "weather" ? "page" : undefined} onClick={() => setTrackerTab("weather")}><span aria-hidden="true">≋</span>{copy.weatherTab}</button>
+            <button type="button" className={trackerTab === "activities" ? "active" : ""} aria-current={trackerTab === "activities" ? "page" : undefined} onClick={() => setTrackerTab("activities")}><span aria-hidden="true">◷</span>{copy.activitiesTab}</button>
           </nav>
 
           {mode === "demo" && trackerTab === "distance" && (

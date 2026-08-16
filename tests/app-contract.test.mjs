@@ -141,11 +141,29 @@ test("anchor timer stays in debug data but appears in the overview only after tw
 
 test("explicit anchor watch persists and renders anchor, rode, swing circle, and breach state", () => {
   assert.match(app, /ANCHOR_WATCH_STORAGE_KEY/);
-  assert.match(app, /createAnchorWatch\(fix, Date\.now\(\)\)/);
+  assert.match(app, /createAnchorWatch\(fix, Date\.now\(\), place\)/);
   assert.match(app, /getAnchorWatchSnapshot\(anchorWatch, fix/);
   assert.match(app, /className="anchor-swing-circle"/);
   assert.match(app, /className="anchor-rode"/);
   assert.match(app, /anchorWatchSnapshot\.breached \? copy\.anchorDragging/);
+});
+
+test("activity log is local, bounded, and available during and outside tracking", async () => {
+  const activity = await readFile(new URL("../lib/activity-log.ts", import.meta.url), "utf8");
+  assert.match(app, /ACTIVITY_LOG_STORAGE_KEY/);
+  assert.match(app, /<ActivityOverview/);
+  assert.match(app, /trackerTab === "activities"/);
+  assert.match(activity, /MAX_ACTIVITY_RECORDS = 200/);
+  assert.match(activity, /slice\(0, MAX_ACTIVITY_RECORDS\)/);
+  assert.match(app, /finishTripDraft\(currentTrip\.current/);
+  assert.match(app, /getAnchorPlace\(mapFeaturePack, fix\)/);
+});
+
+test("anchor drift alarm sounds, vibrates, flashes, and repeats while breached", () => {
+  assert.match(app, /shouldSoundAnchorDriftAlarm\(/);
+  assert.match(app, /triggerVisualSignal\("anchor"\)/);
+  assert.match(app, /triggerVibration\("danger"\)/);
+  assert.match(app, /void soundAlarm\(\)/);
 });
 
 test("offline packages and shallow-water marking are exposed as user controls", async () => {
@@ -211,6 +229,12 @@ test("active navigation uses a map-first distance instrument layout", async () =
   assert.match(planner, /className="summary-primary-row distance-map-overlay route-live-map-overlay"[\s\S]*className="distance-readout route-live-distance"[\s\S]*copy\.nearestShore/);
   assert.match(planner, /className=\{`go-no-go route-live-go-no-go \$\{goNoGoState\}`\}/);
   assert.match(planner, /className="instrument-footer route-live-footer"[\s\S]*className="instrument-meta route-live-meta"[\s\S]*copy\.chartDepth[\s\S]*GPS[\s\S]*copy\.currentSpeed[\s\S]*route-end-trip/);
+});
+
+test("active navigation keeps zoom controls visible", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.journey-active \.route-zoom > button[\s\S]*display: grid/);
+  assert.doesNotMatch(css, /\.journey-active \.route-zoom > button:not\(\.route-orientation-control\)[^{]*\{[^}]*display: none/);
 });
 
 test("power saver runs only in live mode, honours all recent interaction, and retains GPS tracking", () => {

@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   getMapFeaturesInView,
+  getAnchorPlace,
   placeMapFeatureLabels,
   searchCroatianMapFeatures,
 } from "../lib/map-features.ts";
@@ -18,6 +19,12 @@ test("offline OSM catalog covers all requested Croatian feature classes", () => 
   assert.ok(Object.keys(catalog.cells).length > 500);
   const islands = new Set(catalog.features.filter((feature) => feature.kind === "island").map((feature) => feature.name));
   for (const name of ["Žut", "Krapanj", "Vele Srakane", "Murter"]) assert.ok(islands.has(name), `missing island ${name}`);
+});
+
+test("anchor place lookup adds nearby bay and island names", () => {
+  const place = getAnchorPlace(catalog, { latitude: 43.8826, longitude: 15.2849 });
+  assert.equal(typeof place, "object");
+  assert.ok(place.bayName || place.islandName);
 });
 
 test("catalog search handles Croatian diacritics and transposed characters", () => {
