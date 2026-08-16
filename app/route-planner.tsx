@@ -51,6 +51,7 @@ import {
   formatPlaceSearchDetail,
   normalizePlaceSearchText,
   resolveNearestNavigableWater,
+  resolveNavigableWaterCandidates,
   resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
   type PlaceSearchResult,
@@ -332,7 +333,6 @@ export default function RoutePlanner({
   const [startingJourney, setStartingJourney] = useState(false);
   const [viewRangeMetres, setViewRangeMetres] = useState(20_000);
   const [viewCentre, setViewCentre] = useState<GeoPoint | null>(null);
-  const [mapInteracting, setMapInteracting] = useState(false);
   const [cruiseSpeedKnots, setCruiseSpeedKnots] = useState(16);
   const [conditionalPassagesEnabled, setConditionalPassagesEnabled] = useState(true);
   const [showDepths, setShowDepths] = useState(true);
@@ -429,46 +429,54 @@ export default function RoutePlanner({
     if (!controller || !pack || !requestedStart || !routeCoordinateIsValid(requestedStart) || !routeCoordinateIsValid(destination)) return;
     const gpsStart = requestedStart === fix;
     if (gpsStart && !gpsReliable) return;
-    const routingStart = resolveNearestNavigableWater(pack, requestedStart);
+    const routingStarts = resolveNavigableWaterCandidates(pack, requestedStart);
     const wasActiveJourney = journeyState === "active";
     setPlanning(true);
     setFailure(null);
-    controller.calculate({
-      pack,
-      start: routingStart,
-      destination,
-      options: {
-        clearanceMetres: warningConfig.distanceMetres,
-        cruiseSpeedKnots,
-        speedWarningEnabled: warningConfig.speedWarningEnabled,
-        nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
-        startAccuracyMetres: gpsStart ? fix?.accuracy : undefined,
-        conditionalPassagesEnabled,
-      },
-    }, {
-      onResult: (result) => {
-        setRoute(result.route ?? null);
-        setFailure(result.failure ?? null);
-        plannedFrom.current = requestedStart;
-        setJourneyProgressMetres(0);
-        setPlanning(false);
-        setStartingJourney(false);
-        if (activateJourney && result.route) {
-          setJourneyState("active");
-          setStartMode("gps");
-          if (!wasActiveJourney) {
-            setViewCentre(null);
-            setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+    const tryRoutingStart = (index: number): void => {
+      const routingStart = routingStarts[index] ?? requestedStart;
+      controller.calculate({
+        pack,
+        start: routingStart,
+        destination,
+        options: {
+          clearanceMetres: warningConfig.distanceMetres,
+          cruiseSpeedKnots,
+          speedWarningEnabled: warningConfig.speedWarningEnabled,
+          nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
+          startAccuracyMetres: gpsStart ? fix?.accuracy : undefined,
+          conditionalPassagesEnabled,
+        },
+      }, {
+        onResult: (result) => {
+          if (result.failure === "no-route" && index + 1 < routingStarts.length) {
+            tryRoutingStart(index + 1);
+            return;
           }
-        }
-      },
-      onError: () => {
-        setRoute(null);
-        setFailure("calculation-failed");
-        setPlanning(false);
-        setStartingJourney(false);
-      },
-    });
+          setRoute(result.route ?? null);
+          setFailure(result.failure ?? null);
+          plannedFrom.current = requestedStart;
+          setJourneyProgressMetres(0);
+          setPlanning(false);
+          setStartingJourney(false);
+          if (activateJourney && result.route) {
+            setJourneyState("active");
+            setStartMode("gps");
+            if (!wasActiveJourney) {
+              setViewCentre(null);
+              setViewRangeMetres(getActiveRouteViewRange(proximityRangeMetres, warningConfig.distanceMetres));
+            }
+          }
+        },
+        onError: () => {
+          setRoute(null);
+          setFailure("calculation-failed");
+          setPlanning(false);
+          setStartingJourney(false);
+        },
+      });
+    };
+    tryRoutingStart(0);
   }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, journeyState, pack, proximityRangeMetres, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const fitRoute = useCallback((start = effectiveStart, destination = target) => {
@@ -796,7 +804,6 @@ export default function RoutePlanner({
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    setMapInteracting(true);
     event.currentTarget.setPointerCapture(event.pointerId);
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     beginGesture(event.currentTarget);
@@ -860,7 +867,6 @@ export default function RoutePlanner({
     if (activePointers.current.size > 0) beginGesture(event.currentTarget, pendingMapView.current ?? { centre: mapCentre, range: viewRangeMetres });
     else {
       mapGesture.current = null;
-      setMapInteracting(false);
     }
   };
 
@@ -870,7 +876,6 @@ export default function RoutePlanner({
     if (activePointers.current.size > 0) beginGesture(event.currentTarget, pendingMapView.current ?? { centre: mapCentre, range: viewRangeMetres });
     else {
       mapGesture.current = null;
-      setMapInteracting(false);
     }
   };
 
@@ -1101,7 +1106,7 @@ export default function RoutePlanner({
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${boatRotationDegrees})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
-        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} mapView={{ centre: mapCentre, rangeMetres: viewRangeMetres }} paused={mapInteracting} />
+        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
         {activeJourney && <div className="summary-primary-row distance-map-overlay route-live-map-overlay">
           <div className="distance-readout route-live-distance">
             <span>{copy.nearestShore}</span>

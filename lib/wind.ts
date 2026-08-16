@@ -159,8 +159,8 @@ export function windFlowAngleRadians(directionDegrees: number) {
 export function windFlowSpeedPixelsPerSecond(speedKnots: number, gustKnots = speedKnots) {
   const sustained = Math.max(0, speedKnots);
   const gustLift = Math.max(0, gustKnots - sustained) * .45;
-  if (sustained < 1) return 0;
-  return Math.min(105, 16 + sustained * 2.6 + gustLift);
+  if (sustained < .05 && gustKnots < .05) return 0;
+  return Math.min(105, 14 + sustained * 2.6 + gustLift);
 }
 
 export function windCompassLabel(directionDegrees: number, language: "de" | "en") {

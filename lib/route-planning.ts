@@ -40,6 +40,7 @@ export type RoutePlanningResult = { route: PlannedRoute; failure?: never } | { r
 const METRES_PER_LATITUDE_DEGREE = 110_540;
 const KNOTS_TO_METRES_PER_SECOND = 0.514444;
 const MAXIMUM_ROUTE_VALIDATION_SPACING_METRES = 40;
+const MAXIMUM_FINE_ROUTE_GRID_NODES = 260_000;
 export const ROUTE_CLEARANCE_MARGIN_METRES = 50;
 
 export function getPreferredRouteClearanceMetres(clearanceMetres: number) {
@@ -936,9 +937,10 @@ export function planWaterRoute(
   if (!coarseBest
     || coarseBest.route.distanceMetres > directDistance * 2.25
     || coarseBest.route.minimumShoreDistanceMetres < preferredClearance + ROUTE_CLEARANCE_MARGIN_METRES) {
+    const fineGridNodeLimit = coarseBest ? 85_000 : MAXIMUM_FINE_ROUTE_GRID_NODES;
     for (const { margin, width, height, resolutions } of searchAreas) {
       const fine = resolutions.at(-1) as number;
-      if (fine === resolutions[0] || width * height / (fine * fine) > 85_000) continue;
+      if (fine === resolutions[0] || width * height / (fine * fine) > fineGridNodeLimit) continue;
       consider(search(margin, fine, false));
       consider(search(margin, fine, true));
       const best = bestMeasuredCandidate();

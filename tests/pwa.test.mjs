@@ -71,7 +71,7 @@ test("service worker precaches the complete install shell", async () => {
 
 test("service worker rotates caches and provides offline navigation fallback", async () => {
   const serviceWorker = await readFile("public/sw.js", "utf8");
-  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v37"/);
+  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v38"/);
   assert.match(serviceWorker, /OFFLINE_CACHE_PREFIX\s*=\s*"shoreline-watch-offline-"/);
   assert.match(serviceWorker, /key !== CACHE_NAME && !key\.startsWith\(OFFLINE_CACHE_PREFIX\)/);
   assert.match(serviceWorker, /event\.request\.mode === "navigate"/);
