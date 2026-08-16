@@ -18,7 +18,7 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !visible || !sampleRef.current) return;
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { alpha: true, desynchronized: true });
     if (!context) return;
     const motionQuery = matchMedia("(prefers-reduced-motion: reduce)");
     let reducedMotion = motionQuery.matches;
@@ -35,13 +35,26 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
     let normalColour = "rgba(112,238,214,.9)";
     let strongColour = "rgba(255,203,92,.92)";
     let dangerColour = "rgba(255,100,82,.94)";
+    let pixelRatio = 1;
+    let resizeFrame: number | null = null;
+
+    const clearCanvas = () => {
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.restore();
+    };
 
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
-      const ratio = Math.min(2, devicePixelRatio || 1);
-      canvas.width = Math.max(1, Math.round(bounds.width * ratio));
-      canvas.height = Math.max(1, Math.round(bounds.height * ratio));
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      pixelRatio = Math.min(1.5, devicePixelRatio || 1);
+      const nextWidth = Math.max(1, Math.round(bounds.width * pixelRatio));
+      const nextHeight = Math.max(1, Math.round(bounds.height * pixelRatio));
+      if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+        canvas.width = nextWidth;
+        canvas.height = nextHeight;
+      }
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       const styles = getComputedStyle(canvas);
       normalColour = styles.getPropertyValue("--wind-flow-colour").trim() || normalColour;
       strongColour = styles.getPropertyValue("--wind-flow-strong-colour").trim() || strongColour;
@@ -57,7 +70,8 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
       const speed = windFlowSpeedPixelsPerSecond(activeSample.speedKnots, activeSample.gustKnots);
       const elapsedSeconds = lastFrameAt && frameAt ? Math.min(.05, Math.max(0, (frameAt - lastFrameAt) / 1_000)) : 0;
       lastFrameAt = frameAt;
-      context.clearRect(0, 0, width, height);
+      clearCanvas();
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.lineWidth = 2.2;
       context.lineCap = "round";
       context.strokeStyle = activeSample.gustKnots >= 28 || activeSample.speedKnots >= 22 ? dangerColour : activeSample.gustKnots >= 18 || activeSample.speedKnots >= 12 ? strongColour : normalColour;
@@ -102,12 +116,24 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
       else frameLoop.start();
     };
 
+    const scheduleResize = () => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        resize();
+        lastFrameAt = 0;
+        draw();
+      });
+    };
     const handleMotionChange = () => { reducedMotion = motionQuery.matches; start(); };
-    const handleVisibilityChange = () => start();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") scheduleResize();
+      start();
+    };
 
     resize();
     start();
-    const observer = new ResizeObserver(() => { resize(); if (reducedMotion) draw(); });
+    const observer = new ResizeObserver(scheduleResize);
     observer.observe(canvas);
     const viewportObserver = new IntersectionObserver(([entry]) => {
       inViewport = entry?.isIntersecting ?? false;
@@ -119,11 +145,12 @@ export default function WindOverlay({ sample, visible, mapRotationDegrees = 0 }:
     return () => {
       stopped = true;
       frameLoop.stop();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       observer.disconnect();
       viewportObserver.disconnect();
       motionQuery.removeEventListener("change", handleMotionChange);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      context.clearRect(0, 0, canvas.width, canvas.height);
+      clearCanvas();
     };
   }, [hasSample, visible]);
 
