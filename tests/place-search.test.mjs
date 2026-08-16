@@ -11,6 +11,7 @@ import {
   normalizePlaceSearchText,
   parsePhotonPlaceSearchPayload,
   resolveNearestNavigableWater,
+  resolveNavigableWaterCandidates,
   resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
 } from "../lib/place-search.ts";
@@ -138,6 +139,31 @@ test("a Jezera land start still connects to a longer southbound water route", as
   });
   assert.ok(result.route, result.failure);
   assert.ok(result.route.distanceMetres > 8_000);
+});
+
+test("a longer land start retries the nearest shoreline exits until one connects", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const requestedStart = { latitude: 43.7608, longitude: 15.7782 };
+  const destination = { latitude: 43.72, longitude: 15.825 };
+  const candidates = resolveNavigableWaterCandidates(coastline, requestedStart);
+
+  assert.equal(isPointOnLand(coastline, requestedStart.longitude, requestedStart.latitude), true);
+  assert.ok(candidates.length > 1);
+  assert.ok(geoDistanceMetres(requestedStart, candidates[0]) <= geoDistanceMetres(requestedStart, candidates.at(-1)));
+  assert.equal(planWaterRoute(coastline, candidates[0], destination, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  }).failure, "no-route", "the first small bay must reproduce the distance-dependent failure");
+
+  const connected = candidates.map((start) => planWaterRoute(coastline, start, destination, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  })).find((result) => result.route);
+  assert.ok(connected?.route, connected?.failure);
 });
 
 test("an island target uses the water-facing side nearest the route start", async () => {

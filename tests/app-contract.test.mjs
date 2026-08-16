@@ -221,11 +221,13 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind && trackerTab === "distance" && !powerSaveReason\}/);
   assert.match(app, /windReloadSequence/);
   assert.match(app, /windUnavailable/);
-  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} mapView=\{\{ centre: mapCentre, rangeMetres: viewRangeMetres \}\} paused=\{mapInteracting\} \/>/);
+  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
+  assert.doesNotMatch(planner, /paused=\{mapInteracting\}|mapView=\{\{ centre: mapCentre/);
   assert.match(overlay, /requestAnimationFrame\(callback\)/);
   assert.match(overlay, /document\.visibilityState !== "visible"/);
   assert.match(overlay, /new IntersectionObserver/);
   assert.match(overlay, /createAnimationFrameLoop/);
+  assert.doesNotMatch(overlay, /pausedRef|pausedRef\.current/);
   assert.match(overlay, /motionQuery\.addEventListener\("change"/);
   assert.match(overlay, /context\.setTransform\(1, 0, 0, 1, 0, 0\)/);
   assert.match(overlay, /getWindCanvasSize\(bounds\.width, bounds\.height, devicePixelRatio\)/);
@@ -449,8 +451,10 @@ test("route map controls are bounded and can edit either route point", async () 
 
 test("route planning snaps land starts to navigable water before using the worker", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const routingStart = resolveNearestNavigableWater\(pack, requestedStart\)/);
+  assert.match(planner, /const routingStarts = resolveNavigableWaterCandidates\(pack, requestedStart\)/);
   assert.match(planner, /start: routingStart/);
+  assert.match(planner, /result\.failure === "no-route" && index \+ 1 < routingStarts\.length/);
+  assert.match(planner, /tryRoutingStart\(index \+ 1\)/);
   assert.match(planner, /const navigableStart = resolveNearestNavigableWater\(pack, start\)/);
 });
 
@@ -620,7 +624,7 @@ test("route planning copy covers German and English instructions and every failu
   assert.match(planner, /de:\s*\{[\s\S]*title: "Routenplanung"/);
   assert.match(planner, /en:\s*\{[\s\S]*title: "Route planning"/);
   for (const failure of ["outside-region", "destination-on-land", "too-far", "no-route"]) {
-    assert.equal((planner.match(new RegExp(`"${failure}"`, "g")) ?? []).length, 2, failure);
+    assert.ok((planner.match(new RegExp(`"${failure}"`, "g")) ?? []).length >= 2, failure);
   }
   assert.doesNotMatch(planner, /Keine durchgehende Wasserroute gefunden\. Ziel oder Zoom ändern/);
   assert.doesNotMatch(planner, /No continuous water route found\. Change the target or zoom/);

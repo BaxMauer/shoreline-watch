@@ -168,19 +168,19 @@ export function resolvePlaceSearchTarget(
   return resolveNearestNavigableWater(pack, original, offset, offset);
 }
 
-export function resolveNearestNavigableWater(
+export function resolveNavigableWaterCandidates(
   pack: CoastlinePack | null,
   point: GeoPoint,
   waterOffsetMetres = PLACE_TARGET_WATER_OFFSET_METRES,
   minimumShoreClearanceMetres = ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES,
-): GeoPoint {
+): GeoPoint[] {
   const original = { latitude: point.latitude, longitude: point.longitude };
-  if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return original;
+  if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return [original];
 
   const offset = Math.max(4, Math.min(40, waterOffsetMetres));
 
   const shore = findNearestShore(pack, original.longitude, original.latitude);
-  if (!shore) return original;
+  if (!shore) return [original];
 
   const minimumClearance = Math.max(offset, Math.min(100, minimumShoreClearanceMetres));
   const distances = [offset, offset * 2, offset * 4, 50, 75, 100];
@@ -194,10 +194,10 @@ export function resolveNearestNavigableWater(
     for (const distance of [...new Set(distances)].sort((left, right) => left - right)) {
       for (const bearingOffset of bearingOffsets) {
         const candidate = offsetFromShore(shore, shore.bearing + bearingOffset, distance);
-        if (!isPointOnLand(pack, candidate.longitude, candidate.latitude)) return candidate;
+        if (!isPointOnLand(pack, candidate.longitude, candidate.latitude)) return [candidate];
       }
     }
-    return original;
+    return [original];
   }
 
   const waterCandidates: Array<{ point: GeoPoint; distance: number; shoreDistance: number }> = [];
@@ -217,14 +217,41 @@ export function resolveNearestNavigableWater(
 
   const byNearestWater = (left: typeof waterCandidates[number], right: typeof waterCandidates[number]) => left.distance - right.distance
     || right.shoreDistance - left.shoreDistance;
-  const openCandidates = waterCandidates
+  const routingReady = waterCandidates
     .filter((candidate) => candidate.shoreDistance + .5 >= minimumClearance)
     .sort(byNearestWater);
-  const routingReady = openCandidates[0];
-  if (routingReady) return routingReady.point;
+  const ranked = routingReady.length > 0 ? routingReady : waterCandidates.sort(byNearestWater);
+  if (ranked.length === 0) return [original];
 
-  const nearestOpenWater = waterCandidates.sort(byNearestWater).find((candidate) => !waterLooksEnclosed(pack, candidate.point));
-  return nearestOpenWater?.point ?? waterCandidates[0]?.point ?? original;
+  // Retain the closest valid water point first, then add the closest option
+  // in every direction. The planner can retry another nearby shoreline exit
+  // when a long route's coarse grid cannot connect the first small bay.
+  const selected = [ranked[0]];
+  const directionalNearest = new Map<number, typeof ranked[number]>();
+  const directionalFarthest = new Map<number, typeof ranked[number]>();
+  for (const candidate of ranked) {
+    const sector = Math.round(bearingBetween(original, candidate.point) / 45) % 8;
+    const nearest = directionalNearest.get(sector);
+    const farthest = directionalFarthest.get(sector);
+    if (!nearest || byNearestWater(candidate, nearest) < 0) directionalNearest.set(sector, candidate);
+    if (!farthest || candidate.distance > farthest.distance) directionalFarthest.set(sector, candidate);
+  }
+  const alternatives = [...directionalNearest.values(), ...directionalFarthest.values()].sort(byNearestWater);
+  for (const candidate of alternatives) {
+    if (selected.some((current) => pointDistanceMetres(current.point, candidate.point) < 2)) continue;
+    selected.push(candidate);
+  }
+  return selected.slice(0, 12).map((candidate) => candidate.point);
+}
+
+export function resolveNearestNavigableWater(
+  pack: CoastlinePack | null,
+  point: GeoPoint,
+  waterOffsetMetres = PLACE_TARGET_WATER_OFFSET_METRES,
+  minimumShoreClearanceMetres = ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES,
+): GeoPoint {
+  return resolveNavigableWaterCandidates(pack, point, waterOffsetMetres, minimumShoreClearanceMetres)[0]
+    ?? { latitude: point.latitude, longitude: point.longitude };
 }
 
 const COASTAL_PLACES: PlaceSearchResult[] = [

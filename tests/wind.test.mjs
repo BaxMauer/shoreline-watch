@@ -78,6 +78,8 @@ test("offline wind never crosses a location cell", () => {
 
 test("wind flow is calm-aware and gust-responsive", () => {
   assert.equal(windFlowSpeedPixelsPerSecond(0, 0), 0);
+  assert.equal(windFlowSpeedPixelsPerSecond(.04, .04), 0);
+  assert.ok(windFlowSpeedPixelsPerSecond(.6, .8) > 0, "a value displayed as 1 kn must visibly animate");
   assert.ok(windFlowSpeedPixelsPerSecond(12, 26) > windFlowSpeedPixelsPerSecond(12, 12));
 });
 
