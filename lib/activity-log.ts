@@ -2,6 +2,16 @@ import { geoDistanceMetres, type GeoPoint } from "./route-planning.ts";
 
 export const ACTIVITY_LOG_STORAGE_KEY = "shoreline-activity-log-v1";
 export const MAX_ACTIVITY_RECORDS = 200;
+export const AUTOMATIC_TRIP_RULES = {
+  minimumDurationMs: 90_000,
+  minimumDistanceMetres: 150,
+  minimumMovingDurationMs: 45_000,
+  minimumConfirmedMovementMs: 30_000,
+  minimumUnderwaySpeedKnots: 1.5,
+  minimumDisplacementMetres: 75,
+  minimumLoopDistanceMetres: 350,
+  minimumTrackPointCount: 5,
+} as const;
 
 export type ActivityPoint = GeoPoint & { timestamp: number; accuracy: number; speedKnots: number | null };
 
@@ -12,6 +22,7 @@ export type TripDraft = {
   lastPoint: ActivityPoint | null;
   distanceMetres: number;
   movingDurationMs: number;
+  confirmedMovementMs: number;
   speedTotalKnots: number;
   speedSamples: number;
   maxSpeedKnots: number;
@@ -64,6 +75,7 @@ export function createTripDraft(startedAt = Date.now()): TripDraft {
     lastPoint: null,
     distanceMetres: 0,
     movingDurationMs: 0,
+    confirmedMovementMs: 0,
     speedTotalKnots: 0,
     speedSamples: 0,
     maxSpeedKnots: 0,
@@ -96,12 +108,16 @@ export function updateTripDraft(
     && point.accuracy <= 100
     && draft.lastPoint!.accuracy <= 100
     && segmentMetres / (elapsedMs / 1_000) <= 45;
+  const confirmedMovementMs = Number.isFinite(draft.confirmedMovementMs) ? draft.confirmedMovementMs : 0;
   return {
     ...draft,
     firstPoint: draft.firstPoint ?? { latitude: point.latitude, longitude: point.longitude },
     lastPoint: point,
     distanceMetres: draft.distanceMetres + (plausibleSegment ? segmentMetres : 0),
     movingDurationMs: draft.movingDurationMs + (plausibleSegment && (speedKnots ?? 0) >= 0.5 ? elapsedMs : 0),
+    confirmedMovementMs: confirmedMovementMs + (plausibleSegment && (speedKnots ?? 0) >= AUTOMATIC_TRIP_RULES.minimumUnderwaySpeedKnots
+      ? Math.min(elapsedMs, 15_000)
+      : 0),
     speedTotalKnots: draft.speedTotalKnots + (speedKnots ?? 0),
     speedSamples: draft.speedSamples + (speedKnots === null ? 0 : 1),
     maxSpeedKnots: Math.max(draft.maxSpeedKnots, speedKnots ?? 0),
@@ -110,12 +126,36 @@ export function updateTripDraft(
   };
 }
 
+export function isMeaningfulTripDraft(draft: TripDraft, endedAt = Date.now()) {
+  if (!draft.firstPoint || !draft.lastPoint) return false;
+  const durationMs = Math.max(0, endedAt - draft.startedAt);
+  const displacementMetres = geoDistanceMetres(draft.firstPoint, draft.lastPoint);
+  const averageSpeedKnots = draft.speedSamples > 0 ? draft.speedTotalKnots / draft.speedSamples : 0;
+  const confirmedMovementMs = Number.isFinite(draft.confirmedMovementMs)
+    ? draft.confirmedMovementMs
+    : (averageSpeedKnots >= AUTOMATIC_TRIP_RULES.minimumUnderwaySpeedKnots ? draft.movingDurationMs : 0);
+  const hasCoordinateOnlyMotion = draft.speedSamples === 0
+    && draft.distanceMetres >= 250
+    && displacementMetres >= 150;
+  const hasMovementDuration = draft.movingDurationMs >= AUTOMATIC_TRIP_RULES.minimumMovingDurationMs
+    || (draft.speedSamples === 0 && durationMs >= 120_000);
+  const hasMeaningfulRoute = displacementMetres >= AUTOMATIC_TRIP_RULES.minimumDisplacementMetres
+    || draft.distanceMetres >= AUTOMATIC_TRIP_RULES.minimumLoopDistanceMetres;
+
+  return durationMs >= AUTOMATIC_TRIP_RULES.minimumDurationMs
+    && draft.distanceMetres >= AUTOMATIC_TRIP_RULES.minimumDistanceMetres
+    && draft.trackPointCount >= AUTOMATIC_TRIP_RULES.minimumTrackPointCount
+    && hasMovementDuration
+    && hasMeaningfulRoute
+    && (confirmedMovementMs >= AUTOMATIC_TRIP_RULES.minimumConfirmedMovementMs || hasCoordinateOnlyMotion);
+}
+
 export function finishTripDraft(
   draft: TripDraft,
   endedAt = Date.now(),
   labels: { startLabel?: string | null; endLabel?: string | null } = {},
 ): TripActivity | null {
-  if (!draft.firstPoint && endedAt - draft.startedAt < 10_000) return null;
+  if (!isMeaningfulTripDraft(draft, endedAt)) return null;
   return {
     id: draft.id,
     kind: "trip",
