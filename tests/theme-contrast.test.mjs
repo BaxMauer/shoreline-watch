@@ -170,11 +170,13 @@ test("active route view becomes a distance-first navigation cockpit", () => {
   assert.match(css, /\.route-live-footer small\s*\{[^}]*text-transform:\s*uppercase/s);
   assert.match(css, /\.route-warning-ring\s*\{[^}]*stroke-dasharray:[^}]*vector-effect:\s*non-scaling-stroke/s);
   assert.match(css, /\.route-live-proximity\.danger \.route-warning-ring\s*\{[^}]*var\(--danger\)[^}]*ring-breathe/s);
-  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*auto[^}]*aspect-ratio:\s*1 \/ 1/s);
+  assert.match(css, /\.journey-active, \.journey-arrived\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.journey-active \.route-map-wrap, \.journey-arrived \.route-map-wrap\s*\{[^}]*height:\s*100%[^}]*aspect-ratio:\s*auto/s);
+  assert.match(css, /\.route-live-map-overlay\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*pointer-events:\s*none/s);
   assert.match(css, /\.route-static-map\s*\{[^}]*will-change:\s*transform/s);
   assert.doesNotMatch(css, /\.route-live-(?:distance|guidance|go-no-go)\s*\{[^}]*position:\s*absolute/s);
   assert.doesNotMatch(css, /\.journey-(?:active|arrived) \.map-feature-label[^}]*display:\s*none/s);
-  assert.match(css, /\.journey-active \.route-screen-header, \.journey-arrived \.route-screen-header\s*\{[^}]*display:\s*none/s);
+  assert.match(css, /\.journey-active \.route-screen-header, \.journey-arrived \.route-screen-header\s*\{[^}]*min-height:\s*58px[^}]*backdrop-filter:\s*blur\(12px\)/s);
 });
 
 test("route map declares touch panning and strong focus affordances", () => {

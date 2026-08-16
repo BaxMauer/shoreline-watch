@@ -958,20 +958,9 @@ export default function RoutePlanner({
   return (
     <section ref={routePlanner} className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <header className="route-screen-header">
-        <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : copy.following}</small></span>
+        <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : `${copy.following} · ${copy.progress} ${Math.round(progressPercent)}%`}</small></span>
         <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
       </header>
-
-      {activeJourney && <div className="route-live-cockpit">
-        <div className="route-live-distance" aria-live="polite">
-          <small>{copy.nearestShore}</small>
-          <span><strong>{activeDistanceValue}</strong><em>{activeDistanceUnit}</em></span>
-        </div>
-        <div className={`route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
-          <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
-          <b>{activeGoNoGoLabel}</b>
-        </div>
-      </div>}
 
       {journeyState === "planning" && <div className="route-place-search">
         <form onSubmit={(event) => { event.preventDefault(); void runPlaceSearch(); }} role="search">
@@ -1031,6 +1020,26 @@ export default function RoutePlanner({
           </svg>
         </div>
         <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
+        {activeJourney && <div className="route-live-map-overlay">
+          {route && <div className="route-live-map-top">
+            <div className="route-live-guidance" aria-live="polite">
+              <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
+              <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
+              <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
+            </div>
+            <div className={`route-clearance-chip ${route.mode}`}>{copy.clearance}: <strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></div>
+          </div>}
+          <div className="route-live-cockpit">
+            <div className="route-live-distance" aria-live="polite">
+              <small>{copy.nearestShore}</small>
+              <span><strong>{activeDistanceValue}</strong><em>{activeDistanceUnit}</em></span>
+            </div>
+            <div className={`route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+              <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+              <b>{activeGoNoGoLabel}</b>
+            </div>
+          </div>
+        </div>}
         {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
           <button type="button" className={mapEditMode === "start" ? "active" : ""} onClick={() => setMapEditMode("start")}><b>A</b>{copy.start}</button>
           <button type="button" className={mapEditMode === "target" ? "active" : ""} onClick={() => setMapEditMode("target")}><b>B</b>{copy.target}</button>
@@ -1051,16 +1060,11 @@ export default function RoutePlanner({
         <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}{showWind && windSample ? " · Wind: Open-Meteo" : ""}</div>
       </div>
 
-      {activeJourney && route && <div className="route-live-guidance" aria-live="polite">
-        <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
-        <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
-        <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
-      </div>}
-
       {activeJourney && <div className="route-live-footer" aria-live="polite">
         <span className={`${currentDepthState} ${liveShallow ? "shallow" : ""}`}><small>{liveShallow ? copy.shallow : copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay} m` : "—"}</strong></span>
         <span><small>GPS</small><strong>±{gpsAccuracyLabel} m</strong></span>
         <span><small>{copy.currentSpeed}</small><strong>{speedKnots === null ? "—" : `${speedKnots.toFixed(1)} kn`}</strong></span>
+        {route && <button className={journeyState === "arrived" ? "route-finish-trip" : "route-end-trip"} type="button" onClick={endJourney}>{journeyState === "arrived" ? copy.finishJourney : copy.endJourney}</button>}
       </div>}
 
       {journeyState === "planning" && <details ref={routeEditor} className="route-panel route-editor">
@@ -1089,7 +1093,7 @@ export default function RoutePlanner({
         </div>
       </details>}
 
-      {(planning || failure || route) && <div className="route-summary" aria-live="polite">
+      {journeyState === "planning" && (planning || failure || route) && <div className="route-summary" aria-live="polite">
         {planning ? <p className="route-message">{startingJourney ? copy.startingJourney : copy.calculating}</p> : failure ? <p className="route-message error">{copy.failures[failure]}</p> : route ? (
           <>
             {journeyState === "planning" && <div className="route-metrics">
@@ -1097,8 +1101,6 @@ export default function RoutePlanner({
               <span><small>{copy.eta}</small><strong>{formatRouteEta(route.estimatedSeconds, copy.minutes)}</strong></span>
               <span><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
             </div>}
-            {(journeyState === "active" || journeyState === "arrived") && <div className="route-progress"><span style={{ width: `${progressPercent}%` }} /><small>{copy.progress} {Math.round(progressPercent)}%</small></div>}
-            {(journeyState === "active" || journeyState === "arrived") && <div className={`route-clearance-chip ${route.mode}`}>{copy.clearance}: <strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></div>}
             {routeNoticeCount > 0 && <details className="route-notices">
               <summary><span role="alert">{copy.routeNotes}</span><b>{copy.routeNoteCount(routeNoticeCount)}</b></summary>
               <div>{route.mode === "restricted" && <p className="route-detail restricted">{copy.restrictedDetail(warningConfig.distanceMetres)}</p>}{route.passageIds.includes("tisno-murter-bridge") && <p className="route-passage-warning" role="alert">{copy.tisnoPassage}</p>}</div>
@@ -1107,9 +1109,9 @@ export default function RoutePlanner({
         ) : <p className="route-message">{copy.subtitle}</p>}
       </div>}
 
-      {route && <div className="route-trip-actions">
-        {journeyState === "planning" ? <button className="route-start-trip" type="button" disabled={!gpsReliable || planning} onClick={startJourney}>{copy.startJourney}</button> : <button className={journeyState === "arrived" ? "route-finish-trip" : "route-end-trip"} type="button" onClick={endJourney}>{journeyState === "arrived" ? copy.finishJourney : copy.endJourney}</button>}
-        {journeyState === "planning" && !gpsReliable && <small>{copy.liveGpsNeeded}</small>}
+      {route && journeyState === "planning" && <div className="route-trip-actions">
+        <button className="route-start-trip" type="button" disabled={!gpsReliable || planning} onClick={startJourney}>{copy.startJourney}</button>
+        {!gpsReliable && <small>{copy.liveGpsNeeded}</small>}
       </div>}
 
       {journeyState === "planning" && <details className="route-panel route-options">
