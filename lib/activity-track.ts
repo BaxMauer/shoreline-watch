@@ -48,15 +48,15 @@ export function shouldStoreTrackPoint(previous: TripTrackPoint | null, next: Tri
   if (!previous) return true;
   const elapsedMs = next.timestamp - previous.timestamp;
   if (elapsedMs <= 0) return false;
-  if (elapsedMs >= 30_000) return true;
+  if (elapsedMs >= 5_000) return true;
   if (elapsedMs < 2_000) return false;
   const distanceMetres = geoDistanceMetres(previous, next);
   if (distanceMetres >= Math.max(6, Math.min(20, next.accuracy * 0.7))) return true;
-  if (elapsedMs >= 5_000 && distanceMetres >= 3 && headingDelta(previous.heading, next.heading) >= 12) return true;
+  if (distanceMetres >= 3 && headingDelta(previous.heading, next.heading) >= 12) return true;
   const speedDelta = finite(previous.speedKnots) && finite(next.speedKnots)
     ? Math.abs((next.speedKnots as number) - (previous.speedKnots as number))
     : 0;
-  return elapsedMs >= 5_000 && speedDelta >= 1;
+  return speedDelta >= 1;
 }
 
 function openTrackDatabase() {

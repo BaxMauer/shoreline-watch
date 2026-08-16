@@ -28,8 +28,9 @@ test("track sampling records the first fix and rejects weak or duplicate GPS fix
 test("track sampling keeps meaningful movement, course changes, and stationary breadcrumbs", () => {
   const first = point();
   assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 7_000, latitude: 43.8001 })), true);
-  assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 7_000, latitude: 43.80003, heading: 120 })), true);
-  assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 31_000 })), true);
+  assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 4_000, latitude: 43.80003, heading: 120 })), true);
+  assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 6_000 })), true);
+  assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 5_999 })), false);
   assert.equal(shouldStoreTrackPoint(first, point({ timestamp: 2_000, latitude: 43.8001 })), false);
 });
 

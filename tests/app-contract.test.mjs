@@ -161,6 +161,11 @@ test("activity log is local, bounded, and available during and outside tracking"
   assert.match(app, /getAnchorPlace\(mapFeaturePack, fix\)/);
   assert.match(app, /mode !== "live" \|\| !fix \|\| !currentTrip\.current/);
   assert.match(app, /saveTripTrackPoint\(trackPoint\)/);
+  assert.match(app, /PENDING_TRACK_POINT_STORAGE_KEY/);
+  assert.match(app, /addEventListener\("pagehide", persistActiveTrip\)/);
+  assert.match(app, /localStorage\.setItem\(ACTIVITY_LOG_STORAGE_KEY, JSON\.stringify\(restoredActivities\)\)/);
+  assert.match(app, /const storeActivityRecord = useCallback/);
+  assert.match(app, /localStorage\.setItem\(ACTIVITY_LOG_STORAGE_KEY, JSON\.stringify\(nextRecords\)\)/);
   assert.doesNotMatch(app.match(/useEffect\(\(\) => \{[\s\S]*?saveTripTrackPoint\(trackPoint\)[\s\S]*?\}, \[[^\]]+\]\);/)?.[0] ?? "", /trackerTab|route/);
   assert.match(tracks, /indexedDB\.open\(DATABASE_NAME, DATABASE_VERSION\)/);
   assert.match(tracks, /createIndex\("tripId", "tripId"/);
