@@ -958,8 +958,16 @@ export default function RoutePlanner({
   return (
     <section ref={routePlanner} className={`route-planner journey-${journeyState}`} aria-label={copy.title}>
       <header className="route-screen-header">
-        <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : `${copy.following} · ${copy.progress} ${Math.round(progressPercent)}%`}</small></span>
-        <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
+        <div className="route-screen-heading">
+          <span><strong>{activeJourney ? copy.navigation : copy.title}</strong><small>{journeyState === "planning" ? mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget : `${copy.following} · ${copy.progress} ${Math.round(progressPercent)}%`}</small></span>
+          <span className={`route-state ${routeStateClass}`}>{routeStateLabel}</span>
+        </div>
+        {activeJourney && route && <div className="route-live-guidance" aria-live="polite">
+          <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
+          <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
+          <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
+          <span className={`clearance ${route.mode}`}><small>{copy.clearance}</small><strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></span>
+        </div>}
       </header>
 
       {journeyState === "planning" && <div className="route-place-search">
@@ -1020,24 +1028,14 @@ export default function RoutePlanner({
           </svg>
         </div>
         <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
-        {activeJourney && <div className="route-live-map-overlay">
-          {route && <div className="route-live-map-top">
-            <div className="route-live-guidance" aria-live="polite">
-              <span className="bearing"><small>{copy.bearing}</small><strong>{nextBearing === null ? "—" : `${Math.round(nextBearing).toString().padStart(3, "0")}°`}</strong></span>
-              <span><small>{copy.remaining}</small><strong>{formatRouteDistance(remainingMetres).toFixed(1)} {copy.nauticalMiles}</strong></span>
-              <span><small>{copy.remainingEta}</small><strong>{formatRouteEta(remainingSeconds, copy.minutes)}</strong></span>
-            </div>
-            <div className={`route-clearance-chip ${route.mode}`}>{copy.clearance}: <strong>{formatRouteClearance(route.minimumShoreDistanceMetres)}</strong></div>
-          </div>}
-          <div className="route-live-cockpit">
-            <div className="route-live-distance" aria-live="polite">
-              <small>{copy.nearestShore}</small>
-              <span><strong>{activeDistanceValue}</strong><em>{activeDistanceUnit}</em></span>
-            </div>
-            <div className={`route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
-              <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
-              <b>{activeGoNoGoLabel}</b>
-            </div>
+        {activeJourney && <div className="summary-primary-row distance-map-overlay route-live-map-overlay">
+          <div className="distance-readout route-live-distance" aria-live="polite">
+            <span>{copy.nearestShore}</span>
+            <span className="distance-value"><strong>{activeDistanceValue}</strong><small>{activeDistanceUnit}</small></span>
+          </div>
+          <div className={`go-no-go route-live-go-no-go ${goNoGoState}`} role="status" aria-live="polite">
+            <span aria-hidden="true">{goNoGoState === "go" ? "✓" : goNoGoState === "no-go" ? "×" : "?"}</span>
+            <b>{activeGoNoGoLabel}</b>
           </div>
         </div>}
         {journeyState === "planning" && <div className="route-map-mode" aria-label={copy.pointsPanel}>
@@ -1060,10 +1058,12 @@ export default function RoutePlanner({
         <div className="route-map-credit">© OpenStreetMap contributors{showDepths ? ` · ${EMODNET_BATHYMETRY_ATTRIBUTION}` : ""}{showWind && windSample ? " · Wind: Open-Meteo" : ""}</div>
       </div>
 
-      {activeJourney && <div className="route-live-footer" aria-live="polite">
-        <span className={`${currentDepthState} ${liveShallow ? "shallow" : ""}`}><small>{liveShallow ? copy.shallow : copy.chartDepth}</small><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay} m` : "—"}</strong></span>
-        <span><small>GPS</small><strong>±{gpsAccuracyLabel} m</strong></span>
-        <span><small>{copy.currentSpeed}</small><strong>{speedKnots === null ? "—" : `${speedKnots.toFixed(1)} kn`}</strong></span>
+      {activeJourney && <div className="instrument-footer route-live-footer" aria-live="polite">
+        <div className="instrument-meta route-live-meta">
+          <span className={`${currentDepthState} ${liveShallow ? "shallow" : ""}`}><strong>{currentDepthState === "ready" ? `≈${currentDepthDisplay}` : "—"}</strong> m · {liveShallow ? copy.shallow : copy.chartDepth}</span>
+          <span><strong>±{gpsAccuracyLabel}</strong> m GPS</span>
+          <span><strong>{speedKnots === null ? "—" : speedKnots.toFixed(1)}</strong> kn · {copy.currentSpeed}</span>
+        </div>
         {route && <button className={journeyState === "arrived" ? "route-finish-trip" : "route-end-trip"} type="button" onClick={endJourney}>{journeyState === "arrived" ? copy.finishJourney : copy.endJourney}</button>}
       </div>}
 
