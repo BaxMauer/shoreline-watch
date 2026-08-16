@@ -77,7 +77,7 @@ test("distance and route readiness require fresh GPS at the accuracy threshold",
   assert.match(app, /getGoNoGoState\([\s\S]*gpsReliable,[\s\S]*warningZoneInside/);
   assert.match(app, /gpsIsReliable:\s*gpsReliable/);
   assert.match(app, /gpsNavigationState=\{gpsNavigationState\}/);
-  assert.match(planner, /if \(start === fix && !gpsReliable\) return;/);
+  assert.match(planner, /if \(gpsStart && !gpsReliable\) return;/);
   assert.match(planner, /getRouteReadinessState\(\{/);
   assert.match(planner, /!gpsReliable \|\| !fix \|\| !target \|\| !hasReachedRouteTarget\(fix, target\)/);
 });
@@ -379,7 +379,7 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /clearanceMetres: warningConfig\.distanceMetres/);
   assert.match(planner, /speedWarningEnabled: warningConfig\.speedWarningEnabled/);
   assert.match(planner, /nearShoreSpeedKnots: warningConfig\.maxSpeedKnots/);
-  assert.match(planner, /startAccuracyMetres: start === fix \? fix\?\.accuracy : undefined/);
+  assert.match(planner, /startAccuracyMetres: gpsStart \? fix\?\.accuracy : undefined/);
   assert.match(planner, /route\.mode === "restricted"/);
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
@@ -443,6 +443,22 @@ test("route map controls are bounded and can edit either route point", async () 
   assert.match(planner, /clampMapRange\(value \/ 1\.7\)/);
   assert.match(planner, /clampMapRange\(value \* 1\.7\)/);
   assert.match(planner, /routeViewRangeForTarget\(2_500, start, destination\)/);
+});
+
+test("route planning snaps land starts to navigable water before using the worker", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /const routingStart = resolvePlaceSearchTarget\(pack, requestedStart, undefined, destination\)/);
+  assert.match(planner, /start: routingStart/);
+  assert.match(planner, /const navigableStart = resolvePlaceSearchTarget\(pack, start, undefined, target\)/);
+});
+
+test("navigation makes speed and wind readings easier to scan", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(planner, /className="current-speed-footer"><strong>\{speedKnots/);
+  assert.match(css, /\.wind-map-control b\s*\{[^}]*font-size:\s*\.68rem/s);
+  assert.match(css, /\.route-layer-tools button\.wind\s*\{[^}]*font-size:\s*\.66rem/s);
+  assert.match(css, /\.current-speed-footer strong\s*\{[^}]*font-size:\s*1\.05rem/s);
 });
 
 test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async () => {
