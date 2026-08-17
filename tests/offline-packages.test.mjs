@@ -19,7 +19,7 @@ test("offline packages generate bounded unique EMODnet tiles for zooms 8 through
     const tiles = buildOfflinePackageTiles(pack);
     assert.ok(tiles.length > 100 && tiles.length < 1_100, `${pack.id}: ${tiles.length}`);
     assert.equal(new Set(tiles.map((tile) => tile.key)).size, tiles.length);
-    assert.ok(tiles.every((tile) => /^https:\/\/tiles\.emodnet-bathymetry\.eu\/.+\/web_mercator\/(?:8|9|10|11|12|13|14)\//.test(tile.url)));
+    assert.ok(tiles.every((tile) => /^https:\/\/tiles\.emodnet-bathymetry\.eu\/2020\/baselayer\/web_mercator\/(?:8|9|10|11|12|13|14)\//.test(tile.url)));
   }
 });
 

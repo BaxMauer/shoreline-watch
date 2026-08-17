@@ -896,9 +896,11 @@ button.activity-row-open:focus-visible { outline: 2px solid var(--aqua); outline
 .route-land-area { fill: url(#routeLandHatch); opacity: .96; shape-rendering: crispEdges; }
 .route-land-fill-mark { fill: #c8c4aa; }
 .route-land-hatch-mark { fill: none; stroke: var(--shore-stroke); stroke-width: 1; opacity: .25; vector-effect: non-scaling-stroke; }
+.route-bathymetry-layer { opacity: 0; }
+.route-bathymetry-layer.complete { opacity: 1; }
 .route-depth-tile {
-  opacity: .86;
-  filter: grayscale(1) invert(1) sepia(.72) saturate(2.1) hue-rotate(158deg) brightness(.92) contrast(.8);
+  opacity: .78;
+  filter: none;
   image-rendering: auto;
 }
 .route-coast-layer line { stroke: var(--shore-stroke); stroke-width: 1.05; stroke-linecap: round; opacity: .62; vector-effect: non-scaling-stroke; }
@@ -1086,7 +1088,7 @@ button.activity-row-open:focus-visible { outline: 2px solid var(--aqua); outline
 .sunlight-mode .route-land-fill-mark { fill: #d6d1b8; }
 .sunlight-mode .route-screen-header strong, .sunlight-mode .route-panel > summary strong, .sunlight-mode .route-speed strong, .sunlight-mode .route-speed input, .sunlight-mode .route-metrics strong, .sunlight-mode .route-point-fields strong, .sunlight-mode .route-point-fields input, .sunlight-mode .route-option strong { color: #071b22; }
 .sunlight-mode .route-map-wrap { border-color: rgba(13,77,76,.12); box-shadow: 0 10px 25px rgba(18,62,63,.1); }
-.sunlight-mode .route-depth-tile { filter: grayscale(1) invert(1) sepia(.64) saturate(1.7) hue-rotate(158deg) brightness(1.08) contrast(.76); }
+.sunlight-mode .route-depth-tile { opacity: .72; filter: none; }
 .sunlight-mode .route-place-search form { border-color: rgba(0,87,72,.16); background: rgba(255,255,255,.9); }
 .sunlight-mode .route-place-search input { color: #071b22; }
 .sunlight-mode .route-place-results { border-color: rgba(0,87,72,.15); background: rgba(250,255,253,.98); }

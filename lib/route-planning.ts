@@ -41,6 +41,12 @@ const METRES_PER_LATITUDE_DEGREE = 110_540;
 const KNOTS_TO_METRES_PER_SECOND = 0.514444;
 const MAXIMUM_ROUTE_VALIDATION_SPACING_METRES = 40;
 const MAXIMUM_FINE_ROUTE_GRID_NODES = 260_000;
+
+function estimateRouteGridNodeCount(widthMetres: number, heightMetres: number, cellSizeMetres: number) {
+  const columns = Math.max(3, Math.floor(widthMetres / cellSizeMetres) + 2);
+  const rows = Math.max(3, Math.floor(heightMetres / cellSizeMetres) + 2);
+  return columns * rows;
+}
 export const ROUTE_CLEARANCE_MARGIN_METRES = 50;
 
 export function getPreferredRouteClearanceMetres(clearanceMetres: number) {
@@ -94,11 +100,11 @@ export function getRouteGridResolutions(widthMetres: number, heightMetres: numbe
   const height = Math.max(1, heightMetres);
   const span = Math.max(width, height);
   const clearance = Math.max(0, clearanceMetres);
-  const coarse = Math.max(180, clearance * 0.7, span / 58);
+  const coarse = Math.ceil(Math.max(180, clearance * 0.7, span / 58) / 25) * 25;
   const preferredFine = Math.max(45, Math.min(90, clearance > 0 ? clearance * 0.25 : 45));
   // Keep the refinement bounded on very long routes while allowing roughly
   // 50–90 m cells around islands, marinas, and narrow passages.
-  const boundedFine = Math.max(preferredFine, Math.sqrt(width * height / 260_000));
+  const boundedFine = Math.ceil(Math.max(preferredFine, Math.sqrt(width * height / 260_000)) / 5) * 5;
   return boundedFine < coarse * 0.82 ? [coarse, boundedFine] : [coarse];
 }
 
@@ -542,6 +548,7 @@ export function planWaterRoute(
     cellSize: number,
     allowRestricted: boolean,
     gridPhase: LocalPoint = { x: 0, y: 0 },
+    alignToPack = false,
   ): RouteSearchGeometry | null => {
     const minimumX = Math.max(packWest, Math.min(startLocal.x, destinationLocal.x) - margin);
     const maximumX = Math.min(packEast, Math.max(startLocal.x, destinationLocal.x) + margin);
@@ -550,8 +557,19 @@ export function planWaterRoute(
     // A raster aligned only to one origin can lose a real narrow channel when
     // its centres land on both shores. Alternate half-cell phases are tried
     // below when the primary coarse raster cannot connect the endpoints.
-    const gridMinimumX = Math.max(packWest, minimumX - cellSize * gridPhase.x);
-    const gridMinimumY = Math.max(packSouth, minimumY - cellSize * gridPhase.y);
+    const alignGridMinimumToPack = (minimum: number, packMinimum: number, phase: number) => {
+      const phaseOffset = cellSize * phase;
+      const aligned = packMinimum
+        + Math.floor((minimum - packMinimum - phaseOffset) / cellSize) * cellSize
+        + phaseOffset;
+      return Math.max(packMinimum, aligned);
+    };
+    const gridMinimumX = alignToPack
+      ? alignGridMinimumToPack(minimumX, packWest, gridPhase.x)
+      : Math.max(packWest, minimumX - cellSize * gridPhase.x);
+    const gridMinimumY = alignToPack
+      ? alignGridMinimumToPack(minimumY, packSouth, gridPhase.y)
+      : Math.max(packSouth, minimumY - cellSize * gridPhase.y);
     const width = maximumX - gridMinimumX;
     const height = maximumY - gridMinimumY;
     const columns = Math.max(3, Math.floor(width / cellSize) + 1);
@@ -969,11 +987,11 @@ export function planWaterRoute(
     const fineGridNodeLimit = coarseBest ? 85_000 : MAXIMUM_FINE_ROUTE_GRID_NODES;
     for (const { margin, width, height, resolutions } of searchAreas) {
       const fine = resolutions.at(-1) as number;
-      if (fine === resolutions[0] || width * height / (fine * fine) > fineGridNodeLimit) continue;
+      if (fine === resolutions[0] || estimateRouteGridNodeCount(width, height, fine) > fineGridNodeLimit) continue;
       consider(search(margin, fine, false));
       consider(search(margin, fine, true));
       const best = bestMeasuredCandidate();
-      if (best && best.route.distanceMetres <= directDistance * 1.15) break;
+      if (best && best.route.distanceMetres <= directDistance * 1.35) break;
     }
   }
 
@@ -985,9 +1003,31 @@ export function planWaterRoute(
     ];
     for (const { margin, width, height, resolutions } of searchAreas) {
       const fine = resolutions.at(-1) as number;
-      if (fine === resolutions[0] || width * height / (fine * fine) > MAXIMUM_FINE_ROUTE_GRID_NODES) continue;
+      if (fine === resolutions[0] || estimateRouteGridNodeCount(width, height, fine) > MAXIMUM_FINE_ROUTE_GRID_NODES) continue;
       for (const phase of alternateFinePhases) {
         consider(search(margin, fine, true, phase));
+        if (bestMeasuredCandidate()) break;
+      }
+      if (bestMeasuredCandidate()) break;
+    }
+  }
+
+  // The ordinary raster follows the search bounds so nearby routes retain
+  // their established centre lines. As a final fallback, anchor the same fine
+  // raster to the immutable chart bounds. That makes long-route connectivity
+  // independent of metre-scale GPS jitter or coordinate rounding.
+  if (!bestMeasuredCandidate()) {
+    const stableGridPhases = [
+      { x: 0, y: 0 },
+      { x: .5, y: 0 },
+      { x: 0, y: .5 },
+      { x: .5, y: .5 },
+    ];
+    for (const { margin, width, height, resolutions } of searchAreas) {
+      const fine = resolutions.at(-1) as number;
+      if (estimateRouteGridNodeCount(width, height, fine) > MAXIMUM_FINE_ROUTE_GRID_NODES) continue;
+      for (const phase of stableGridPhases) {
+        consider(search(margin, fine, true, phase, true));
         if (bestMeasuredCandidate()) break;
       }
       if (bestMeasuredCandidate()) break;

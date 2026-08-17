@@ -278,10 +278,16 @@ test("OSM feature catalog loads non-blockingly and labels both map modes", async
   assert.match(app, /<ProximityPlot[\s\S]*mapFeaturePack=\{mapFeaturePack\}/);
   assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, mapCentre, currentMapDataRangeMetres\)\.slice\(0, currentRenderingDetail\.maximumLabels\)/);
   assert.match(planner, /© OpenStreetMap contributors/);
-  const depthLayer = planner.indexOf("className=\"route-bathymetry-layer\"");
+  const depthLayer = planner.indexOf("route-bathymetry-layer");
   const landLayer = planner.indexOf("className=\"route-land-area\"");
   const labelLayer = planner.indexOf("className=\"map-feature-labels\"");
   assert.ok(depthLayer >= 0 && landLayer > depthLayer && labelLayer > landLayer);
+  assert.match(planner, /const showLandFallback = !showDepths \|\| depthStatus !== "ready"/);
+  assert.match(planner, /if \(!pack \|\| !showLandFallback\) return \[\]/);
+  assert.match(planner, /recordBathymetryTileResult\(current, tileKey, "loaded"\)/);
+  assert.match(planner, /recordBathymetryTileResult\(current, tileKey, "failed"\)/);
+  assert.match(planner, /<g key=\{bathymetryKey\} className=\{`route-bathymetry-layer/);
+  assert.match(planner, /route-bathymetry-layer \$\{depthStatus === "ready" \? "complete" : "pending"\}/);
 });
 
 test("active trip map mirrors the distance instrument's clearance geometry", async () => {
@@ -383,22 +389,24 @@ test("route planning applies warning distance and near-shore speed settings", as
   assert.match(planner, /clearanceMetres: warningConfig\.distanceMetres/);
   assert.match(planner, /speedWarningEnabled: warningConfig\.speedWarningEnabled/);
   assert.match(planner, /nearShoreSpeedKnots: warningConfig\.maxSpeedKnots/);
-  assert.match(planner, /startAccuracyMetres: gpsStart \? fix\?\.accuracy : undefined/);
+  assert.match(planner, /const gpsStart = startIsGps/);
+  assert.match(planner, /const startAccuracyMetres = gpsStart \? \(requestedStart as Fix\)\.accuracy \?\? fix\?\.accuracy : undefined/);
+  assert.match(planner, /startAccuracyMetres,/);
   assert.match(planner, /route\.mode === "restricted"/);
   assert.match(planner, /route\?\.mode === "restricted"/);
 });
 
 test("place search converts land centroids into navigable water targets", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result, undefined, effectiveStart\)/);
-  assert.match(planner, /selectTarget\(destination\)/);
+  assert.match(planner, /const destination = resolveNavigableDestinationCandidates\(pack, result, effectiveStart\)\[0\]/);
+  assert.match(planner, /selectTarget\(result\)/);
   assert.match(planner, /pendingPlaceTarget\.current = pack \? null : result/);
   assert.match(planner, /setFocusedPlace\(\{ \.\.\.result, \.\.\.destination \}\)/);
 });
 
 test("route destination requires a stationary long press or entered coordinates", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const navigableDestination = resolvePlaceSearchTarget\(pack, destination, undefined, start\)/);
+  assert.match(planner, /const navigableDestination = resolveNavigableDestinationCandidates\(pack, destination, start\)\[0\]/);
   assert.match(planner, /longPressTimer\.current = window\.setTimeout/);
   assert.match(planner, /shouldCommitRouteMapLongPress\(\{/);
   assert.match(planner, /elapsedMs: Date\.now\(\) - activeCandidate\.startedAt/);
@@ -426,7 +434,7 @@ test("route planning keeps a pending movement reroute across high-frequency GPS 
   assert.match(movementEffect, /rerouteTimer\.current !== null/);
   assert.match(movementEffect, /const rerouteFix = latestRerouteFix\.current;/);
   assert.match(movementEffect, /shouldRerouteRoute\(plannedFrom\.current, rerouteFix, warningConfig\.distanceMetres\)/);
-  assert.match(movementEffect, /calculate\(target, rerouteFix, true\)/);
+  assert.match(movementEffect, /calculate\(requestedDestination\.current \?\? target, rerouteFix, true, true\)/);
   assert.doesNotMatch(movementEffect, /return \(\) => window\.clearTimeout/);
 });
 
@@ -449,13 +457,17 @@ test("route map controls are bounded and can edit either route point", async () 
   assert.match(planner, /routeViewRangeForTarget\(2_500, start, destination\)/);
 });
 
-test("route planning snaps land starts to navigable water before using the worker", async () => {
+test("route planning retries nearby water endpoints before reporting no route", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(planner, /const routingStarts = resolveNavigableWaterCandidates\(pack, requestedStart\)/);
-  assert.match(planner, /start: routingStart/);
-  assert.match(planner, /result\.failure === "no-route" && index \+ 1 < routingStarts\.length/);
-  assert.match(planner, /tryRoutingStart\(index \+ 1\)/);
+  assert.match(planner, /const routingAttempts = resolveNavigableRouteAttempts\(pack, requestedStart, destination\)/);
+  assert.match(planner, /start: attempt\.start/);
+  assert.match(planner, /destination: attempt\.destination/);
+  assert.match(planner, /result\.failure === "no-route" && index \+ 1 < routingAttempts\.length/);
+  assert.match(planner, /tryRoutingAttempt\(index \+ 1\)/);
+  assert.match(planner, /setTarget\(attempt\.destination\)/);
+  assert.match(planner, /setManualStart\(attempt\.start\)/);
   assert.match(planner, /const navigableStart = resolveNearestNavigableWater\(pack, start\)/);
+  assert.match(planner, /calculate\(destination, requestedStart, false, startMode === "gps"\)/);
 });
 
 test("navigation makes speed and wind readings easier to scan", async () => {
@@ -514,8 +526,8 @@ test("Croatian place search combines local fuzzy matching with bounded Photon re
   assert.match(planner, /searchCroatianMapFeatures\(mapFeaturePack, placeQuery\)/);
   assert.match(planner, /fetch\(`\/api\/places\?q=\$\{encodeURIComponent\(query\)\}&lang=\$\{language\}`/);
   assert.match(planner, /focusPlaceResult\(result\)/);
-  assert.match(planner, /const destination = resolvePlaceSearchTarget\(pack, result, undefined, effectiveStart\)/);
-  assert.match(planner, /focusPlaceResult[\s\S]{0,400}selectTarget\(destination\)/);
+  assert.match(planner, /const destination = resolveNavigableDestinationCandidates\(pack, result, effectiveStart\)\[0\]/);
+  assert.match(planner, /focusPlaceResult[\s\S]{0,500}selectTarget\(result\)/);
   assert.match(placeRoute, /buildPhotonPlaceSearchUrl\(query, language\)/);
   assert.match(placeRoute, /AbortSignal\.timeout\(5_500\)/);
   assert.match(placeRoute, /User-Agent": "Shoreline-Watch place-search \(\+https:\/\/boot\.maxi-bauer\.de\)"/);
@@ -573,7 +585,10 @@ test("a planned route can become an active trip with progress and arrival", asyn
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /type JourneyState = "planning" \| "active" \| "arrived"/);
   assert.match(planner, /const startJourney = \(\) =>/);
-  assert.match(planner, /calculate\(target, fix, true\)/);
+  assert.match(planner, /const requestedDestination = useRef<GeoPoint \| null>\(null\)/);
+  assert.match(planner, /calculate\(requestedDestination\.current \?\? target, fix, true, true\)/);
+  assert.match(planner, /calculate\(requestedDestination\.current \?\? target, rerouteFix, true, true\)/);
+  assert.match(planner, /requestedDestination\.current = null/);
   assert.match(planner, /hasReachedRouteTarget\(fix, target\)/);
   assert.match(planner, /routeProgressPercent\(route\.distanceMetres, progressMetres\)/);
   assert.match(planner, /className="route-start-trip"/);

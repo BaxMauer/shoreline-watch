@@ -13,6 +13,7 @@ import {
   clampActiveRouteViewRange,
   clampCruiseSpeed,
   clampRouteViewRange,
+  createBathymetryLoadTracker,
   formatRouteClearance,
   formatRouteEta,
   getActiveRouteViewRange,
@@ -32,6 +33,7 @@ import {
   routeCoordinateIsValid,
   routeRerouteThreshold,
   routeViewRangeForTarget,
+  recordBathymetryTileResult,
   shouldRerouteRoute,
 } from "../lib/route-ui.ts";
 
@@ -61,7 +63,7 @@ test("EMODnet bathymetry uses bounded cached tiles that cover the visible route 
   for (const tile of tiles) {
     const url = new URL(tile.url);
     assert.equal(url.origin, "https://tiles.emodnet-bathymetry.eu");
-    assert.match(url.pathname, /\/latest\/mean_multicolour\/web_mercator\/\d+\/\d+\/\d+\.png$/);
+    assert.match(url.pathname, /\/2020\/baselayer\/web_mercator\/\d+\/\d+\/\d+\.png$/);
     assert.ok(tile.west < tile.east);
     assert.ok(tile.south < tile.north);
   }
@@ -70,6 +72,21 @@ test("EMODnet bathymetry uses bounded cached tiles that cover the visible route 
   assert.ok(Math.min(...tiles.map((tile) => tile.south)) < 43.8);
   assert.ok(Math.max(...tiles.map((tile) => tile.north)) > 43.8);
   assert.deepEqual(buildEmodnetBathymetryTiles({ latitude: 90, longitude: 15.6 }, 10_000), []);
+});
+
+test("bathymetry waits for a complete remounted tile generation and keeps errors sticky", () => {
+  const firstGeneration = createBathymetryLoadTracker("a", 2);
+  assert.equal(recordBathymetryTileResult(firstGeneration, "shared", "loaded"), "loading");
+  assert.equal(recordBathymetryTileResult(firstGeneration, "old-edge", "loaded"), "ready");
+
+  const overlappingGeneration = createBathymetryLoadTracker("b", 2);
+  assert.equal(recordBathymetryTileResult(overlappingGeneration, "shared", "loaded"), "loading");
+  assert.equal(recordBathymetryTileResult(overlappingGeneration, "new-edge", "loaded"), "ready");
+
+  const failedGeneration = createBathymetryLoadTracker("c", 3);
+  assert.equal(recordBathymetryTileResult(failedGeneration, "broken", "failed"), "error");
+  assert.equal(recordBathymetryTileResult(failedGeneration, "healthy-1", "loaded"), "error");
+  assert.equal(recordBathymetryTileResult(failedGeneration, "healthy-2", "loaded"), "error");
 });
 
 test("active route progress remains bounded and detects arrival", () => {
@@ -106,9 +123,9 @@ test("map zoom remains inside the supported offline planning range", () => {
 
 test("zoomed-out maps cap coastline and hatch rendering work", () => {
   assert.deepEqual(getRouteMapRenderingDetail(9_999), { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 });
-  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 10, maximumShorelineSegments: 0, maximumLabels: 28 });
-  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 20, maximumShorelineSegments: 0, maximumLabels: 18 });
-  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 28, maximumShorelineSegments: 0, maximumLabels: 12 });
+  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 28 });
+  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 18 });
+  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 12 });
   assert.equal(getRouteMapRefreshInterval(5_000), 80);
   assert.equal(getRouteMapRefreshInterval(20_000), 160);
   assert.equal(getRouteMapRefreshInterval(80_000), 240);

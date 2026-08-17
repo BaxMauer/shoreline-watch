@@ -1,7 +1,11 @@
-import type { BathymetryTile } from "./route-ui.ts";
+import {
+  EMODNET_BATHYMETRY_LAYER,
+  EMODNET_BATHYMETRY_VERSION,
+  type BathymetryTile,
+} from "./route-ui.ts";
 
-export const OFFLINE_BATHYMETRY_CACHE = "shoreline-watch-offline-bathymetry-v1";
-export const OFFLINE_PACKAGE_STORAGE_KEY = "shoreline-offline-packages-v1";
+export const OFFLINE_BATHYMETRY_CACHE = "shoreline-watch-offline-bathymetry-v2";
+export const OFFLINE_PACKAGE_STORAGE_KEY = "shoreline-offline-packages-v2";
 
 export type OfflinePackage = {
   id: string;
@@ -43,7 +47,7 @@ export function buildOfflinePackageTiles(pack: OfflinePackage, minimumZoom = 8, 
         const key = `${zoom}/${column}/${row}`;
         tiles.push({
           key,
-          url: `https://tiles.emodnet-bathymetry.eu/latest/mean_multicolour/web_mercator/${key}.png`,
+          url: `https://tiles.emodnet-bathymetry.eu/${EMODNET_BATHYMETRY_VERSION}/${EMODNET_BATHYMETRY_LAYER}/web_mercator/${key}.png`,
           north: 0,
           east: 0,
           south: 0,

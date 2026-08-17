@@ -1,5 +1,6 @@
-const CACHE_NAME = "shoreline-watch-v39";
+const CACHE_NAME = "shoreline-watch-v40";
 const OFFLINE_CACHE_PREFIX = "shoreline-watch-offline-";
+const OFFLINE_BATHYMETRY_CACHE = "shoreline-watch-offline-bathymetry-v2";
 const CORE = [
   "/",
   "/manifest.webmanifest",
@@ -22,7 +23,8 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME && !key.startsWith(OFFLINE_CACHE_PREFIX)).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME
+        && (!key.startsWith(OFFLINE_CACHE_PREFIX) || key !== OFFLINE_BATHYMETRY_CACHE)).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });

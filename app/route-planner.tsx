@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { findNearestShore, getLandIntervalsAtLatitude, getNearbyShorelineSegments, type CoastlinePack } from "../lib/shoreline";
 import {
   formatRouteDistance,
@@ -20,6 +20,7 @@ import {
   clampActiveRouteViewRange,
   clampCruiseSpeed,
   clampRouteViewRange,
+  createBathymetryLoadTracker,
   formatRouteClearance,
   formatRouteEta,
   getActiveRouteViewRange,
@@ -38,6 +39,7 @@ import {
   routeProgressPercent,
   routeRemainingDistance,
   routeViewRangeForTarget,
+  recordBathymetryTileResult,
   shouldRerouteRoute,
 } from "../lib/route-ui";
 import { formatCurrentDepth, type CurrentDepthState } from "../lib/bathymetry";
@@ -50,8 +52,9 @@ import {
   mergePlaceSearchResults,
   formatPlaceSearchDetail,
   normalizePlaceSearchText,
+  resolveNavigableDestinationCandidates,
+  resolveNavigableRouteAttempts,
   resolveNearestNavigableWater,
-  resolveNavigableWaterCandidates,
   resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
   type PlaceSearchResult,
@@ -148,7 +151,7 @@ const COPY = {
     depthLayer: "Tiefenkarte",
     depthLoading: "Tiefen werden geladen",
     depthUnavailable: "Tiefenebene momentan nicht verfügbar",
-    depthSource: "EMODnet 2024 · Übersicht",
+    depthSource: "EMODnet 2020 · Übersicht",
     shallow: "SEICHT",
     wind: "Wind",
     windUnavailable: "Wind nicht verfügbar · erneut versuchen",
@@ -246,7 +249,7 @@ const COPY = {
     depthLayer: "Depth map",
     depthLoading: "Loading depths",
     depthUnavailable: "Depth layer is currently unavailable",
-    depthSource: "EMODnet 2024 · overview",
+    depthSource: "EMODnet 2020 · overview",
     shallow: "SHALLOW",
     wind: "Wind",
     windUnavailable: "Wind unavailable · retry",
@@ -336,7 +339,11 @@ export default function RoutePlanner({
   const [cruiseSpeedKnots, setCruiseSpeedKnots] = useState(16);
   const [conditionalPassagesEnabled, setConditionalPassagesEnabled] = useState(true);
   const [showDepths, setShowDepths] = useState(true);
-  const [depthStatus, setDepthStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [depthGeneration, setDepthGeneration] = useState(0);
+  const [depthLoadStatus, setDepthLoadStatus] = useState<{
+    key: string;
+    status: "idle" | "loading" | "ready" | "error";
+  }>({ key: "", status: "idle" });
   const [startLatitude, setStartLatitude] = useState("");
   const [startLongitude, setStartLongitude] = useState("");
   const [targetLatitude, setTargetLatitude] = useState("");
@@ -363,7 +370,9 @@ export default function RoutePlanner({
   const longPressCandidate = useRef<{ pointerId: number; startedAt: number; point: GeoPoint } | null>(null);
   const placeSearchController = useRef<AbortController | null>(null);
   const pendingPlaceTarget = useRef<PlaceSearchResult | null>(null);
-  const depthLoadState = useRef({ key: "", loaded: 0, failed: 0 });
+  const manualStartRequest = useRef<GeoPoint | null>(null);
+  const requestedDestination = useRef<GeoPoint | null>(null);
+  const depthLoadState = useRef(createBathymetryLoadTracker("", 0));
   const routeEditor = useRef<HTMLDetailsElement | null>(null);
   const routePlanner = useRef<HTMLElement | null>(null);
 
@@ -423,44 +432,56 @@ export default function RoutePlanner({
     return () => window.clearTimeout(timer);
   }, [clearPendingReroute, gpsReliable, journeyState, startMode]);
 
-  const calculate = useCallback((destination: GeoPoint, startOverride?: GeoPoint, activateJourney = false) => {
-    const requestedStart = startOverride ?? effectiveStart;
+  const calculate = useCallback((destination: GeoPoint, startOverride?: GeoPoint, activateJourney = false, startIsGps = startMode === "gps") => {
+    const requestedStart = startOverride ?? (startMode === "manual" ? manualStartRequest.current ?? manualStart : fix);
     const controller = routeWorker.current;
     if (!controller || !pack || !requestedStart || !routeCoordinateIsValid(requestedStart) || !routeCoordinateIsValid(destination)) return;
-    const gpsStart = requestedStart === fix;
+    const gpsStart = startIsGps;
     if (gpsStart && !gpsReliable) return;
-    const routingStarts = resolveNavigableWaterCandidates(pack, requestedStart);
+    const startAccuracyMetres = gpsStart ? (requestedStart as Fix).accuracy ?? fix?.accuracy : undefined;
+    const routingAttempts = resolveNavigableRouteAttempts(pack, requestedStart, destination);
     const wasActiveJourney = journeyState === "active";
     setPlanning(true);
     setFailure(null);
-    const tryRoutingStart = (index: number): void => {
-      const routingStart = routingStarts[index] ?? requestedStart;
+    const tryRoutingAttempt = (index: number): void => {
+      const attempt = routingAttempts[index] ?? { start: requestedStart, destination };
       controller.calculate({
         pack,
-        start: routingStart,
-        destination,
+        start: attempt.start,
+        destination: attempt.destination,
         options: {
           clearanceMetres: warningConfig.distanceMetres,
           cruiseSpeedKnots,
           speedWarningEnabled: warningConfig.speedWarningEnabled,
           nearShoreSpeedKnots: warningConfig.maxSpeedKnots,
-          startAccuracyMetres: gpsStart ? fix?.accuracy : undefined,
+          startAccuracyMetres,
           conditionalPassagesEnabled,
         },
       }, {
         onResult: (result) => {
-          if (result.failure === "no-route" && index + 1 < routingStarts.length) {
-            tryRoutingStart(index + 1);
+          if (result.failure === "no-route" && index + 1 < routingAttempts.length) {
+            tryRoutingAttempt(index + 1);
             return;
           }
           setRoute(result.route ?? null);
           setFailure(result.failure ?? null);
+          if (result.route) {
+            setTarget(attempt.destination);
+            setTargetLatitude(coordinateText(attempt.destination.latitude));
+            setTargetLongitude(coordinateText(attempt.destination.longitude));
+            if (!gpsStart) {
+              setManualStart(attempt.start);
+              setStartLatitude(coordinateText(attempt.start.latitude));
+              setStartLongitude(coordinateText(attempt.start.longitude));
+            }
+          }
           plannedFrom.current = requestedStart;
           setJourneyProgressMetres(0);
           setPlanning(false);
           setStartingJourney(false);
           if (activateJourney && result.route) {
             setJourneyState("active");
+            manualStartRequest.current = null;
             setStartMode("gps");
             if (!wasActiveJourney) {
               setViewCentre(null);
@@ -476,8 +497,8 @@ export default function RoutePlanner({
         },
       });
     };
-    tryRoutingStart(0);
-  }, [conditionalPassagesEnabled, cruiseSpeedKnots, effectiveStart, fix, gpsReliable, journeyState, pack, proximityRangeMetres, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+    tryRoutingAttempt(0);
+  }, [conditionalPassagesEnabled, cruiseSpeedKnots, fix, gpsReliable, journeyState, manualStart, pack, proximityRangeMetres, startMode, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const fitRoute = useCallback((start = effectiveStart, destination = target) => {
     if (!start || !destination) return;
@@ -486,19 +507,22 @@ export default function RoutePlanner({
   }, [effectiveStart, target]);
 
   const selectTarget = useCallback((destination: GeoPoint, start = effectiveStart) => {
-    const navigableDestination = resolvePlaceSearchTarget(pack, destination, undefined, start);
+    const navigableDestination = resolveNavigableDestinationCandidates(pack, destination, start)[0]
+      ?? resolvePlaceSearchTarget(pack, destination, undefined, start);
+    requestedDestination.current = destination;
     setTarget(navigableDestination);
     setTargetLatitude(coordinateText(navigableDestination.latitude));
     setTargetLongitude(coordinateText(navigableDestination.longitude));
     setInputError(false);
     if (start) {
       fitRoute(start, navigableDestination);
-      calculate(navigableDestination, start);
+      calculate(destination, startMode === "manual" ? manualStartRequest.current ?? start : start, false, startMode === "gps");
     }
-  }, [calculate, effectiveStart, fitRoute, pack]);
+  }, [calculate, effectiveStart, fitRoute, pack, startMode]);
 
   const selectStart = useCallback((start: GeoPoint) => {
     const navigableStart = resolveNearestNavigableWater(pack, start);
+    manualStartRequest.current = start;
     setStartMode("manual");
     setManualStart(navigableStart);
     setStartLatitude(coordinateText(navigableStart.latitude));
@@ -507,18 +531,19 @@ export default function RoutePlanner({
     setMapEditMode("target");
     if (target) {
       fitRoute(navigableStart, target);
-      calculate(target, navigableStart);
+      calculate(requestedDestination.current ?? target, start, false, false);
     }
   }, [calculate, fitRoute, pack, target]);
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
-    const destination = resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
+    const destination = resolveNavigableDestinationCandidates(pack, result, effectiveStart)[0]
+      ?? resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
     pendingPlaceTarget.current = pack ? null : result;
     setFocusedPlace({ ...result, ...destination });
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
     setActivePlaceIndex(-1);
-    selectTarget(destination);
+    selectTarget(result);
     if (!effectiveStart) {
       setViewCentre(destination);
       setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
@@ -552,9 +577,10 @@ export default function RoutePlanner({
     const result = pendingPlaceTarget.current;
     if (!pack || !result) return;
     pendingPlaceTarget.current = null;
-    const destination = resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
+    const destination = resolveNavigableDestinationCandidates(pack, result, effectiveStart)[0]
+      ?? resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
     setFocusedPlace((current) => current ? { ...current, ...destination } : current);
-    selectTarget(destination);
+    selectTarget(result);
   }, [effectiveStart, pack, selectTarget]);
 
   const runPlaceSearch = async () => {
@@ -597,13 +623,13 @@ export default function RoutePlanner({
       rerouteTimer.current = null;
       const rerouteFix = latestRerouteFix.current;
       if (!rerouteFix || !plannedFrom.current || !shouldRerouteRoute(plannedFrom.current, rerouteFix, warningConfig.distanceMetres)) return;
-      calculate(target, rerouteFix, true);
+      calculate(requestedDestination.current ?? target, rerouteFix, true, true);
     }, 500);
   }, [calculate, clearPendingReroute, fix, gpsReliable, journeyState, planning, target, warningConfig.distanceMetres]);
 
   useEffect(() => {
     if (journeyState === "active" || !target || !planningStartAvailable || !effectiveStart) return;
-    const timer = window.setTimeout(() => calculate(target, effectiveStart), 0);
+    const timer = window.setTimeout(() => calculate(requestedDestination.current ?? target), 0);
     return () => window.clearTimeout(timer);
   // Re-plan when preferences change; point changes calculate directly.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -653,10 +679,16 @@ export default function RoutePlanner({
     ? getNearbyShorelineSegments(pack, renderedCentre.longitude, renderedCentre.latitude, mapDataRangeMetres * 1.1, renderingDetail.maximumShorelineSegments)
     : [], [mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderingDetail.maximumShorelineSegments]);
   const bathymetryTiles = useMemo(() => showDepths ? buildEmodnetBathymetryTiles(renderedCentre, mapDataRangeMetres, 720) : [], [mapDataRangeMetres, renderedCentre, showDepths]);
-  const bathymetryKey = bathymetryTiles.map((tile) => tile.key).join("|");
+  const bathymetryKey = `${depthGeneration}:${bathymetryTiles.map((tile) => tile.key).join("|")}`;
+  const depthStatus = !showDepths || bathymetryTiles.length === 0
+    ? "idle"
+    : depthLoadStatus.key === bathymetryKey ? depthLoadStatus.status : "loading";
+  const showLandFallback = !showDepths || depthStatus !== "ready";
   const hatchBands = useMemo(() => {
-    if (!pack) return [];
-    const bandHeight = renderingDetail.hatchBandHeight;
+    if (!pack || !showLandFallback) return [];
+    const bandHeight = renderingDetail.hatchBandHeight > 0
+      ? renderingDetail.hatchBandHeight
+      : renderedRangeMetres > 60_000 ? 28 : renderedRangeMetres > 25_000 ? 20 : 10;
     const extent = centre * Math.SQRT2;
     const minimumLongitude = renderedCentre.longitude - mapDataRangeMetres / renderedMetresPerLongitudeDegree;
     const maximumLongitude = renderedCentre.longitude + mapDataRangeMetres / renderedMetresPerLongitudeDegree;
@@ -671,7 +703,7 @@ export default function RoutePlanner({
       }
     }
     return bands;
-  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderingDetail.hatchBandHeight]);
+  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderedRangeMetres, renderingDetail.hatchBandHeight, showLandFallback]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
     getMapFeaturesInView(mapFeaturePack, mapCentre, currentMapDataRangeMetres).slice(0, currentRenderingDetail.maximumLabels),
     point,
@@ -679,23 +711,29 @@ export default function RoutePlanner({
     26,
   ), [currentMapDataRangeMetres, currentRenderingDetail.maximumLabels, mapCentre, mapFeaturePack, point, size]);
 
-  useEffect(() => {
-    depthLoadState.current = { key: bathymetryKey, loaded: 0, failed: 0 };
-    const timer = window.setTimeout(() => setDepthStatus(showDepths && bathymetryTiles.length > 0 ? "loading" : "idle"), 0);
-    return () => window.clearTimeout(timer);
+  useLayoutEffect(() => {
+    depthLoadState.current = createBathymetryLoadTracker(bathymetryKey, bathymetryTiles.length);
   }, [bathymetryKey, bathymetryTiles.length, showDepths]);
 
-  const depthTileLoaded = useCallback((key: string) => {
-    if (depthLoadState.current.key !== bathymetryKey || !bathymetryKey.includes(key)) return;
-    depthLoadState.current.loaded += 1;
-    setDepthStatus("ready");
-  }, [bathymetryKey]);
+  const depthTileLoaded = useCallback((tileKey: string) => {
+    if (!bathymetryTiles.some((tile) => tile.key === tileKey)) return;
+    if (depthLoadState.current.key !== bathymetryKey) {
+      depthLoadState.current = createBathymetryLoadTracker(bathymetryKey, bathymetryTiles.length);
+    }
+    const current = depthLoadState.current;
+    const status = recordBathymetryTileResult(current, tileKey, "loaded");
+    setDepthLoadStatus({ key: bathymetryKey, status });
+  }, [bathymetryKey, bathymetryTiles]);
 
-  const depthTileFailed = useCallback((key: string) => {
-    if (depthLoadState.current.key !== bathymetryKey || !bathymetryKey.includes(key)) return;
-    depthLoadState.current.failed += 1;
-    if (depthLoadState.current.loaded === 0 && depthLoadState.current.failed >= bathymetryTiles.length) setDepthStatus("error");
-  }, [bathymetryKey, bathymetryTiles.length]);
+  const depthTileFailed = useCallback((tileKey: string) => {
+    if (!bathymetryTiles.some((tile) => tile.key === tileKey)) return;
+    if (depthLoadState.current.key !== bathymetryKey) {
+      depthLoadState.current = createBathymetryLoadTracker(bathymetryKey, bathymetryTiles.length);
+    }
+    const current = depthLoadState.current;
+    const status = recordBathymetryTileResult(current, tileKey, "failed");
+    setDepthLoadStatus({ key: bathymetryKey, status });
+  }, [bathymetryKey, bathymetryTiles]);
 
   const routePoints = useMemo(() => route?.points.map(point).map(({ x, y }) => `${x},${y}`).join(" ") ?? "", [point, route]);
   const boatPoint = fix ? point(fix) : null;
@@ -720,7 +758,7 @@ export default function RoutePlanner({
       : Math.round(shoreDistanceMetres).toString();
   const activeDistanceUnit = shoreDistanceMetres !== null && shoreDistanceMetres >= 1_000 ? copy.kilometres : copy.metres;
   const staticMapLayers = useMemo(() => <>
-    {showDepths && <g className="route-bathymetry-layer">{bathymetryTiles.map((tile) => {
+    {showDepths && <g key={bathymetryKey} className={`route-bathymetry-layer ${depthStatus === "ready" ? "complete" : "pending"}`}>{bathymetryTiles.map((tile) => {
       const northWest = renderedPoint({ longitude: tile.west, latitude: tile.north });
       const southEast = renderedPoint({ longitude: tile.east, latitude: tile.south });
       return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
@@ -731,7 +769,7 @@ export default function RoutePlanner({
       const end = renderedPoint({ longitude: segment[2], latitude: segment[3] });
       return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
     })}</g>
-  </>, [bathymetryTiles, depthTileFailed, depthTileLoaded, hatchBands, renderedPoint, segments, showDepths]);
+  </>, [bathymetryKey, bathymetryTiles, depthStatus, depthTileFailed, depthTileLoaded, hatchBands, renderedPoint, segments, showDepths]);
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
@@ -896,6 +934,7 @@ export default function RoutePlanner({
 
   const editStartCoordinate = (field: "latitude" | "longitude", value: string) => {
     if (startMode === "gps") {
+      manualStartRequest.current = null;
       setStartLatitude(field === "latitude" ? value : coordinateText(fix?.latitude));
       setStartLongitude(field === "longitude" ? value : coordinateText(fix?.longitude));
       setStartMode("manual");
@@ -906,6 +945,7 @@ export default function RoutePlanner({
   };
 
   const useGpsStart = () => {
+    manualStartRequest.current = null;
     setStartMode("gps");
     setManualStart(null);
     setStartLatitude("");
@@ -913,7 +953,7 @@ export default function RoutePlanner({
     setInputError(false);
     if (fix && target && gpsReliable) {
       fitRoute(fix, target);
-      calculate(target, fix);
+      calculate(requestedDestination.current ?? target, fix, false, true);
     }
   };
 
@@ -933,23 +973,32 @@ export default function RoutePlanner({
       return;
     }
     const start = resolveNearestNavigableWater(pack, requestedStart);
+    const navigableDestination = resolveNavigableDestinationCandidates(pack, destination, requestedStart)[0] ?? destination;
     if (startMode === "manual") {
+      manualStartRequest.current = requestedStart;
       setManualStart(start);
       setStartLatitude(coordinateText(start.latitude));
       setStartLongitude(coordinateText(start.longitude));
     }
-    setTarget(destination);
+    requestedDestination.current = destination;
+    setTarget(navigableDestination);
+    setTargetLatitude(coordinateText(navigableDestination.latitude));
+    setTargetLongitude(coordinateText(navigableDestination.longitude));
     setInputError(false);
     if (routeEditor.current) routeEditor.current.open = false;
-    fitRoute(start, destination);
-    calculate(destination, start);
+    fitRoute(start, navigableDestination);
+    calculate(destination, requestedStart, false, startMode === "gps");
   };
 
   const swapPoints = () => {
     if (!effectiveStart || !target) return;
     const nextStart = target;
     const nextTarget = effectiveStart;
+    const nextStartRequest = requestedDestination.current ?? nextStart;
+    const nextTargetRequest = startMode === "manual" ? manualStartRequest.current ?? nextTarget : nextTarget;
     setStartMode("manual");
+    manualStartRequest.current = nextStartRequest;
+    requestedDestination.current = nextTargetRequest;
     setManualStart(nextStart);
     setStartLatitude(coordinateText(nextStart.latitude));
     setStartLongitude(coordinateText(nextStart.longitude));
@@ -958,22 +1007,23 @@ export default function RoutePlanner({
     setTargetLongitude(coordinateText(nextTarget.longitude));
     setInputError(false);
     fitRoute(nextStart, nextTarget);
-    calculate(nextTarget, nextStart);
+    calculate(nextTargetRequest, nextStartRequest, false, false);
   };
 
   const startJourney = () => {
     if (!fix || !target || !route || !gpsReliable || planning) return;
     setStartingJourney(true);
-    calculate(target, fix, true);
+    calculate(requestedDestination.current ?? target, fix, true, true);
   };
 
   const endJourney = () => {
     cancelLongPress();
     setJourneyState("planning");
     setJourneyProgressMetres(0);
+    manualStartRequest.current = null;
     setStartMode("gps");
     setViewCentre(null);
-    if (fix && target && gpsReliable) calculate(target, fix);
+    if (fix && target && gpsReliable) calculate(requestedDestination.current ?? target, fix, false, true);
   };
 
   const reset = () => {
@@ -982,6 +1032,8 @@ export default function RoutePlanner({
     routeWorker.current?.cancel();
     setTarget(null);
     setManualStart(null);
+    manualStartRequest.current = null;
+    requestedDestination.current = null;
     setStartMode("gps");
     setJourneyState("planning");
     setRoute(null);
@@ -1123,7 +1175,7 @@ export default function RoutePlanner({
         </div>}
         {journeyState === "planning" && <div className={`route-long-press-hint ${longPressActive ? "active" : ""}`} role="status"><span />{longPressActive ? copy.holdingPoint : mapEditMode === "start" ? copy.holdSetsStart : copy.holdSetsTarget}</div>}
         <div className="route-layer-tools">
-          <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => setShowDepths((value) => !value)}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
+          <button type="button" className={showDepths ? "active" : ""} aria-pressed={showDepths} onClick={() => { setDepthGeneration((value) => value + 1); setShowDepths((value) => !value); }}><i className={`route-layer-status ${depthStatus}`} />{copy.depthLayer}</button>
           <button type="button" className={showWind ? "active wind" : "wind"} aria-pressed={showWind} onClick={onToggleWind} title={windSample ? `${windState === "offline" ? "Offline · " : ""}${copy.gust}: ${Math.round(windSample.gustKnots)} kn` : windState === "error" ? copy.windUnavailable : copy.wind}><span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }}>↓</span>{windSample ? `${windState === "offline" ? "Offline · " : ""}${copy.wind} ${windCompassLabel(windSample.directionDegrees, language)} · ${Math.round(windSample.speedKnots)} kn` : windState === "error" ? copy.windUnavailable : copy.wind}</button>
           {showDepths && depthStatus === "error" && <small>{copy.depthUnavailable}</small>}
         </div>
