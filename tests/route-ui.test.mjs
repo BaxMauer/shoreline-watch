@@ -61,7 +61,7 @@ test("EMODnet bathymetry uses bounded cached tiles that cover the visible route 
   for (const tile of tiles) {
     const url = new URL(tile.url);
     assert.equal(url.origin, "https://tiles.emodnet-bathymetry.eu");
-    assert.match(url.pathname, /\/latest\/mean_atlas_land\/web_mercator\/\d+\/\d+\/\d+\.png$/);
+    assert.match(url.pathname, /\/latest\/mean_multicolour\/web_mercator\/\d+\/\d+\/\d+\.png$/);
     assert.ok(tile.west < tile.east);
     assert.ok(tile.south < tile.north);
   }

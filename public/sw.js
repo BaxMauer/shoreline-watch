@@ -1,4 +1,4 @@
-const CACHE_NAME = "shoreline-watch-v38";
+const CACHE_NAME = "shoreline-watch-v39";
 const OFFLINE_CACHE_PREFIX = "shoreline-watch-offline-";
 const CORE = [
   "/",

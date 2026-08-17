@@ -164,7 +164,10 @@ export function buildEmodnetBathymetryTiles(centre: GeoPoint, rangeMetres: numbe
       const wrappedColumn = ((column % matrixSize) + matrixSize) % matrixSize;
       tiles.push({
         key: `${zoom}/${wrappedColumn}/${row}`,
-        url: `https://tiles.emodnet-bathymetry.eu/latest/mean_atlas_land/web_mercator/${zoom}/${wrappedColumn}/${row}.png`,
+        // The multicolour DTM is a continuous depth surface without the
+        // hillshade/source-strip artefacts visible in the atlas tiles. CSS
+        // recolours it to the app's blue nautical palette.
+        url: `https://tiles.emodnet-bathymetry.eu/latest/mean_multicolour/web_mercator/${zoom}/${wrappedColumn}/${row}.png`,
         west: tileXToLongitude(column, zoom),
         east: tileXToLongitude(column + 1, zoom),
         north: tileYToLatitude(row, zoom),
