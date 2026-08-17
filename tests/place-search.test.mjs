@@ -10,13 +10,16 @@ import {
   mergePlaceSearchResults,
   normalizePlaceSearchText,
   parsePhotonPlaceSearchPayload,
+  prioritizeNavigableRouteAttempts,
+  resolveNavigableDestinationCandidates,
+  resolveNavigableRouteAttempts,
   resolveNearestNavigableWater,
   resolveNavigableWaterCandidates,
   resolvePlaceSearchTarget,
   searchLocalCroatianPlaces,
 } from "../lib/place-search.ts";
 import { findNearestShore, isPointOnLand } from "../lib/shoreline.ts";
-import { geoDistanceMetres, planWaterRoute } from "../lib/route-planning.ts";
+import { geoDistanceMetres, planWaterRoute, routeGeometryIsWaterOnly } from "../lib/route-planning.ts";
 
 test("Croatian diacritics and common misspellings match locally", () => {
   assert.equal(normalizePlaceSearchText("  Pakoštane  "), "pakostane");
@@ -139,6 +142,72 @@ test("a Jezera land start still connects to a longer southbound water route", as
   });
   assert.ok(result.route, result.failure);
   assert.ok(result.route.distanceMetres > 8_000);
+});
+
+test("a Jezera land start connects to the long Primošten screenshot destination", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const requestedStart = { latitude: 43.7869, longitude: 15.6431 };
+  const destination = { latitude: 43.5834, longitude: 15.7905 };
+  const candidates = resolveNavigableWaterCandidates(coastline, requestedStart);
+  let connected;
+  for (const start of candidates) {
+    const result = planWaterRoute(coastline, start, destination, {
+      clearanceMetres: 300,
+      cruiseSpeedKnots: 16,
+      speedWarningEnabled: true,
+      nearShoreSpeedKnots: 8,
+    });
+    if (result.route) {
+      connected = result;
+      break;
+    }
+  }
+
+  assert.ok(connected?.route, connected?.failure);
+  assert.ok(connected.route.distanceMetres > 25_000 && connected.route.distanceMetres < 40_000);
+  assert.equal(routeGeometryIsWaterOnly(coastline, connected.route.points), true);
+});
+
+test("a long route to land tries the nearest water endpoints in snap-distance order", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const start = { longitude: 15.7905, latitude: 43.5834 };
+  const requestedDestination = { longitude: 15.976032, latitude: 43.803111 };
+  const destinations = resolveNavigableDestinationCandidates(coastline, requestedDestination, start);
+  const attempts = resolveNavigableRouteAttempts(coastline, start, requestedDestination);
+
+  assert.equal(isPointOnLand(coastline, requestedDestination.longitude, requestedDestination.latitude), true);
+  assert.ok(destinations.length > 1);
+  assert.ok(geoDistanceMetres(requestedDestination, destinations[0]) <= geoDistanceMetres(requestedDestination, destinations.at(-1)));
+  assert.deepEqual(attempts[0].destination, destinations[0]);
+
+  let connected;
+  for (const { start: routeStart, destination } of attempts) {
+    const result = planWaterRoute(coastline, routeStart, destination, {
+      clearanceMetres: 300,
+      cruiseSpeedKnots: 16,
+      speedWarningEnabled: true,
+      nearShoreSpeedKnots: 8,
+    });
+    if (result.route) {
+      connected = result;
+      break;
+    }
+  }
+  assert.ok(connected?.route, connected?.failure);
+  assert.ok(connected.route.distanceMetres > 30_000 && connected.route.distanceMetres < 45_000);
+  assert.equal(routeGeometryIsWaterOnly(coastline, connected.route.points), true);
+});
+
+test("bounded endpoint retries cover every start and destination alternative", () => {
+  const requestedStart = { longitude: 15, latitude: 44 };
+  const requestedDestination = { longitude: 16, latitude: 43 };
+  const starts = Array.from({ length: 12 }, (_, index) => ({ longitude: 15 + index / 10_000, latitude: 44 }));
+  const destinations = Array.from({ length: 8 }, (_, index) => ({ longitude: 16, latitude: 43 + index / 10_000 }));
+  const attempts = prioritizeNavigableRouteAttempts(requestedStart, requestedDestination, starts, destinations, 24);
+
+  assert.equal(attempts.length, 24);
+  assert.ok(starts.every((candidate) => attempts.some(({ start }) => start === candidate)));
+  assert.ok(destinations.every((candidate) => attempts.some(({ destination }) => destination === candidate)));
 });
 
 test("a longer land start retries the nearest shoreline exits until one connects", async () => {

@@ -320,10 +320,19 @@ test("route grid adds fine resolution while bounding long-route node counts", ()
   const local = getRouteGridResolutions(10_000, 10_000, 300);
   assert.equal(local.length, 2);
   assert.ok(local[1] <= 90);
+  assert.equal(local[0] % 25, 0);
+  assert.equal(local[1] % 5, 0);
   const long = getRouteGridResolutions(140_000, 80_000, 300);
   assert.equal(long.length, 2);
+  assert.equal(long[0] % 25, 0);
+  assert.equal(long[1] % 5, 0);
   const estimatedFineNodes = 140_000 * 80_000 / (long[1] ** 2);
   assert.ok(estimatedFineNodes <= 260_001);
+  assert.deepEqual(
+    getRouteGridResolutions(39_693, 50_116, 300),
+    getRouteGridResolutions(39_696, 50_119, 300),
+    "metre-scale GPS jitter must not shift every cell in a long route grid",
+  );
 });
 
 test("out-of-region and overly distant destinations return explicit failures", () => {
@@ -481,6 +490,31 @@ test("the Jezera to Zmajan screenshot routes are stable across a sub-cell start 
     );
     assert.ok(result.route, result.failure);
     assert.ok(formatRouteDistance(result.route.distanceMetres) < 8, "the route must stay inside the local island corridor");
+    assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points), true);
+  }
+});
+
+test("the long Jezera to Primošten screenshot route stays connected through the island chain", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const baseStart = { longitude: 15.642843257016645, latitude: 43.785223881290165 };
+  const tenMetresLongitude = 10 / (111_320 * Math.cos(baseStart.latitude * Math.PI / 180));
+  const tenMetresLatitude = 10 / 110_540;
+  const destination = { longitude: 15.7905, latitude: 43.5834 };
+  const jitteredStarts = [-1, 0, 1].flatMap((east) => [-1, 0, 1].map((north) => ({
+    longitude: baseStart.longitude + east * tenMetresLongitude,
+    latitude: baseStart.latitude + north * tenMetresLatitude,
+  })));
+  for (const start of [{ longitude: 15.64284, latitude: 43.7852 }, ...jitteredStarts]) {
+    const result = planWaterRoute(
+      croatiaPack,
+      start,
+      destination,
+      { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12 },
+    );
+
+    assert.ok(result.route, result.failure);
+    assert.ok(result.route.distanceMetres > 25_000 && formatRouteDistance(result.route.distanceMetres) < 18);
+    assert.ok(result.route.points.length >= 5, "the route must preserve turns around the island chain");
     assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points), true);
   }
 });

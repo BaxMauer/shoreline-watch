@@ -25,6 +25,12 @@ export const CROATIA_SEARCH_BOUNDS = {
 
 export const PLACE_TARGET_WATER_OFFSET_METRES = 8;
 export const ROUTE_START_MINIMUM_SHORE_CLEARANCE_METRES = 30;
+export const MAXIMUM_ROUTE_ENDPOINT_ATTEMPTS = 24;
+
+export type NavigableRouteAttempt = {
+  start: GeoPoint;
+  destination: GeoPoint;
+};
 
 function pointAtDistance(origin: GeoPoint, bearing: number, distanceMetres: number): GeoPoint {
   const radians = bearing * Math.PI / 180;
@@ -252,6 +258,67 @@ export function resolveNearestNavigableWater(
 ): GeoPoint {
   return resolveNavigableWaterCandidates(pack, point, waterOffsetMetres, minimumShoreClearanceMetres)[0]
     ?? { latitude: point.latitude, longitude: point.longitude };
+}
+
+export function resolveNavigableDestinationCandidates(
+  pack: CoastlinePack | null,
+  point: GeoPoint,
+  approachFrom?: GeoPoint | null,
+): GeoPoint[] {
+  const original = { latitude: point.latitude, longitude: point.longitude };
+  const primary = resolvePlaceSearchTarget(pack, original, undefined, approachFrom);
+  if (!pack || !isPointOnLand(pack, original.longitude, original.latitude)) return [primary];
+
+  const candidates = [
+    ...resolveNavigableWaterCandidates(pack, original),
+    primary,
+  ].sort((left, right) => pointDistanceMetres(original, left) - pointDistanceMetres(original, right));
+  const unique: GeoPoint[] = [];
+  for (const candidate of candidates) {
+    if (unique.some((current) => pointDistanceMetres(current, candidate) < 2)) continue;
+    unique.push(candidate);
+  }
+  return unique.slice(0, 8);
+}
+
+export function resolveNavigableRouteAttempts(
+  pack: CoastlinePack | null,
+  requestedStart: GeoPoint,
+  requestedDestination: GeoPoint,
+) {
+  const starts = resolveNavigableWaterCandidates(pack, requestedStart);
+  const destinations = resolveNavigableDestinationCandidates(pack, requestedDestination, requestedStart);
+  return prioritizeNavigableRouteAttempts(requestedStart, requestedDestination, starts, destinations);
+}
+
+export function prioritizeNavigableRouteAttempts(
+  requestedStart: GeoPoint,
+  requestedDestination: GeoPoint,
+  starts: GeoPoint[],
+  destinations: GeoPoint[],
+  limit = MAXIMUM_ROUTE_ENDPOINT_ATTEMPTS,
+): NavigableRouteAttempt[] {
+  const maximum = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : MAXIMUM_ROUTE_ENDPOINT_ATTEMPTS));
+  const pairs = starts.flatMap((start, startIndex) => destinations.map((destination, destinationIndex) => ({
+    start,
+    destination,
+    startIndex,
+    destinationIndex,
+    snapDistanceMetres: pointDistanceMetres(requestedStart, start)
+      + pointDistanceMetres(requestedDestination, destination),
+  })));
+  const bySnapDistance = (left: typeof pairs[number], right: typeof pairs[number]) => left.snapDistanceMetres - right.snapDistanceMetres
+    || left.startIndex - right.startIndex
+    || left.destinationIndex - right.destinationIndex;
+  const coverage = pairs
+    .filter(({ startIndex, destinationIndex }) => startIndex === 0 || destinationIndex === 0)
+    .sort(bySnapDistance);
+  const additional = pairs
+    .filter(({ startIndex, destinationIndex }) => startIndex !== 0 && destinationIndex !== 0)
+    .sort(bySnapDistance);
+  return [...coverage, ...additional]
+    .slice(0, maximum)
+    .map(({ start, destination }) => ({ start, destination }));
 }
 
 const COASTAL_PLACES: PlaceSearchResult[] = [

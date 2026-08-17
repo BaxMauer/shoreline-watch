@@ -6,9 +6,9 @@ export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 
 export function getRouteMapRenderingDetail(viewRangeMetres: number) {
   const range = Number.isFinite(viewRangeMetres) ? Math.max(0, viewRangeMetres) : MAXIMUM_ROUTE_VIEW_METRES;
-  if (range > 60_000) return { hatchBandHeight: 28, maximumShorelineSegments: 0, maximumLabels: 12 } as const;
-  if (range > 25_000) return { hatchBandHeight: 20, maximumShorelineSegments: 0, maximumLabels: 18 } as const;
-  if (range >= 10_000) return { hatchBandHeight: 10, maximumShorelineSegments: 0, maximumLabels: 28 } as const;
+  if (range > 60_000) return { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 12 } as const;
+  if (range > 25_000) return { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 18 } as const;
+  if (range >= 10_000) return { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 28 } as const;
   return { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 } as const;
 }
 
@@ -31,7 +31,9 @@ export const MAXIMUM_INTERACTIVE_ACTIVE_ROUTE_VIEW_METRES = 10_000;
 export const MINIMUM_CRUISE_SPEED_KNOTS = 2;
 export const MAXIMUM_CRUISE_SPEED_KNOTS = 60;
 export const ROUTE_ARRIVAL_RADIUS_METRES = 75;
-export const EMODNET_BATHYMETRY_ATTRIBUTION = "© EMODnet Bathymetry 2024";
+export const EMODNET_BATHYMETRY_ATTRIBUTION = "© EMODnet Bathymetry";
+export const EMODNET_BATHYMETRY_VERSION = "2020";
+export const EMODNET_BATHYMETRY_LAYER = "baselayer";
 const MAXIMUM_MERCATOR_LATITUDE = 85.05112878;
 const MAXIMUM_BATHYMETRY_TILES = 20;
 
@@ -50,6 +52,41 @@ export type BathymetryTile = {
   south: number;
   west: number;
 };
+
+export type BathymetryLoadStatus = "idle" | "loading" | "ready" | "error";
+
+export type BathymetryLoadTracker = {
+  key: string;
+  expected: number;
+  loaded: Set<string>;
+  failed: Set<string>;
+};
+
+export function createBathymetryLoadTracker(key: string, expected: number): BathymetryLoadTracker {
+  return {
+    key,
+    expected: Math.max(0, Math.floor(Number.isFinite(expected) ? expected : 0)),
+    loaded: new Set(),
+    failed: new Set(),
+  };
+}
+
+export function recordBathymetryTileResult(
+  tracker: BathymetryLoadTracker,
+  tileKey: string,
+  result: "loaded" | "failed",
+): BathymetryLoadStatus {
+  if (result === "loaded") {
+    tracker.failed.delete(tileKey);
+    tracker.loaded.add(tileKey);
+  } else {
+    tracker.loaded.delete(tileKey);
+    tracker.failed.add(tileKey);
+  }
+  if (tracker.failed.size > 0) return "error";
+  if (tracker.expected === 0) return "idle";
+  return tracker.loaded.size === tracker.expected ? "ready" : "loading";
+}
 
 export function canPlanRoute(gpsNavigationState: GpsNavigationState, fix: GeoPoint | null) {
   return gpsNavigationState === "reliable" && fix !== null;
@@ -164,10 +201,10 @@ export function buildEmodnetBathymetryTiles(centre: GeoPoint, rangeMetres: numbe
       const wrappedColumn = ((column % matrixSize) + matrixSize) % matrixSize;
       tiles.push({
         key: `${zoom}/${wrappedColumn}/${row}`,
-        // The multicolour DTM is a continuous depth surface without the
-        // hillshade/source-strip artefacts visible in the atlas tiles. CSS
-        // recolours it to the app's blue nautical palette.
-        url: `https://tiles.emodnet-bathymetry.eu/latest/mean_multicolour/web_mercator/${zoom}/${wrappedColumn}/${row}.png`,
+        // baselayer is the official continuous Web Mercator WMTS layer. Other
+        // mean-depth products use different tile matrices and render as
+        // fragmented source blocks when addressed as Web Mercator tiles.
+        url: `https://tiles.emodnet-bathymetry.eu/${EMODNET_BATHYMETRY_VERSION}/${EMODNET_BATHYMETRY_LAYER}/web_mercator/${zoom}/${wrappedColumn}/${row}.png`,
         west: tileXToLongitude(column, zoom),
         east: tileXToLongitude(column + 1, zoom),
         north: tileYToLatitude(row, zoom),

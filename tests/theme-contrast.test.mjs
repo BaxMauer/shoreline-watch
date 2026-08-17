@@ -212,7 +212,10 @@ test("route map hatches all land while keeping coastline and route solid", () =>
   assert.match(css, /\.route-land-area\s*\{[^}]*shape-rendering:\s*crispEdges/s);
   assert.match(css, /\.route-land-fill-mark\s*\{[^}]*fill:\s*#c8c4aa/s);
   assert.match(css, /\.route-land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)[^}]*opacity:\s*\.25/s);
-  assert.match(css, /\.route-depth-tile\s*\{[^}]*image-rendering:\s*auto/s);
+  const depthTile = css.match(/\.route-depth-tile\s*\{[^}]*\}/s)?.[0] ?? "";
+  assert.match(depthTile, /filter:\s*none/);
+  assert.match(depthTile, /image-rendering:\s*auto/);
+  assert.doesNotMatch(depthTile, /grayscale|invert|hue-rotate/);
   const routeCoast = css.match(/\.route-coast-layer line\s*\{[^}]*\}/s)?.[0] ?? "";
   assert.match(routeCoast, /stroke:\s*var\(--shore-stroke\)/);
   assert.doesNotMatch(routeCoast, /stroke-dasharray/);
