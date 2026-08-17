@@ -537,20 +537,30 @@ export function planWaterRoute(
   const packSouth = (pack.bounds[1] - origin.latitude) * METRES_PER_LATITUDE_DEGREE;
   const packNorth = (pack.bounds[3] - origin.latitude) * METRES_PER_LATITUDE_DEGREE;
 
-  const search = (margin: number, cellSize: number, allowRestricted: boolean): RouteSearchGeometry | null => {
+  const search = (
+    margin: number,
+    cellSize: number,
+    allowRestricted: boolean,
+    gridPhase: LocalPoint = { x: 0, y: 0 },
+  ): RouteSearchGeometry | null => {
     const minimumX = Math.max(packWest, Math.min(startLocal.x, destinationLocal.x) - margin);
     const maximumX = Math.min(packEast, Math.max(startLocal.x, destinationLocal.x) + margin);
     const minimumY = Math.max(packSouth, Math.min(startLocal.y, destinationLocal.y) - margin);
     const maximumY = Math.min(packNorth, Math.max(startLocal.y, destinationLocal.y) + margin);
-    const width = maximumX - minimumX;
-    const height = maximumY - minimumY;
+    // A raster aligned only to one origin can lose a real narrow channel when
+    // its centres land on both shores. Alternate half-cell phases are tried
+    // below when the primary coarse raster cannot connect the endpoints.
+    const gridMinimumX = Math.max(packWest, minimumX - cellSize * gridPhase.x);
+    const gridMinimumY = Math.max(packSouth, minimumY - cellSize * gridPhase.y);
+    const width = maximumX - gridMinimumX;
+    const height = maximumY - gridMinimumY;
     const columns = Math.max(3, Math.floor(width / cellSize) + 1);
     const rows = Math.max(3, Math.floor(height / cellSize) + 1);
     const gridNodeCount = columns * rows;
-    const pointFor = (column: number, row: number) => toGeo({ x: minimumX + column * cellSize, y: minimumY + row * cellSize });
+    const pointFor = (column: number, row: number) => toGeo({ x: gridMinimumX + column * cellSize, y: gridMinimumY + row * cellSize });
     const nearestIndex = (point: LocalPoint) => ({
-      column: Math.max(0, Math.min(columns - 1, Math.round((point.x - minimumX) / cellSize))),
-      row: Math.max(0, Math.min(rows - 1, Math.round((point.y - minimumY) / cellSize))),
+      column: Math.max(0, Math.min(columns - 1, Math.round((point.x - gridMinimumX) / cellSize))),
+      row: Math.max(0, Math.min(rows - 1, Math.round((point.y - gridMinimumY) / cellSize))),
     });
     const endpointGrace = Math.max(preferredClearance * 1.2, cellSize * 1.8);
     // The fixed 50 m margin is the desired navigational clearance. Segment
@@ -931,6 +941,25 @@ export function planWaterRoute(
     if (best && best.route.distanceMetres <= directDistance * 1.3) break;
   }
 
+  // A sub-cell change to an endpoint must not decide whether an island
+  // channel exists. If the primary coarse grid found nothing, retry the same
+  // bounded search with staggered centres before paying for a large fine grid.
+  if (!bestMeasuredCandidate()) {
+    const alternateGridPhases = [
+      { x: .5, y: 0 },
+      { x: 0, y: .5 },
+      { x: .5, y: .5 },
+    ];
+    for (const { margin, resolutions } of searchAreas) {
+      const coarse = resolutions[0];
+      for (const phase of alternateGridPhases) {
+        consider(search(margin, coarse, true, phase));
+        if (bestMeasuredCandidate()) break;
+      }
+      if (bestMeasuredCandidate()) break;
+    }
+  }
+
   // Refine only bounded search spaces. The fine pass improves real narrows
   // without allowing a whole-archipelago raster to stall a phone.
   const coarseBest = bestMeasuredCandidate();
@@ -945,6 +974,23 @@ export function planWaterRoute(
       consider(search(margin, fine, true));
       const best = bestMeasuredCandidate();
       if (best && best.route.distanceMetres <= directDistance * 1.15) break;
+    }
+  }
+
+  if (!bestMeasuredCandidate()) {
+    const alternateFinePhases = [
+      { x: .5, y: 0 },
+      { x: 0, y: .5 },
+      { x: .5, y: .5 },
+    ];
+    for (const { margin, width, height, resolutions } of searchAreas) {
+      const fine = resolutions.at(-1) as number;
+      if (fine === resolutions[0] || width * height / (fine * fine) > MAXIMUM_FINE_ROUTE_GRID_NODES) continue;
+      for (const phase of alternateFinePhases) {
+        consider(search(margin, fine, true, phase));
+        if (bestMeasuredCandidate()) break;
+      }
+      if (bestMeasuredCandidate()) break;
     }
   }
 

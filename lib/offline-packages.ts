@@ -43,7 +43,7 @@ export function buildOfflinePackageTiles(pack: OfflinePackage, minimumZoom = 8, 
         const key = `${zoom}/${column}/${row}`;
         tiles.push({
           key,
-          url: `https://tiles.emodnet-bathymetry.eu/latest/mean_atlas_land/web_mercator/${key}.png`,
+          url: `https://tiles.emodnet-bathymetry.eu/latest/mean_multicolour/web_mercator/${key}.png`,
           north: 0,
           east: 0,
           south: 0,

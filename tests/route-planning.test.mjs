@@ -466,6 +466,25 @@ test("the Kaprije screenshot route rejects the long western detour and keeps use
   assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points, getStartFixCorrectionTolerance(12)), true);
 });
 
+test("the Jezera to Zmajan screenshot routes are stable across a sub-cell start shift", async () => {
+  const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const start = { longitude: 15.642843257016645, latitude: 43.785223881290165 };
+  for (const destination of [
+    { longitude: 15.7595, latitude: 43.7129 },
+    { longitude: 15.7318, latitude: 43.7138 },
+  ]) {
+    const result = planWaterRoute(
+      croatiaPack,
+      start,
+      destination,
+      { ...OPTIONS, clearanceMetres: 300, startAccuracyMetres: 12 },
+    );
+    assert.ok(result.route, result.failure);
+    assert.ok(formatRouteDistance(result.route.distanceMetres) < 8, "the route must stay inside the local island corridor");
+    assert.equal(routeGeometryIsWaterOnly(croatiaPack, result.route.points), true);
+  }
+});
+
 test("the Žirje screenshot narrows follows the widest channel centreline", async () => {
   const croatiaPack = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
   const result = planWaterRoute(
