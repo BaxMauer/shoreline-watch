@@ -16,6 +16,12 @@ export type WindMapView = {
   rangeMetres: number;
 };
 
+export const WIND_ZOOM_FREEZE_MS = 280;
+
+export function windFrameIsFrozen(frameAt: number, freezeUntil: number) {
+  return Number.isFinite(frameAt) && Number.isFinite(freezeUntil) && frameAt > 0 && frameAt < freezeUntil;
+}
+
 export function getWindCanvasSize(cssWidth: number, cssHeight: number, deviceScale: number) {
   const pixelRatio = Math.min(1.5, Math.max(1, deviceScale || 1));
   return {

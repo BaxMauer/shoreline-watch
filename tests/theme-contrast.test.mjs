@@ -207,9 +207,9 @@ test("tracking view is locked to one viewport while launch settings remain scrol
   assert.match(css, /\.tracker-content\s*\{[^}]*overflow:\s*hidden/s);
 });
 
-test("route map hatches all land while keeping coastline and route solid", () => {
+test("route map hatches land with smooth edges while keeping coastline and route solid", () => {
   assert.match(css, /\.route-land-area\s*\{[^}]*fill:\s*url\(#routeLandHatch\)/s);
-  assert.match(css, /\.route-land-area\s*\{[^}]*shape-rendering:\s*crispEdges/s);
+  assert.match(css, /\.route-land-area\s*\{[^}]*shape-rendering:\s*geometricPrecision/s);
   assert.match(css, /\.route-land-fill-mark\s*\{[^}]*fill:\s*#c8c4aa/s);
   assert.match(css, /\.route-land-hatch-mark\s*\{[^}]*stroke:\s*var\(--shore-stroke\)[^}]*opacity:\s*\.25/s);
   const depthTile = css.match(/\.route-depth-tile\s*\{[^}]*\}/s)?.[0] ?? "";

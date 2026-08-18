@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { advanceWindParticle, buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, getWindCanvasSize, getWindMapOffset, parseWindProxyResponse, parseWindSample, windCanvasSizeChanged, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windSampleCanBeReused, wrapWindCoordinate } from "../lib/wind.ts";
+import { advanceWindParticle, buildWindProxyRequestUrl, buildWindRequestUrl, fetchMapWindSample, getWindCanvasSize, getWindMapOffset, parseWindProxyResponse, parseWindSample, WIND_ZOOM_FREEZE_MS, windCanvasSizeChanged, windCellKey, windCompassLabel, windFlowAngleRadians, windFlowSpeedPixelsPerSecond, windFrameIsFrozen, windSampleCanBeReused, wrapWindCoordinate } from "../lib/wind.ts";
 
 test("wind request uses current 10-m speed, direction, gusts, and knots", () => {
   const url = new URL(buildWindRequestUrl({ latitude: 43.8, longitude: 15.55 }));
@@ -97,6 +97,14 @@ test("stable canvas bounds do not reset wind frame timing", () => {
   assert.deepEqual(size, { pixelRatio: 1.5, width: 585, height: 960 });
   assert.equal(windCanvasSizeChanged(size.width, size.height, size.width, size.height), false);
   assert.equal(windCanvasSizeChanged(size.width, size.height, size.width + 1, size.height), true);
+});
+
+test("wind frame stays fixed while route-map zoom geometry settles", () => {
+  const startedAt = 1_000;
+  const freezeUntil = startedAt + WIND_ZOOM_FREEZE_MS;
+  assert.equal(windFrameIsFrozen(startedAt, freezeUntil), true);
+  assert.equal(windFrameIsFrozen(freezeUntil - 1, freezeUntil), true);
+  assert.equal(windFrameIsFrozen(freezeUntil, freezeUntil), false);
 });
 
 test("wind field is geographically anchored while the route map pans", () => {
