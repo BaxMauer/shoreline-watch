@@ -231,7 +231,7 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(app, /<WindOverlay sample=\{windSample\} visible=\{showWind && trackerTab === "distance" && !powerSaveReason\}/);
   assert.match(app, /windReloadSequence/);
   assert.match(app, /windUnavailable/);
-  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} \/>/);
+  assert.match(planner, /<WindOverlay sample=\{windSample\} visible=\{showWind\} mapRotationDegrees=\{mapRotationDegrees\} zoomKey=\{viewRangeMetres\} \/>/);
   assert.doesNotMatch(planner, /paused=\{mapInteracting\}|mapView=\{\{ centre: mapCentre/);
   assert.match(overlay, /requestAnimationFrame\(callback\)/);
   assert.match(overlay, /document\.visibilityState !== "visible"/);
@@ -246,6 +246,8 @@ test("wind data drives a reusable animated overlay on distance and route maps", 
   assert.match(overlay, /if \(changed \|\| reducedMotion\) draw\(\)/);
   assert.match(overlay, /observer\.observe\(canvas\.parentElement \?\? canvas\)/);
   assert.match(overlay, /advanceWindParticle\(particle, angle, speed, elapsedSeconds, width, height\)/);
+  assert.match(overlay, /freezeUntilRef\.current = performance\.now\(\) \+ WIND_ZOOM_FREEZE_MS/);
+  assert.match(overlay, /windFrameIsFrozen\(frameAt, freezeUntilRef\.current\)/);
   assert.match(overlay, /getWindMapOffset\(mapViewRef\.current, width, height\)/);
   assert.match(overlay, /wrapWindCoordinate\(particle\.x \* width \+ mapOffset\.x, width\)/);
   assert.doesNotMatch(overlay, /ResizeObserver\(\(\) => \{ resize\(\); draw\(\); \}\)/);
@@ -301,6 +303,7 @@ test("OSM feature catalog loads non-blockingly and labels both map modes", async
 test("route land overlay remains visible after bathymetry finishes loading", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /const hatchBands = useMemo\(\(\) => \{\s*if \(!pack\) return \[\]/);
+  assert.match(planner, /<path className="route-land-area" d=\{hatchPath\} \/>/);
   assert.doesNotMatch(planner, /showLandFallback|depthStatus !== "ready"[\s\S]*hatchBands/);
   assert.ok(planner.indexOf("route-bathymetry-layer") < planner.indexOf("className=\"route-land-bands\""));
 });

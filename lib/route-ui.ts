@@ -6,9 +6,9 @@ export const MAXIMUM_ROUTE_VIEW_METRES = 120_000;
 
 export function getRouteMapRenderingDetail(viewRangeMetres: number) {
   const range = Number.isFinite(viewRangeMetres) ? Math.max(0, viewRangeMetres) : MAXIMUM_ROUTE_VIEW_METRES;
-  if (range > 60_000) return { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 12 } as const;
-  if (range > 25_000) return { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 18 } as const;
-  if (range >= 10_000) return { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 28 } as const;
+  if (range > 60_000) return { hatchBandHeight: 2, maximumShorelineSegments: 0, maximumLabels: 12 } as const;
+  if (range > 25_000) return { hatchBandHeight: 2, maximumShorelineSegments: 0, maximumLabels: 18 } as const;
+  if (range >= 10_000) return { hatchBandHeight: 2, maximumShorelineSegments: 0, maximumLabels: 28 } as const;
   return { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 } as const;
 }
 

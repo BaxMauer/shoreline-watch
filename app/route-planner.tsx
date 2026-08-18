@@ -685,9 +685,7 @@ export default function RoutePlanner({
     : depthLoadStatus.key === bathymetryKey ? depthLoadStatus.status : "loading";
   const hatchBands = useMemo(() => {
     if (!pack) return [];
-    const bandHeight = renderingDetail.hatchBandHeight > 0
-      ? renderingDetail.hatchBandHeight
-      : renderedRangeMetres > 60_000 ? 28 : renderedRangeMetres > 25_000 ? 20 : 10;
+    const bandHeight = renderingDetail.hatchBandHeight;
     const extent = centre * Math.SQRT2;
     const minimumLongitude = renderedCentre.longitude - mapDataRangeMetres / renderedMetresPerLongitudeDegree;
     const maximumLongitude = renderedCentre.longitude + mapDataRangeMetres / renderedMetresPerLongitudeDegree;
@@ -702,7 +700,10 @@ export default function RoutePlanner({
       }
     }
     return bands;
-  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderedRangeMetres, renderingDetail.hatchBandHeight]);
+  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderingDetail.hatchBandHeight]);
+  const hatchPath = useMemo(() => hatchBands.map((band) =>
+    `M${band.x.toFixed(2)} ${band.y.toFixed(2)}h${band.width.toFixed(2)}v${band.height.toFixed(2)}h${(-band.width).toFixed(2)}Z`
+  ).join(""), [hatchBands]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
     getMapFeaturesInView(mapFeaturePack, mapCentre, currentMapDataRangeMetres).slice(0, currentRenderingDetail.maximumLabels),
     point,
@@ -762,13 +763,13 @@ export default function RoutePlanner({
       const southEast = renderedPoint({ longitude: tile.east, latitude: tile.south });
       return <image key={tile.key} className="route-depth-tile" href={tile.url} x={northWest.x} y={northWest.y} width={southEast.x - northWest.x + .5} height={southEast.y - northWest.y + .5} preserveAspectRatio="none" onLoad={() => depthTileLoaded(tile.key)} onError={() => depthTileFailed(tile.key)} />;
     })}</g>}
-    <g className="route-land-bands" aria-hidden="true">{hatchBands.map((band, index) => <rect key={index} className="route-land-area" x={band.x} y={band.y} width={band.width} height={band.height} />)}</g>
+    <g className="route-land-bands" aria-hidden="true"><path className="route-land-area" d={hatchPath} /></g>
     <g className="route-coast-layer">{segments.map((segment, index) => {
       const start = renderedPoint({ longitude: segment[0], latitude: segment[1] });
       const end = renderedPoint({ longitude: segment[2], latitude: segment[3] });
       return <line key={`${segment.join(":")}:${index}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
     })}</g>
-  </>, [bathymetryKey, bathymetryTiles, depthStatus, depthTileFailed, depthTileLoaded, hatchBands, renderedPoint, segments, showDepths]);
+  </>, [bathymetryKey, bathymetryTiles, depthStatus, depthTileFailed, depthTileLoaded, hatchPath, renderedPoint, segments, showDepths]);
   const guidancePosition = journeyState === "active" || journeyState === "arrived" ? fix : effectiveStart;
   const routeGuidance = useMemo(() => route && guidancePosition ? getProgressAwareRouteGuidance(route.points, guidancePosition, journeyState === "planning" ? 0 : journeyProgressMetres) : null, [guidancePosition, journeyProgressMetres, journeyState, route]);
   const nextBearing = routeGuidance && guidancePosition ? geoBearing(guidancePosition, routeGuidance.target) : null;
@@ -1157,7 +1158,7 @@ export default function RoutePlanner({
             {boatPoint && <g className="route-boat" transform={`translate(${boatPoint.x} ${boatPoint.y}) rotate(${boatRotationDegrees})`} filter="url(#routeBoatGlow)"><circle r="13" /><path d="M0-11 7 8 0 5-7 8Z" /></g>}
           </svg>
         </div>
-        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} />
+        <WindOverlay sample={windSample} visible={showWind} mapRotationDegrees={mapRotationDegrees} zoomKey={viewRangeMetres} />
         {activeJourney && <div className="summary-primary-row distance-map-overlay route-live-map-overlay">
           <div className="distance-readout route-live-distance">
             <span>{copy.nearestShore}</span>

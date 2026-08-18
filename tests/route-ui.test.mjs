@@ -123,9 +123,9 @@ test("map zoom remains inside the supported offline planning range", () => {
 
 test("zoomed-out maps cap coastline and hatch rendering work", () => {
   assert.deepEqual(getRouteMapRenderingDetail(9_999), { hatchBandHeight: 2, maximumShorelineSegments: 3_500, maximumLabels: 72 });
-  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 28 });
-  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 18 });
-  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 0, maximumShorelineSegments: 0, maximumLabels: 12 });
+  assert.deepEqual(getRouteMapRenderingDetail(10_000), { hatchBandHeight: 2, maximumShorelineSegments: 0, maximumLabels: 28 });
+  assert.deepEqual(getRouteMapRenderingDetail(30_000), { hatchBandHeight: 2, maximumShorelineSegments: 0, maximumLabels: 18 });
+  assert.deepEqual(getRouteMapRenderingDetail(100_000), { hatchBandHeight: 2, maximumShorelineSegments: 0, maximumLabels: 12 });
   assert.equal(getRouteMapRefreshInterval(5_000), 80);
   assert.equal(getRouteMapRefreshInterval(20_000), 160);
   assert.equal(getRouteMapRefreshInterval(80_000), 240);
