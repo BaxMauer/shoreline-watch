@@ -216,6 +216,8 @@ test("offline packages and shallow-water marking are exposed as user controls", 
   const manager = await readFile(new URL("../app/offline-package-manager.tsx", import.meta.url), "utf8");
   assert.match(app, /<OfflinePackageManager language=\{language\} fix=\{fix\} \/>/);
   assert.match(manager, /downloadOfflinePackage\(/);
+  assert.match(manager, /for \(const pack of OFFLINE_PACKAGES\)/);
+  assert.match(manager, /window\.addEventListener\("online", preloadAll\)/);
   assert.match(manager, /removeOfflinePackage\(/);
   assert.match(app, /checked=\{warningConfig\.shallowWaterEnabled\}/);
   assert.match(app, /className="shallow-water-zone"/);
@@ -281,7 +283,7 @@ test("debug setting persists and exposes live GPS, anchor, depth, alarm, and map
 
 test("OSM feature catalog loads non-blockingly and labels both map modes", async () => {
   const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
-  assert.match(app, /fetch\("\/data\/croatia-map-features\.json"\)/);
+  assert.match(app, /loadPersistentJson<MapFeaturePack>\("\/data\/croatia-map-features\.json"\)/);
   assert.match(app, /mapFeatureError/);
   assert.match(app, /<ProximityPlot[\s\S]*mapFeaturePack=\{mapFeaturePack\}/);
   assert.match(planner, /getMapFeaturesInView\(mapFeaturePack, mapCentre, currentMapDataRangeMetres\)\.slice\(0, currentRenderingDetail\.maximumLabels\)/);

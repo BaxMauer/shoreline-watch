@@ -69,18 +69,43 @@ test("service worker precaches the complete install shell", async () => {
   }
 });
 
-test("service worker rotates caches and provides offline navigation fallback", async () => {
+test("service worker keeps durable data while atomically rotating the app shell", async () => {
   const serviceWorker = await readFile("public/sw.js", "utf8");
-  assert.match(serviceWorker, /CACHE_NAME\s*=\s*"shoreline-watch-v40"/);
-  assert.match(serviceWorker, /OFFLINE_CACHE_PREFIX\s*=\s*"shoreline-watch-offline-"/);
-  assert.match(serviceWorker, /OFFLINE_BATHYMETRY_CACHE\s*=\s*"shoreline-watch-offline-bathymetry-v2"/);
-  assert.match(serviceWorker, /!key\.startsWith\(OFFLINE_CACHE_PREFIX\) \|\| key !== OFFLINE_BATHYMETRY_CACHE/);
+  assert.match(serviceWorker, /SHELL_CACHE_PREFIX\s*=\s*"shoreline-watch-shell-"/);
+  assert.match(serviceWorker, /SHELL_CACHE_NAME\s*=\s*"shoreline-watch-shell-v41"/);
+  assert.match(serviceWorker, /OFFLINE_DATA_CACHE\s*=\s*"shoreline-watch-offline-data-v1"/);
+  assert.match(serviceWorker, /key\.startsWith\(SHELL_CACHE_PREFIX\) && key !== SHELL_CACHE_NAME/);
+  assert.doesNotMatch(serviceWorker, /shoreline-watch-offline-bathymetry[^\n]*caches\.delete/);
   assert.match(serviceWorker, /event\.request\.mode === "navigate"/);
-  assert.match(serviceWorker, /cached \|\| caches\.match\("\/"\)/);
+  assert.match(serviceWorker, /cached \|\| \(await cache\.match\("\/"\)\) \|\| fetch\(event\.request\)/);
   assert.match(serviceWorker, /event\.request\.method !== "GET"/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
   assert.match(serviceWorker, /self\.clients\.claim\(\)/);
-  assert.match(serviceWorker, /requestUrl\.pathname\.startsWith\("\/api\/"\)[\s\S]*event\.respondWith\(fetch\(event\.request\)\)/);
+  assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)[\s\S]*event\.respondWith\(fetch\(event\.request\)\)/);
+});
+
+test("service worker discovers generated chunks and repairs missing offline files", async () => {
+  const serviceWorker = await readFile("public/sw.js", "utf8");
+  assert.match(serviceWorker, /discoverShellAssets/);
+  assert.match(serviceWorker, /assets\|_next\\\/static/);
+  assert.match(serviceWorker, /WARM_OFFLINE_BASE/);
+  assert.match(serviceWorker, /warmOfflineBase\(true\)/);
+  assert.match(serviceWorker, /warmOfflineBase\(false\)/);
+  assert.match(serviceWorker, /new Request\(requestUrl\(path\), \{ cache: "reload" \}\)/);
+});
+
+test("the app registers early, requests persistent storage, and uses the durable JSON cache", async () => {
+  const [layout, app, offlineResources] = await Promise.all([
+    readFile("app/layout.tsx", "utf8"),
+    readFile("app/shoreline-app.tsx", "utf8"),
+    readFile("lib/offline-resources.ts", "utf8"),
+  ]);
+  assert.match(layout, /register\('\/sw\.js',\{updateViaCache:'none'\}\)/);
+  assert.match(layout, /WARM_OFFLINE_BASE/);
+  assert.match(layout, /storage\.persist/);
+  assert.match(app, /loadPersistentJson<CoastlinePack>\("\/data\/croatia-coastline\.json"\)/);
+  assert.match(app, /loadPersistentJson<MapFeaturePack>\("\/data\/croatia-map-features\.json"\)/);
+  assert.match(offlineResources, /OFFLINE_DATA_CACHE = "shoreline-watch-offline-data-v1"/);
 });
 
 test("every local precache asset exists and core entries are unique", async () => {

@@ -20,9 +20,47 @@ export default function OfflinePackageManager({ language, fix }: { language: Lan
   const de = language === "de";
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setInstalled(parseInstalledOfflinePackages(localStorage.getItem(OFFLINE_PACKAGE_STORAGE_KEY))), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+    let cancelled = false;
+    let running = false;
+    let installedIds = parseInstalledOfflinePackages(localStorage.getItem(OFFLINE_PACKAGE_STORAGE_KEY));
+
+    const preloadAll = async () => {
+      if (cancelled || running || !navigator.onLine || installedIds.length === OFFLINE_PACKAGES.length) return;
+      running = true;
+      setError(null);
+      try {
+        await navigator.storage?.persist?.();
+        for (const pack of OFFLINE_PACKAGES) {
+          if (cancelled) return;
+          if (installedIds.includes(pack.id)) continue;
+          const total = buildOfflinePackageTiles(pack).length;
+          setJob({ id: pack.id, completed: 0, total });
+          await downloadOfflinePackage(pack, (completed, nextTotal) => {
+            if (!cancelled) setJob({ id: pack.id, completed, total: nextTotal });
+          });
+          installedIds = [...installedIds, pack.id];
+          localStorage.setItem(OFFLINE_PACKAGE_STORAGE_KEY, JSON.stringify(installedIds));
+          if (!cancelled) setInstalled(installedIds);
+        }
+      } catch {
+        if (!cancelled) setError(de ? "Download pausiert. Bei Verbindung wird er fortgesetzt." : "Download paused. It will resume when connected.");
+      } finally {
+        running = false;
+        if (!cancelled) setJob(null);
+      }
+    };
+
+    const initialTimer = window.setTimeout(() => {
+      if (!cancelled) setInstalled(installedIds);
+      void preloadAll();
+    }, 0);
+    window.addEventListener("online", preloadAll);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initialTimer);
+      window.removeEventListener("online", preloadAll);
+    };
+  }, [de]);
   const activePackage = useMemo(() => fix ? OFFLINE_PACKAGES.find((pack) => installed.includes(pack.id) && packageContainsPoint(pack, fix)) : null, [fix, installed]);
 
   const persist = (ids: string[]) => {
@@ -58,11 +96,11 @@ export default function OfflinePackageManager({ language, fix }: { language: Lan
 
   return <details className="offline-packages">
     <summary>
-      <span><strong>{de ? "Offline-Seekarten" : "Offline charts"}</strong><small>{activePackage ? `${de ? "Aktiv" : "Active"}: ${de ? activePackage.nameDe : activePackage.nameEn}` : de ? `${installed.length} Pakete geladen` : `${installed.length} packages downloaded`}</small></span>
+      <span><strong>{de ? "Offline-Seekarten" : "Offline charts"}</strong><small>{job ? (de ? "Vollständiger Download läuft" : "Complete download running") : activePackage ? `${de ? "Aktiv" : "Active"}: ${de ? activePackage.nameDe : activePackage.nameEn}` : de ? `${installed.length} Pakete geladen` : `${installed.length} packages downloaded`}</small></span>
       <b>{installed.length}/{OFFLINE_PACKAGES.length}</b>
     </summary>
     <div className="offline-package-body">
-      <p>{de ? "Küste, Orte und Routing sind bereits offline. Pakete speichern zusätzlich das EMODnet-Tiefenrelief." : "Coastline, places, and routing already work offline. Packages also store EMODnet depth relief."}</p>
+      <p>{de ? "Küste, Orte, Routing und alle Tiefenpakete werden automatisch dauerhaft gespeichert." : "Coastline, places, routing, and all depth packages are stored automatically and persistently."}</p>
       <div className="offline-package-list">
         {OFFLINE_PACKAGES.map((pack) => {
           const ready = installed.includes(pack.id);

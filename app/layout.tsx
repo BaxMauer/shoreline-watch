@@ -51,6 +51,7 @@ export default function RootLayout({
     <html lang="de" className="dark" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('shoreline-theme');if(['ocean','xp','dark','nautical'].includes(t))document.documentElement.dataset.theme=t;}catch(e){}})();` }} />
+        <script dangerouslySetInnerHTML={{ __html: `(function(){if(!('serviceWorker' in navigator))return;navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(function(){return navigator.serviceWorker.ready;}).then(function(r){if(r.active)r.active.postMessage({type:'WARM_OFFLINE_BASE'});if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(function(){});}).catch(function(){});}());` }} />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
