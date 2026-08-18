@@ -52,6 +52,14 @@ test("distance warning retains visual and vibration paths independently from aud
   assert.match(app, /if \(gatedSound\.sound === "safe"\) void soundSafeChime\(\)/);
 });
 
+test("persistent safety banner excludes the shoreline-distance notice across all tabs", () => {
+  const alertSelection = app.match(/const globalSafetyAlert =[\s\S]*?\n\s*return \(/)?.[0] ?? "";
+  assert.doesNotMatch(alertSelection, /insideLimit/);
+  assert.doesNotMatch(alertSelection, /kind:\s*"distance"/);
+  assert.match(alertSelection, /activeSpeedViolation/);
+  assert.match(alertSelection, /courseRisk\.level/);
+});
+
 test("alarm media is preloaded and primed from the user start gesture", () => {
   assert.match(app, /src="\/audio\/shoreline-alarm\.wav"/);
   assert.match(app, /preload="auto"/);
