@@ -87,8 +87,11 @@ export async function downloadOfflinePackage(pack: OfflinePackage, onProgress: (
       const url = urls[nextIndex];
       nextIndex += 1;
       const request = new Request(url, { mode: "no-cors", cache: "reload" });
-      const response = await fetch(request);
-      await cache.put(request, response);
+      const cached = await cache.match(request);
+      if (!cached) {
+        const response = await fetch(request);
+        await cache.put(request, response);
+      }
       completed += 1;
       onProgress(completed, urls.length);
     }

@@ -4,6 +4,7 @@ import {
   OFFLINE_BATHYMETRY_CACHE,
   OFFLINE_PACKAGES,
   buildOfflinePackageTiles,
+  downloadOfflinePackage,
   packageContainsPoint,
   parseInstalledOfflinePackages,
 } from "../lib/offline-packages.ts";
@@ -34,4 +35,40 @@ test("package bounds identify fixes inside and outside a region", () => {
   assert.ok(murter);
   assert.equal(packageContainsPoint(murter, { latitude: 43.8, longitude: 15.55 }), true);
   assert.equal(packageContainsPoint(murter, { latitude: 45, longitude: 16 }), false);
+});
+
+test("offline package downloads resume by reusing tiles already in Cache Storage", async (context) => {
+  const pack = {
+    id: "test",
+    nameDe: "Test",
+    nameEn: "Test",
+    detailDe: "Test",
+    detailEn: "Test",
+    bounds: { north: 43.8, east: 15.55, south: 43.8, west: 15.55 },
+  };
+  const tiles = buildOfflinePackageTiles(pack);
+  const cachedUrl = tiles[0].url;
+  const stored = [];
+  const originalCaches = Object.getOwnPropertyDescriptor(globalThis, "caches");
+  Object.defineProperty(globalThis, "caches", { configurable: true, value: { open: async () => ({
+    match: async (request) => request.url === cachedUrl ? new Response("cached") : undefined,
+    put: async (request) => stored.push(request.url),
+  }) } });
+  context.after(() => {
+    if (originalCaches) Object.defineProperty(globalThis, "caches", originalCaches);
+    else delete globalThis.caches;
+  });
+  let networkRequests = 0;
+  context.mock.method(globalThis, "fetch", async () => {
+    networkRequests += 1;
+    return new Response("tile");
+  });
+  let progress = [0, 0];
+
+  const total = await downloadOfflinePackage(pack, (completed, nextTotal) => { progress = [completed, nextTotal]; });
+
+  assert.equal(total, tiles.length);
+  assert.equal(networkRequests, tiles.length - 1);
+  assert.equal(stored.length, tiles.length - 1);
+  assert.deepEqual(progress, [tiles.length, tiles.length]);
 });

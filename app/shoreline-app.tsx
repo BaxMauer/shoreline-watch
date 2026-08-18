@@ -85,6 +85,7 @@ import {
   type CurrentDepthState,
 } from "../lib/bathymetry";
 import { getMapOrientation } from "../lib/map-orientation";
+import { loadPersistentJson } from "../lib/offline-resources";
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
@@ -993,22 +994,18 @@ export default function ShorelineApp() {
     };
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.addEventListener("controllerchange", refreshForUpdate);
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+        .then(() => navigator.serviceWorker.ready)
+        .then((registration) => registration.active?.postMessage({ type: "WARM_OFFLINE_BASE" }))
+        .catch(() => undefined);
     }
+    void navigator.storage?.persist?.().catch(() => false);
 
-    fetch("/data/croatia-coastline.json")
-      .then((response) => {
-        if (!response.ok) throw new Error("Coastline pack could not be loaded.");
-        return response.json() as Promise<CoastlinePack>;
-      })
+    loadPersistentJson<CoastlinePack>("/data/croatia-coastline.json")
       .then((data) => { setPack(data); setPackError(null); })
       .catch((error: unknown) => setPackError(error instanceof Error ? error.message : "Coastline pack could not be loaded."));
 
-    fetch("/data/croatia-map-features.json")
-      .then((response) => {
-        if (!response.ok) throw new Error("Map feature pack could not be loaded.");
-        return response.json() as Promise<MapFeaturePack>;
-      })
+    loadPersistentJson<MapFeaturePack>("/data/croatia-map-features.json")
       .then((data) => setMapFeaturePack(data))
       .catch((error: unknown) => setMapFeatureError(error instanceof Error ? error.message : "Map feature pack could not be loaded."));
 
