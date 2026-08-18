@@ -1918,8 +1918,6 @@ export default function ShorelineApp() {
       ? { kind: "anchor", title: copy.anchorAlarm, detail: copy.anchorAlarmDetail(Math.round(anchorWatchSnapshot.distanceMetres ?? 0), anchorWatchSnapshot.radiusMetres) }
       : activeSpeedViolation
         ? { kind: "speed", title: copy.speedDanger, detail: copy.speedDangerDetail(speedKnots?.toFixed(1) ?? "—", warningConfig.maxSpeedKnots.toFixed(1), warningConfig.distanceMetres) }
-        : insideLimit && gpsReliable
-          ? { kind: "distance", title: copy.visualDistance, detail: copy.visualDistanceDetail(warningConfig.distanceMetres) }
         : courseRisk.level !== "none"
           ? { kind: `course-${courseRisk.level}`, title: courseRisk.label, detail: courseRisk.detail }
           : null;
