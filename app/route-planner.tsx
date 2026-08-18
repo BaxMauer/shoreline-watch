@@ -683,9 +683,8 @@ export default function RoutePlanner({
   const depthStatus = !showDepths || bathymetryTiles.length === 0
     ? "idle"
     : depthLoadStatus.key === bathymetryKey ? depthLoadStatus.status : "loading";
-  const showLandFallback = !showDepths || depthStatus !== "ready";
   const hatchBands = useMemo(() => {
-    if (!pack || !showLandFallback) return [];
+    if (!pack) return [];
     const bandHeight = renderingDetail.hatchBandHeight > 0
       ? renderingDetail.hatchBandHeight
       : renderedRangeMetres > 60_000 ? 28 : renderedRangeMetres > 25_000 ? 20 : 10;
@@ -703,7 +702,7 @@ export default function RoutePlanner({
       }
     }
     return bands;
-  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderedRangeMetres, renderingDetail.hatchBandHeight, showLandFallback]);
+  }, [centre, mapDataRangeMetres, pack, renderedCentre.latitude, renderedCentre.longitude, renderedMetresPerLongitudeDegree, renderedPixelsPerMetre, renderedRangeMetres, renderingDetail.hatchBandHeight]);
   const mapLabels = useMemo(() => placeMapFeatureLabels(
     getMapFeaturesInView(mapFeaturePack, mapCentre, currentMapDataRangeMetres).slice(0, currentRenderingDetail.maximumLabels),
     point,

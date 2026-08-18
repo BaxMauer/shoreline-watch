@@ -290,12 +290,17 @@ test("OSM feature catalog loads non-blockingly and labels both map modes", async
   const landLayer = planner.indexOf("className=\"route-land-area\"");
   const labelLayer = planner.indexOf("className=\"map-feature-labels\"");
   assert.ok(depthLayer >= 0 && landLayer > depthLayer && labelLayer > landLayer);
-  assert.match(planner, /const showLandFallback = !showDepths \|\| depthStatus !== "ready"/);
-  assert.match(planner, /if \(!pack \|\| !showLandFallback\) return \[\]/);
   assert.match(planner, /recordBathymetryTileResult\(current, tileKey, "loaded"\)/);
   assert.match(planner, /recordBathymetryTileResult\(current, tileKey, "failed"\)/);
   assert.match(planner, /<g key=\{bathymetryKey\} className=\{`route-bathymetry-layer/);
   assert.match(planner, /route-bathymetry-layer \$\{depthStatus === "ready" \? "complete" : "pending"\}/);
+});
+
+test("route land overlay remains visible after bathymetry finishes loading", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(planner, /const hatchBands = useMemo\(\(\) => \{\s*if \(!pack\) return \[\]/);
+  assert.doesNotMatch(planner, /showLandFallback|depthStatus !== "ready"[\s\S]*hatchBands/);
+  assert.ok(planner.indexOf("route-bathymetry-layer") < planner.indexOf("className=\"route-land-bands\""));
 });
 
 test("active trip map mirrors the distance instrument's clearance geometry", async () => {
