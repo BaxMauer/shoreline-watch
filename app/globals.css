@@ -433,6 +433,15 @@ button { border: 0; font: inherit; -webkit-tap-highlight-color: transparent; }
 .map-orientation-control .compass-needle { transition: transform .25s ease-out; transform-box: view-box; transform-origin: 14px 14px; }
 .map-orientation-control.active { border-color: rgba(115,229,203,.62); background: rgba(4,83,79,.94); color: #fff; box-shadow: 0 0 0 2px rgba(115,229,203,.16), 0 6px 18px rgba(2,20,24,.18); }
 .distance-orientation-control { position: absolute; z-index: 5; top: 64px; right: 12px; }
+.distance-map-gesture-surface { position: absolute; z-index: 4; inset: 0; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.distance-map-gesture-surface:active { cursor: grabbing; }
+.distance-map-gesture-surface:focus-visible { outline: 3px solid rgba(115,229,203,.55); outline-offset: -3px; }
+.distance-map-zoom { position: absolute; z-index: 5; top: 114px; right: 12px; display: grid; overflow: hidden; border: 1px solid rgba(115,229,203,.22); border-radius: 12px; background: rgba(7,28,33,.86); box-shadow: 0 6px 18px rgba(2,20,24,.18); backdrop-filter: blur(10px); }
+.distance-map-zoom button { display: grid; width: 42px; height: 38px; place-items: center; border-bottom: 1px solid rgba(255,255,255,.12); background: transparent; color: #effffb; cursor: pointer; font-size: 1.1rem; font-weight: 850; }
+.distance-map-zoom button:last-child { border-bottom: 0; }
+.distance-map-zoom .distance-map-auto { height: 30px; color: var(--aqua); font-family: var(--font-geist-mono), monospace; font-size: .68rem; font-weight: 850; letter-spacing: .02em; text-transform: uppercase; }
+.distance-map-zoom.manual { border-color: rgba(255,210,122,.52); }
+.distance-map-zoom.manual .distance-map-auto { color: var(--amber); }
 .proximity-plot { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 .gps-stale .proximity-plot { opacity: .62; }
 .gps-inaccurate .proximity-plot { opacity: .7; }
