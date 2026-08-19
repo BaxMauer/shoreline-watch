@@ -25,6 +25,18 @@ test("warning preferences are loaded, sanitized, and persisted locally", () => {
   assert.match(app, /localStorage\.setItem\(WARNING_CONFIG_STORAGE_KEY, JSON\.stringify\(warningConfig\)\)/);
 });
 
+test("interrupted navigation is offered on launch and handed back to the route planner", async () => {
+  const planner = await readFile(new URL("../app/route-planner.tsx", import.meta.url), "utf8");
+  assert.match(app, /parseActiveNavigationSession\(savedActiveNavigation\)/);
+  assert.match(app, /className="navigation-resume-card"/);
+  assert.match(app, /continueInterruptedNavigation/);
+  assert.match(app, /resumeSession=\{resumeNavigationSession\}/);
+  assert.match(planner, /window\.localStorage\.setItem\(ACTIVE_NAVIGATION_STORAGE_KEY/);
+  assert.match(planner, /window\.localStorage\.removeItem\(ACTIVE_NAVIGATION_STORAGE_KEY\)/);
+  assert.match(planner, /className="route-destination-history"/);
+  assert.match(planner, /addNavigationDestination/);
+});
+
 test("live GPS requests accurate frequent fixes with a bounded timeout", () => {
   assert.match(app, /navigator\.geolocation\.watchPosition/);
   assert.match(app, /enableHighAccuracy:\s*true/);

@@ -86,6 +86,11 @@ import {
 } from "../lib/bathymetry";
 import { getMapOrientation } from "../lib/map-orientation";
 import { loadPersistentJson } from "../lib/offline-resources";
+import {
+  ACTIVE_NAVIGATION_STORAGE_KEY,
+  parseActiveNavigationSession,
+  type ActiveNavigationSession,
+} from "../lib/navigation-history";
 
 type Mode = "idle" | "live" | "demo";
 type AlarmPlayback = "idle" | "ready" | "starting" | "playing" | "blocked";
@@ -285,6 +290,10 @@ const COPY = {
     weatherTab: "Wetter",
     activitiesTab: "Logbuch",
     activitiesOpen: "Aktivitäten ansehen",
+    resumeNavigationTitle: "Navigation fortsetzen?",
+    resumeNavigationDetail: (name: string) => `Die Navigation nach ${name} wurde beim Schließen unterbrochen.`,
+    resumeNavigationAction: "Fortsetzen",
+    discardNavigation: "Verwerfen",
   },
   en: {
     online: "Online",
@@ -437,6 +446,10 @@ const COPY = {
     weatherTab: "Weather",
     activitiesTab: "Logbook",
     activitiesOpen: "View activities",
+    resumeNavigationTitle: "Resume navigation?",
+    resumeNavigationDetail: (name: string) => `Navigation to ${name} was interrupted when the app closed.`,
+    resumeNavigationAction: "Resume",
+    discardNavigation: "Discard",
   },
 } as const;
 
@@ -798,6 +811,8 @@ export default function ShorelineApp() {
   const [headingUp, setHeadingUp] = useState(false);
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>([]);
   const [showActivityOverview, setShowActivityOverview] = useState(false);
+  const [interruptedNavigation, setInterruptedNavigation] = useState<ActiveNavigationSession | null>(null);
+  const [resumeNavigationSession, setResumeNavigationSession] = useState<ActiveNavigationSession | null>(null);
   const watchId = useRef<number | null>(null);
   const modeRef = useRef<Mode>("idle");
   const wakeLock = useRef<ScreenWakeLock | null>(null);
@@ -842,6 +857,7 @@ export default function ShorelineApp() {
       const savedHeadingUp = window.localStorage.getItem(MAP_HEADING_UP_STORAGE_KEY);
       const savedActivities = window.localStorage.getItem(ACTIVITY_LOG_STORAGE_KEY);
       const savedPendingTrackPoint = window.localStorage.getItem(PENDING_TRACK_POINT_STORAGE_KEY);
+      const savedActiveNavigation = window.localStorage.getItem(ACTIVE_NAVIGATION_STORAGE_KEY);
       if (savedLanguage === "de" || savedLanguage === "en") setLanguage(savedLanguage);
       if (savedTheme === "ocean" || savedTheme === "xp" || savedTheme === "dark" || savedTheme === "nautical") setTheme(savedTheme);
       if (savedAutoSunlight === "false") setAutoSunlight(false);
@@ -871,6 +887,9 @@ export default function ShorelineApp() {
       }
       if (savedWindLayer === "false") setShowWind(false);
       if (savedHeadingUp === "true") setHeadingUp(true);
+      const resumableNavigation = parseActiveNavigationSession(savedActiveNavigation);
+      setInterruptedNavigation(resumableNavigation);
+      if (savedActiveNavigation && !resumableNavigation) window.localStorage.removeItem(ACTIVE_NAVIGATION_STORAGE_KEY);
       let restoredActivities = parseActivityLog(savedActivities);
       let discardedTripId: string | null = null;
       const savedTrip = window.localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
@@ -1709,6 +1728,24 @@ export default function ShorelineApp() {
     );
   }, [copy, pack, primeAlarm, requestWakeLock, warningConfig.alertVolumePercent, warningConfig.powerSaveAnchorRadiusMetres, warningConfig.safeSoundEnabled, warningConfig.warningSoundEnabled]);
 
+  const handleNavigationSessionChange = useCallback((session: ActiveNavigationSession | null) => {
+    setInterruptedNavigation(session);
+    if (!session) setResumeNavigationSession(null);
+  }, []);
+
+  const continueInterruptedNavigation = useCallback(async () => {
+    if (!interruptedNavigation) return;
+    setResumeNavigationSession(interruptedNavigation);
+    await startLive();
+    if (modeRef.current === "live") setTrackerTab("route");
+  }, [interruptedNavigation, startLive]);
+
+  const discardInterruptedNavigation = useCallback(() => {
+    window.localStorage.removeItem(ACTIVE_NAVIGATION_STORAGE_KEY);
+    setInterruptedNavigation(null);
+    setResumeNavigationSession(null);
+  }, []);
+
   const setDemoFix = useCallback((index: number, timestamp = Date.now()) => {
     if (!pack) return;
     const anchorShore = findNearestShore(pack, DEMO_ANCHOR.longitude, DEMO_ANCHOR.latitude);
@@ -2006,6 +2043,14 @@ export default function ShorelineApp() {
               {packError ? copy.coastError : pack ? copy.coastReady : copy.coastLoading}
             </div>
             {packError && <button className="readiness-retry" type="button" onClick={() => { setPackError(null); setPackReloadSequence((value) => value + 1); }}>{copy.retryLoad}</button>}
+            {interruptedNavigation && <section className="navigation-resume-card" aria-label={copy.resumeNavigationTitle}>
+              <span aria-hidden="true">↗</span>
+              <div><strong>{copy.resumeNavigationTitle}</strong><small>{copy.resumeNavigationDetail(interruptedNavigation.destination.name)}</small></div>
+              <div>
+                <button type="button" className="navigation-resume-primary" disabled={!pack} onClick={() => void continueInterruptedNavigation()}>{copy.resumeNavigationAction}</button>
+                <button type="button" onClick={discardInterruptedNavigation}>{copy.discardNavigation}</button>
+              </div>
+            </section>}
             <div className="preferences">
               <label className="preference-field">
                 <span>{copy.language}</span>
@@ -2256,6 +2301,8 @@ export default function ShorelineApp() {
               onToggleWind={toggleWindLayer}
               headingUp={headingUp}
               onToggleHeadingUp={() => setHeadingUp((value) => !value)}
+              resumeSession={resumeNavigationSession}
+              onNavigationSessionChange={handleNavigationSessionChange}
             />
           </div>
           <div hidden={trackerTab !== "weather"} className="weather-tab-panel">
