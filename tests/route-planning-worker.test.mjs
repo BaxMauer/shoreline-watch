@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RoutePlanningWorkerController } from "../lib/route-planning-worker.ts";
+import {
+  RoutePlanningWorkerController,
+  resolveRoutePlanningWorkerUrl,
+} from "../lib/route-planning-worker.ts";
 
 class FakeWorker {
   onmessage = null;
@@ -30,6 +33,16 @@ function request() {
     },
   };
 }
+
+test("worker assets are always loaded from the running application origin", () => {
+  assert.equal(
+    resolveRoutePlanningWorkerUrl(
+      new URL("file:///_next/static/route-planning.worker.js?worker_file&type=module"),
+      "https://boot.maxi-bauer.de",
+    ).href,
+    "https://boot.maxi-bauer.de/_next/static/route-planning.worker.js?worker_file&type=module",
+  );
+});
 
 test("starting a new route terminates the previous worker and ignores its queued result", () => {
   const workers = [];

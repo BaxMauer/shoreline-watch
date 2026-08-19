@@ -33,6 +33,15 @@ export type RoutePlanningCallbacks = {
   onError(): void;
 };
 
+/**
+ * Vinext emits worker assets with a build-time file URL as their base. Browsers
+ * must load the resulting path from the running application instead of trying
+ * to open the build machine's file:// URL.
+ */
+export function resolveRoutePlanningWorkerUrl(assetUrl: URL, pageOrigin: string) {
+  return new URL(`${assetUrl.pathname}${assetUrl.search}${assetUrl.hash}`, pageOrigin);
+}
+
 type ActiveCalculation = {
   requestId: number;
   worker: RoutePlanningWorker;
