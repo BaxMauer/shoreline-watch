@@ -11,6 +11,7 @@ import {
 } from "../lib/route-planning";
 import {
   RoutePlanningWorkerController,
+  resolveRoutePlanningWorkerUrl,
   type RoutePlanningWorker,
 } from "../lib/route-planning-worker";
 import {
@@ -450,10 +451,13 @@ export default function RoutePlanner({
   }, []);
 
   useEffect(() => {
-    const controller = new RoutePlanningWorkerController(() => new Worker(
-      new URL("../workers/route-planning.worker.ts", import.meta.url),
-      { type: "module", name: "shoreline-route-planning" },
-    ) as RoutePlanningWorker);
+    const controller = new RoutePlanningWorkerController(() => {
+      const assetUrl = new URL("../workers/route-planning.worker.ts", import.meta.url);
+      return new Worker(
+        resolveRoutePlanningWorkerUrl(assetUrl, window.location.origin),
+        { type: "module", name: "shoreline-route-planning" },
+      ) as RoutePlanningWorker;
+    });
     routeWorker.current = controller;
     return () => {
       controller.dispose();

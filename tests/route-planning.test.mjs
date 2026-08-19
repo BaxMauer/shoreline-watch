@@ -130,6 +130,22 @@ test("land classification distinguishes island, mainland, and open water", () =>
   assert.equal(isPointOnLand(ISLAND_PACK, 0.03, 0.05), false);
 });
 
+test("the reported Jezera route remains connected through the Croatia pack", async () => {
+  const coastline = JSON.parse(await readFile(new URL("../public/data/croatia-coastline.json", import.meta.url), "utf8"));
+  const start = { latitude: 43.6845, longitude: 15.7315 };
+  const destination = { latitude: 43.7645, longitude: 15.6658 };
+  const result = planWaterRoute(coastline, start, destination, {
+    clearanceMetres: 300,
+    cruiseSpeedKnots: 16,
+    speedWarningEnabled: true,
+    nearShoreSpeedKnots: 8,
+  });
+
+  assert.ok(result.route, result.failure);
+  assert.ok(result.route.distanceMetres > 10_000 && result.route.distanceMetres < 13_000);
+  assert.equal(routeGeometryIsWaterOnly(coastline, result.route.points), true);
+});
+
 test("automatic routing detours around an island instead of crossing land", () => {
   const result = planWaterRoute(ISLAND_PACK, { longitude: 0.03, latitude: 0.05 }, { longitude: 0.07, latitude: 0.05 }, OPTIONS);
   assert.ok(result.route, result.failure);
