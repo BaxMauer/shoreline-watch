@@ -528,6 +528,22 @@ test("route map supports drag, pinch, wheel, keyboard zoom, and recenter", async
   assert.doesNotMatch(planner, /journeyState === "planning" && <button type="button" aria-label=\{copy\.zoomIn\}/);
 });
 
+test("distance map starts in auto and supports pan, pinch, wheel, zoom buttons, and compass recenter", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(app, /useState<DistanceMapView \| null>\(null\)/);
+  for (const handler of ["handleDistanceMapPointerDown", "handleDistanceMapPointerMove", "finishDistanceMapPointer", "handleDistanceMapWheel", "handleDistanceMapKey"]) {
+    assert.match(app, new RegExp(`on(?:PointerDown|PointerMove|PointerUp|PointerCancel|Wheel|KeyDown)=\\{${handler}\\}`));
+  }
+  assert.match(app, /pinchDistanceMapRange\(gesture\.rangeMetres, gesture\.distance, metrics\.distance\)/);
+  assert.match(app, /panDistanceMapCentre\(gesture\.centre, gesture\.rangeMetres, 360, northUpDelta\.x, northUpDelta\.y\)/);
+  assert.match(app, /window\.requestAnimationFrame\(\(\) =>/);
+  assert.match(app, /className=\{`distance-map-zoom \$\{distanceMapView \? "manual" : "auto"\}`\}/);
+  assert.match(app, /onToggle=\{\(\) => \{ recenterDistanceMap\(\); setHeadingUp/);
+  assert.match(app, /viewCentre=\{distanceMapCentre\}[\s\S]*segments=\{distanceMapSegments\}[\s\S]*rangeMetres=\{distanceMapRangeMetres\}/);
+  assert.match(css, /\.distance-map-gesture-surface\s*\{[^}]*cursor:\s*grab[^}]*touch-action:\s*none/s);
+  assert.match(css, /\.distance-map-zoom button\s*\{[^}]*width:\s*42px[^}]*height:\s*38px/s);
+});
+
 test("compact app typography has one readable minimum", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const remSizes = [...css.matchAll(/font-size:\s*(\.\d+)rem/g)].map((match) => Number(match[1]));

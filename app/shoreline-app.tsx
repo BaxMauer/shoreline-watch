@@ -1,6 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import {
   type CoastlinePack,
   type CourseToShore,
@@ -84,7 +95,13 @@ import {
   formatCurrentDepth,
   type CurrentDepthState,
 } from "../lib/bathymetry";
-import { getMapOrientation } from "../lib/map-orientation";
+import { getMapOrientation, rotateMapDelta, rotateMapPoint } from "../lib/map-orientation";
+import {
+  clampDistanceMapRange,
+  panDistanceMapCentre,
+  pinchDistanceMapRange,
+  type DistanceMapPoint,
+} from "../lib/map-gesture";
 import { loadPersistentJson } from "../lib/offline-resources";
 import {
   ACTIVE_NAVIGATION_STORAGE_KEY,
@@ -99,6 +116,7 @@ type Language = "de" | "en";
 type Theme = "ocean" | "xp" | "dark" | "nautical";
 type VisualSignalKind = "distance" | "speed" | "safe" | "anchor";
 type TrackerTab = "distance" | "route" | "weather" | "activities";
+type DistanceMapView = { centre: DistanceMapPoint; rangeMetres: number };
 type Fix = {
   longitude: number;
   latitude: number;
@@ -267,6 +285,12 @@ const COPY = {
     acquiring: "Position wird ermittelt",
     plotAcquiring: "Küstenposition wird ermittelt",
     plotDistance: (distance: number) => `Nächste Küste ${distance} Meter entfernt`,
+    distanceMapLabel: "Abstandskarte verschieben und zoomen",
+    distanceMapAuto: "Auto",
+    distanceMapManual: "Manuell",
+    distanceMapZoomIn: "Karte vergrößern",
+    distanceMapZoomOut: "Karte verkleinern",
+    distanceMapRecenter: "Automatische Kartenansicht wiederherstellen",
     courseDanger: "Küste auf aktuellem Kurs",
     courseDangerDetail: (eta: string) => `${eta} bis zur Küste · Kurs prüfen`,
     courseWarning: (distance: number) => `${distance}-m-Grenze auf aktuellem Kurs`,
@@ -423,6 +447,12 @@ const COPY = {
     acquiring: "acquiring",
     plotAcquiring: "Acquiring shoreline position",
     plotDistance: (distance: number) => `Nearest shoreline ${distance} metres away`,
+    distanceMapLabel: "Pan and zoom the distance map",
+    distanceMapAuto: "Auto",
+    distanceMapManual: "Manual",
+    distanceMapZoomIn: "Zoom map in",
+    distanceMapZoomOut: "Zoom map out",
+    distanceMapRecenter: "Restore automatic map view",
     courseDanger: "Shoreline on current course",
     courseDangerDetail: (eta: string) => `${eta} to shore · check course`,
     courseWarning: (distance: number) => `${distance} m mark on current course`,
@@ -530,14 +560,14 @@ function formatTimer(milliseconds: number) {
   return `${minutes.toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
 }
 
-function polarPoint(centre: number, radius: number, angle: number) {
+function polarPoint(centreX: number, centreY: number, radius: number, angle: number) {
   const radians = (angle * Math.PI) / 180;
-  return { x: centre + Math.sin(radians) * radius, y: centre - Math.cos(radians) * radius };
+  return { x: centreX + Math.sin(radians) * radius, y: centreY - Math.cos(radians) * radius };
 }
 
-function ringArc(centre: number, radius: number, startAngle: number, endAngle: number) {
-  const start = polarPoint(centre, radius, startAngle);
-  const end = polarPoint(centre, radius, endAngle);
+function ringArc(centreX: number, centreY: number, radius: number, startAngle: number, endAngle: number) {
+  const start = polarPoint(centreX, centreY, radius, startAngle);
+  const end = polarPoint(centreX, centreY, radius, endAngle);
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 0 1 ${end.x} ${end.y}`;
 }
 
@@ -545,6 +575,7 @@ function ProximityPlot({
   pack,
   mapFeaturePack,
   fix,
+  viewCentre,
   nearest,
   segments,
   courseToShore,
@@ -562,6 +593,7 @@ function ProximityPlot({
   pack: CoastlinePack | null;
   mapFeaturePack: MapFeaturePack | null;
   fix: Fix | null;
+  viewCentre: DistanceMapPoint | null;
   nearest: NearestShore | null;
   segments: ShorelineSegment[];
   courseToShore: CourseToShore | null;
@@ -580,12 +612,13 @@ function ProximityPlot({
   const size = 360;
   const centre = size / 2;
   const pixelsPerMetre = 146 / rangeMetres;
-  const metresPerLongitudeDegree = fix ? 111_320 * Math.cos((fix.latitude * Math.PI) / 180) : 1;
+  const metresPerLongitudeDegree = viewCentre ? 111_320 * Math.cos((viewCentre.latitude * Math.PI) / 180) : 1;
   const metresPerLatitudeDegree = 110_540;
   const point = useCallback((longitude: number, latitude: number) => ({
-    x: centre + (longitude - (fix?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
-    y: centre - (latitude - (fix?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
-  }), [centre, fix?.latitude, fix?.longitude, metresPerLongitudeDegree, pixelsPerMetre]);
+    x: centre + (longitude - (viewCentre?.longitude ?? 0)) * metresPerLongitudeDegree * pixelsPerMetre,
+    y: centre - (latitude - (viewCentre?.latitude ?? 0)) * metresPerLatitudeDegree * pixelsPerMetre,
+  }), [centre, metresPerLongitudeDegree, pixelsPerMetre, viewCentre?.latitude, viewCentre?.longitude]);
+  const boatPoint = fix ? point(fix.longitude, fix.latitude) : { x: centre, y: centre };
   const ringRadius = warningDistanceMetres * pixelsPerMetre;
   const nearestPoint = nearest ? point(nearest.longitude, nearest.latitude) : null;
   const coursePoint = courseToShore ? point(courseToShore.longitude, courseToShore.latitude) : null;
@@ -595,16 +628,17 @@ function ProximityPlot({
   const shallow = currentDepthMetres !== null && currentDepthMetres <= shallowWaterMetres;
   const { mapRotationDegrees, boatRotationDegrees } = getMapOrientation(fix?.heading, headingUp);
   const mapTransform = `rotate(${mapRotationDegrees} ${centre} ${centre})`;
+  const renderedBoatPoint = rotateMapPoint(boatPoint, { x: centre, y: centre }, mapRotationDegrees);
   const mapLabels = useMemo(() => {
-    if (!fix) return [];
+    if (!viewCentre) return [];
     const halfRangeMetres = centre * Math.SQRT2 / pixelsPerMetre;
     return placeMapFeatureLabels(
-      getMapFeaturesInView(mapFeaturePack, fix, halfRangeMetres),
+      getMapFeaturesInView(mapFeaturePack, viewCentre, halfRangeMetres),
       (value) => point(value.longitude, value.latitude),
       size,
       10,
     );
-  }, [centre, fix, mapFeaturePack, pixelsPerMetre, point, size]);
+  }, [centre, mapFeaturePack, pixelsPerMetre, point, size, viewCentre]);
 
   const dangerSectors = useMemo(() => {
     if (!fix) return [];
@@ -636,28 +670,28 @@ function ProximityPlot({
   }, [fix, metresPerLatitudeDegree, segments, warningDistanceMetres]);
 
   const landHatchBands = useMemo(() => {
-    if (!fix || !pack) return [];
+    if (!viewCentre || !pack) return [];
     const bandHeight = 4;
     const extent = centre * Math.SQRT2;
-    const minimumLongitude = fix.longitude - extent / (metresPerLongitudeDegree * pixelsPerMetre);
-    const maximumLongitude = fix.longitude + extent / (metresPerLongitudeDegree * pixelsPerMetre);
+    const minimumLongitude = viewCentre.longitude - extent / (metresPerLongitudeDegree * pixelsPerMetre);
+    const maximumLongitude = viewCentre.longitude + extent / (metresPerLongitudeDegree * pixelsPerMetre);
     const bands: Array<{ x: number; y: number; width: number; height: number }> = [];
 
     for (let y = centre - extent; y < centre + extent; y += bandHeight) {
       const sampleY = y + bandHeight / 2;
-      const latitude = fix.latitude + (centre - sampleY) / (metresPerLatitudeDegree * pixelsPerMetre);
+      const latitude = viewCentre.latitude + (centre - sampleY) / (metresPerLatitudeDegree * pixelsPerMetre);
       const intervals = getLandIntervalsAtLatitude(pack, latitude, minimumLongitude, maximumLongitude);
       const top = y - 0.25;
       const bottom = y + bandHeight + 0.25;
 
       for (const [west, east] of intervals) {
-        const left = Math.max(centre - extent, centre + (west - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
-        const right = Math.min(centre + extent, centre + (east - fix.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        const left = Math.max(centre - extent, centre + (west - viewCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
+        const right = Math.min(centre + extent, centre + (east - viewCentre.longitude) * metresPerLongitudeDegree * pixelsPerMetre);
         if (right > left) bands.push({ x: left, y: top, width: right - left, height: bottom - top });
       }
     }
     return bands;
-  }, [centre, fix, metresPerLatitudeDegree, metresPerLongitudeDegree, pack, pixelsPerMetre]);
+  }, [centre, metresPerLatitudeDegree, metresPerLongitudeDegree, pack, pixelsPerMetre, viewCentre]);
 
   return (
     <svg
@@ -692,8 +726,8 @@ function ProximityPlot({
       {nearestPoint && (
         <line
           className="nearest-shore-line"
-          x1={centre}
-          y1={centre}
+          x1={boatPoint.x}
+          y1={boatPoint.y}
           x2={nearestPoint.x}
           y2={nearestPoint.y}
           vectorEffect="non-scaling-stroke"
@@ -729,29 +763,29 @@ function ProximityPlot({
       </g>
 
       {shallow && <g className="shallow-water-zone" aria-hidden="true">
-        <circle cx={centre} cy={centre} r={Math.max(12, shallowRadius)} />
-        <text x={centre} y={centre + 28} transform={`rotate(${-mapRotationDegrees} ${centre} ${centre + 28})`}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text>
+        <circle cx={boatPoint.x} cy={boatPoint.y} r={Math.max(12, shallowRadius)} />
+        <text x={boatPoint.x} y={boatPoint.y + 28} transform={`rotate(${-mapRotationDegrees} ${boatPoint.x} ${boatPoint.y + 28})`}>{copy.shallow} · {formatCurrentDepth(currentDepthMetres, language)} m</text>
       </g>}
 
       {anchorPoint && <g className={`anchor-map-watch ${anchorBreached ? "breached" : "holding"}`} aria-hidden="true">
         <circle className="anchor-swing-circle" cx={anchorPoint.x} cy={anchorPoint.y} r={anchorRadius} />
-        <line className="anchor-rode" x1={anchorPoint.x} y1={anchorPoint.y} x2={centre} y2={centre} />
+        <line className="anchor-rode" x1={anchorPoint.x} y1={anchorPoint.y} x2={boatPoint.x} y2={boatPoint.y} />
         <circle className="anchor-point" cx={anchorPoint.x} cy={anchorPoint.y} r="5" />
         <text x={anchorPoint.x + 12} y={anchorPoint.y - 10} transform={`rotate(${-mapRotationDegrees} ${anchorPoint.x + 12} ${anchorPoint.y - 10})`}>⚓</text>
       </g>}
 
-      <circle className="proximity-ring" cx={centre} cy={centre} r={ringRadius} />
+      <circle className="proximity-ring" cx={boatPoint.x} cy={boatPoint.y} r={ringRadius} />
       {dangerSectors.map((sector) => (
         <path
           className="danger-ring-arc"
           key={sector}
-          d={ringArc(centre, ringRadius, sector * 5 + 0.6, sector * 5 + 4.4)}
+          d={ringArc(boatPoint.x, boatPoint.y, ringRadius, sector * 5 + 0.6, sector * 5 + 4.4)}
         />
       ))}
 
       {coursePoint && courseRisk.level !== "none" && (
         <>
-          <line className="course-line" x1={centre} y1={centre} x2={coursePoint.x} y2={coursePoint.y} />
+          <line className="course-line" x1={boatPoint.x} y1={boatPoint.y} x2={coursePoint.x} y2={coursePoint.y} />
           <circle className="course-hit" cx={coursePoint.x} cy={coursePoint.y} r="4" />
         </>
       )}
@@ -760,7 +794,7 @@ function ProximityPlot({
       </g>
 
       {fix ? (
-        <g className="map-boat" transform={`translate(${centre} ${centre}) rotate(${boatRotationDegrees})`} filter="url(#boatGlow)">
+        <g className="map-boat" transform={`translate(${renderedBoatPoint.x} ${renderedBoatPoint.y}) rotate(${boatRotationDegrees})`} filter="url(#boatGlow)">
           <circle className="boat-halo" cx="0" cy="0" r="17" />
           <path d="M0-14 8.5 10 0 6.5-8.5 10Z" />
           <circle className="boat-centre" cx="0" cy="0" r="2.6" />
@@ -809,6 +843,7 @@ export default function ShorelineApp() {
   const [showWind, setShowWind] = useState(true);
   const [windReloadSequence, setWindReloadSequence] = useState(0);
   const [headingUp, setHeadingUp] = useState(false);
+  const [distanceMapView, setDistanceMapView] = useState<DistanceMapView | null>(null);
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>([]);
   const [showActivityOverview, setShowActivityOverview] = useState(false);
   const [interruptedNavigation, setInterruptedNavigation] = useState<ActiveNavigationSession | null>(null);
@@ -840,6 +875,15 @@ export default function ShorelineApp() {
   const lastLoggedFixTimestamp = useRef<number | null>(null);
   const lastStoredTrackPoint = useRef<TripTrackPoint | null>(null);
   const activityRecordsRef = useRef<ActivityRecord[]>([]);
+  const distanceMapPointers = useRef(new Map<number, { x: number; y: number }>());
+  const distanceMapGesture = useRef<{
+    centre: DistanceMapPoint;
+    rangeMetres: number;
+    centroid: { x: number; y: number };
+    distance: number;
+  } | null>(null);
+  const pendingDistanceMapView = useRef<DistanceMapView | null>(null);
+  const distanceMapFrame = useRef<number | null>(null);
   const copy = COPY[language];
 
   useEffect(() => { windSampleRef.current = windSample; }, [windSample]);
@@ -1168,10 +1212,19 @@ export default function ShorelineApp() {
   }, [fix, mode, nearest]);
 
   const viewRangeMetres = getPlotRangeMetres(nearest?.distance ?? null, warningConfig.distanceMetres);
+  const distanceMapCentre = useMemo<DistanceMapPoint | null>(
+    () => distanceMapView?.centre ?? (fix ? { longitude: fix.longitude, latitude: fix.latitude } : null),
+    [distanceMapView, fix],
+  );
+  const distanceMapRangeMetres = distanceMapView?.rangeMetres ?? viewRangeMetres;
   const nearbySegments = useMemo(() => {
     if (!pack || !fix) return [];
     return getNearbyShorelineSegments(pack, fix.longitude, fix.latitude, viewRangeMetres * 1.55);
   }, [fix, pack, viewRangeMetres]);
+  const distanceMapSegments = useMemo(() => {
+    if (!pack || !distanceMapCentre) return [];
+    return getNearbyShorelineSegments(pack, distanceMapCentre.longitude, distanceMapCentre.latitude, distanceMapRangeMetres * 1.55);
+  }, [distanceMapCentre, distanceMapRangeMetres, pack]);
 
   const courseToShore = useMemo(() => {
     if (!fix || fix.heading === null) return null;
@@ -1656,6 +1709,7 @@ export default function ShorelineApp() {
     setPowerSaveWakeUntil(0);
     setStationaryState(createStationaryState());
     setTrackerTab("distance");
+    setDistanceMapView(null);
   }, [mapFeaturePack, releaseAnchor, storeActivityRecord]);
 
   useEffect(() => () => {
@@ -1665,6 +1719,7 @@ export default function ShorelineApp() {
     wakeLock.current?.release().catch(() => undefined);
     audioContext.current?.close().catch(() => undefined);
     if (visualSignalTimer.current !== null) window.clearTimeout(visualSignalTimer.current);
+    if (distanceMapFrame.current !== null) window.cancelAnimationFrame(distanceMapFrame.current);
   }, []);
 
   const startLive = useCallback(async () => {
@@ -1697,6 +1752,7 @@ export default function ShorelineApp() {
     modeRef.current = "live";
     setMode("live");
     setTrackerTab("distance");
+    setDistanceMapView(null);
     setTrackingError(null);
     await requestWakeLock();
     navigator.storage?.persist?.().catch(() => false);
@@ -1783,6 +1839,7 @@ export default function ShorelineApp() {
     distanceSamples.current = [];
     setMode("demo");
     setTrackerTab("distance");
+    setDistanceMapView(null);
     setTrackingError(null);
     setDemoIndex(0);
     setDemoFix(0, demoTimestamp.current);
@@ -1853,6 +1910,87 @@ export default function ShorelineApp() {
     setShowWind((value) => !value);
   };
   const mapOrientation = getMapOrientation(fix?.heading, headingUp);
+  const distanceMapPointerMetrics = (element: HTMLDivElement) => {
+    const bounds = element.getBoundingClientRect();
+    const width = Math.max(1, bounds.width);
+    const height = Math.max(1, bounds.height);
+    const points = Array.from(distanceMapPointers.current.values()).map((value) => ({
+      x: (value.x - bounds.left) / width * 360,
+      y: (value.y - bounds.top) / height * 360,
+    }));
+    const centroid = points.reduce(
+      (total, value) => ({ x: total.x + value.x / points.length, y: total.y + value.y / points.length }),
+      { x: 0, y: 0 },
+    );
+    const distance = points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    return { centroid, distance };
+  };
+  const beginDistanceMapGesture = (element: HTMLDivElement, view = distanceMapView ?? (distanceMapCentre ? { centre: distanceMapCentre, rangeMetres: distanceMapRangeMetres } : null)) => {
+    if (!view) return;
+    distanceMapGesture.current = { ...view, ...distanceMapPointerMetrics(element) };
+  };
+  const scheduleDistanceMapView = (view: DistanceMapView) => {
+    pendingDistanceMapView.current = view;
+    if (distanceMapFrame.current !== null) return;
+    distanceMapFrame.current = window.requestAnimationFrame(() => {
+      distanceMapFrame.current = null;
+      const pending = pendingDistanceMapView.current;
+      pendingDistanceMapView.current = null;
+      if (pending) setDistanceMapView(pending);
+    });
+  };
+  const recenterDistanceMap = () => {
+    pendingDistanceMapView.current = null;
+    if (distanceMapFrame.current !== null) window.cancelAnimationFrame(distanceMapFrame.current);
+    distanceMapFrame.current = null;
+    setDistanceMapView(null);
+  };
+  const zoomDistanceMap = (factor: number) => {
+    if (!distanceMapCentre) return;
+    const current = pendingDistanceMapView.current ?? distanceMapView ?? { centre: distanceMapCentre, rangeMetres: distanceMapRangeMetres };
+    scheduleDistanceMapView({ centre: current.centre, rangeMetres: clampDistanceMapRange(current.rangeMetres * factor, viewRangeMetres) });
+  };
+  const handleDistanceMapPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!distanceMapCentre) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    distanceMapPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    beginDistanceMapGesture(event.currentTarget, pendingDistanceMapView.current ?? distanceMapView ?? { centre: distanceMapCentre, rangeMetres: distanceMapRangeMetres });
+  };
+  const handleDistanceMapPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!distanceMapPointers.current.has(event.pointerId) || !distanceMapGesture.current) return;
+    distanceMapPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const metrics = distanceMapPointerMetrics(event.currentTarget);
+    const gesture = distanceMapGesture.current;
+    const northUpDelta = rotateMapDelta(
+      { x: metrics.centroid.x - gesture.centroid.x, y: metrics.centroid.y - gesture.centroid.y },
+      -mapOrientation.mapRotationDegrees,
+    );
+    scheduleDistanceMapView({
+      centre: panDistanceMapCentre(gesture.centre, gesture.rangeMetres, 360, northUpDelta.x, northUpDelta.y),
+      rangeMetres: distanceMapPointers.current.size >= 2
+        ? pinchDistanceMapRange(gesture.rangeMetres, gesture.distance, metrics.distance)
+        : gesture.rangeMetres,
+    });
+  };
+  const finishDistanceMapPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    distanceMapPointers.current.delete(event.pointerId);
+    if (distanceMapPointers.current.size > 0) {
+      beginDistanceMapGesture(event.currentTarget, pendingDistanceMapView.current ?? distanceMapView ?? (distanceMapCentre ? { centre: distanceMapCentre, rangeMetres: distanceMapRangeMetres } : null));
+    } else {
+      distanceMapGesture.current = null;
+    }
+  };
+  const handleDistanceMapWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    zoomDistanceMap(event.deltaY > 0 ? 1.18 : 1 / 1.18);
+  };
+  const handleDistanceMapKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "+" || event.key === "=") zoomDistanceMap(1 / 1.7);
+    else if (event.key === "-") zoomDistanceMap(1.7);
+    else if (event.key === "0" || event.key === "Home") recenterDistanceMap();
+    else return;
+    event.preventDefault();
+  };
   const debugSnapshot = {
     schemaVersion: 1,
     appVersion: APP_VERSION,
@@ -2220,11 +2358,12 @@ export default function ShorelineApp() {
                 pack={pack}
                 mapFeaturePack={mapFeaturePack}
                 fix={fix}
+                viewCentre={distanceMapCentre}
                 nearest={nearest}
-                segments={nearbySegments}
+                segments={distanceMapSegments}
                 courseToShore={courseToShore}
                 courseRisk={courseRisk}
-                rangeMetres={viewRangeMetres}
+                rangeMetres={distanceMapRangeMetres}
                 warningDistanceMetres={warningConfig.distanceMetres}
                 shallowWaterMetres={warningConfig.shallowWaterEnabled ? warningConfig.shallowWaterMetres : -1}
                 currentDepthMetres={currentDepthState === "ready" ? currentDepthMetres : null}
@@ -2235,12 +2374,29 @@ export default function ShorelineApp() {
                 headingUp={headingUp}
               />
               <WindOverlay sample={windSample} visible={showWind && trackerTab === "distance" && !powerSaveReason} mapRotationDegrees={mapOrientation.mapRotationDegrees} />
+              <div
+                className={`distance-map-gesture-surface ${distanceMapView ? "manual" : "auto"}`}
+                role="application"
+                tabIndex={0}
+                aria-label={copy.distanceMapLabel}
+                onPointerDown={handleDistanceMapPointerDown}
+                onPointerMove={handleDistanceMapPointerMove}
+                onPointerUp={finishDistanceMapPointer}
+                onPointerCancel={finishDistanceMapPointer}
+                onWheel={handleDistanceMapWheel}
+                onKeyDown={handleDistanceMapKey}
+              />
               {showWind && windSample && <span className="wind-source-credit">Wind: Open-Meteo</span>}
               <button className={`wind-map-control ${showWind ? "active" : ""} ${windState}`} type="button" aria-pressed={showWind} onClick={toggleWindLayer}>
                 <span className="wind-arrow" style={{ transform: `rotate(${windSample?.directionDegrees ?? 0}deg)` }} aria-hidden="true">↓</span>
                 <span><small>{copy.wind}</small><b>{windLabel}</b></span>
               </button>
-              <MapOrientationControl headingUp={headingUp} heading={fix?.heading} language={language} onToggle={() => setHeadingUp((value) => !value)} className="distance-orientation-control" />
+              <MapOrientationControl headingUp={headingUp} heading={fix?.heading} language={language} onToggle={() => { recenterDistanceMap(); setHeadingUp((value) => !value); }} className="distance-orientation-control" />
+              <div className={`distance-map-zoom ${distanceMapView ? "manual" : "auto"}`} aria-label={copy.distanceMapLabel}>
+                <button type="button" aria-label={copy.distanceMapZoomIn} title={copy.distanceMapZoomIn} onClick={() => zoomDistanceMap(1 / 1.7)}>+</button>
+                <button type="button" className="distance-map-auto" aria-label={copy.distanceMapRecenter} title={copy.distanceMapRecenter} aria-pressed={!distanceMapView} onClick={recenterDistanceMap}>{distanceMapView ? copy.distanceMapManual : copy.distanceMapAuto}</button>
+                <button type="button" aria-label={copy.distanceMapZoomOut} title={copy.distanceMapZoomOut} onClick={() => zoomDistanceMap(1.7)}>−</button>
+              </div>
               <div className="summary-primary-row distance-map-overlay">
                 <div className="distance-readout">
                   <span>{copy.nearestShore}</span>

@@ -73,7 +73,7 @@ test("land is hatched across the complete plot with Safari-stable scan bands", (
 test("nearest shoreline guide is dashed, subtle, and behind the coast", () => {
   assert.match(css, /\.nearest-shore-line\s*\{[^}]*stroke-dasharray:\s*2\.5 7/s);
   assert.match(css, /\.nearest-shore-line\s*\{[^}]*opacity:\s*\.3/s);
-  assert.match(app, /className="nearest-shore-line"[\s\S]*x1=\{centre\}[\s\S]*x2=\{nearestPoint\.x\}/);
+  assert.match(app, /className="nearest-shore-line"[\s\S]*x1=\{boatPoint\.x\}[\s\S]*y1=\{boatPoint\.y\}[\s\S]*x2=\{nearestPoint\.x\}/);
   assert.ok(app.indexOf('className="land-hatch-layer"') < app.indexOf('className="nearest-shore-line"'));
   assert.ok(app.indexOf('className="nearest-shore-line"') < app.indexOf('className="coast-layer"'));
 });
