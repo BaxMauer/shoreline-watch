@@ -75,6 +75,18 @@ import WindOverlay from "./wind-overlay";
 import { windCompassLabel, type WindSample } from "../lib/wind";
 import MapOrientationControl from "./map-orientation-control";
 import { getMapOrientation, rotateMapDelta, rotateMapPoint } from "../lib/map-orientation";
+import {
+  ACTIVE_NAVIGATION_STORAGE_KEY,
+  NAVIGATION_HISTORY_STORAGE_KEY,
+  addNavigationDestination,
+  createActiveNavigationSession,
+  createCoordinateDestination,
+  createSearchDestination,
+  parseNavigationHistory,
+  touchActiveNavigationSession,
+  type ActiveNavigationSession,
+  type NavigationDestination,
+} from "../lib/navigation-history";
 
 type Language = "de" | "en";
 type Fix = GeoPoint & { speed: number | null; accuracy?: number; heading?: number | null };
@@ -141,6 +153,8 @@ const COPY = {
     searchEmpty: "Kein passender Ort gefunden.",
     searchOffline: "Online-Suche nicht erreichbar – lokale Treffer werden angezeigt.",
     searchHint: (name: string) => `${name} · Ziel automatisch im Wasser gesetzt`,
+    recentDestinations: "Letzte Ziele",
+    clearHistory: "Löschen",
     swap: "Start und Ziel tauschen",
     calculateRoute: "Route berechnen",
     invalidCoordinates: "Bitte gültige Breiten- und Längengrade eingeben.",
@@ -239,6 +253,8 @@ const COPY = {
     searchEmpty: "No matching place found.",
     searchOffline: "Online search unavailable — showing local matches.",
     searchHint: (name: string) => `${name} · destination placed in the water automatically`,
+    recentDestinations: "Recent destinations",
+    clearHistory: "Clear",
     swap: "Swap start and destination",
     calculateRoute: "Calculate route",
     invalidCoordinates: "Enter valid latitude and longitude values.",
@@ -304,6 +320,8 @@ export default function RoutePlanner({
   onToggleWind,
   headingUp,
   onToggleHeadingUp,
+  resumeSession,
+  onNavigationSessionChange,
 }: {
   pack: CoastlinePack | null;
   fix: Fix | null;
@@ -322,6 +340,8 @@ export default function RoutePlanner({
   onToggleWind: () => void;
   headingUp: boolean;
   onToggleHeadingUp: () => void;
+  resumeSession: ActiveNavigationSession | null;
+  onNavigationSessionChange: (session: ActiveNavigationSession | null) => void;
 }) {
   const copy = COPY[language];
   const gpsReliable = canPlanRoute(gpsNavigationState, fix);
@@ -356,7 +376,11 @@ export default function RoutePlanner({
   const [placeSearchOpen, setPlaceSearchOpen] = useState(false);
   const [activePlaceIndex, setActivePlaceIndex] = useState(-1);
   const [focusedPlace, setFocusedPlace] = useState<PlaceSearchResult | null>(null);
+  const [navigationHistory, setNavigationHistory] = useState<NavigationDestination[]>([]);
   const plannedFrom = useRef<GeoPoint | null>(null);
+  const selectedDestination = useRef<NavigationDestination | null>(null);
+  const activeNavigationSession = useRef<ActiveNavigationSession | null>(null);
+  const resumeAttempted = useRef<string | null>(null);
   const [journeyProgressMetres, setJourneyProgressMetres] = useState(0);
   const rerouteTimer = useRef<number | null>(null);
   const latestRerouteFix = useRef<Fix | null>(fix);
@@ -375,6 +399,30 @@ export default function RoutePlanner({
   const depthLoadState = useRef(createBathymetryLoadTracker("", 0));
   const routeEditor = useRef<HTMLDetailsElement | null>(null);
   const routePlanner = useRef<HTMLElement | null>(null);
+
+  const recordNavigationDestination = useCallback((destination: NavigationDestination) => {
+    const currentDestination = { ...destination, selectedAt: Date.now() };
+    selectedDestination.current = currentDestination;
+    setNavigationHistory((current) => {
+      const next = addNavigationDestination(current, currentDestination);
+      window.localStorage.setItem(NAVIGATION_HISTORY_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+    return currentDestination;
+  }, []);
+
+  const clearActiveNavigation = useCallback(() => {
+    activeNavigationSession.current = null;
+    window.localStorage.removeItem(ACTIVE_NAVIGATION_STORAGE_KEY);
+    onNavigationSessionChange(null);
+  }, [onNavigationSessionChange]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setNavigationHistory(parseNavigationHistory(window.localStorage.getItem(NAVIGATION_HISTORY_STORAGE_KEY)));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (journeyState === "active") routePlanner.current?.scrollTo({ top: 0 });
@@ -480,6 +528,16 @@ export default function RoutePlanner({
           setPlanning(false);
           setStartingJourney(false);
           if (activateJourney && result.route) {
+            const now = Date.now();
+            const existingSession = activeNavigationSession.current;
+            const destinationRecord = existingSession?.destination
+              ?? recordNavigationDestination(selectedDestination.current ?? createCoordinateDestination(destination, now));
+            const session = existingSession
+              ? touchActiveNavigationSession(existingSession, now)
+              : createActiveNavigationSession(destinationRecord, now);
+            activeNavigationSession.current = session;
+            window.localStorage.setItem(ACTIVE_NAVIGATION_STORAGE_KEY, JSON.stringify(session));
+            onNavigationSessionChange(session);
             setJourneyState("active");
             manualStartRequest.current = null;
             setStartMode("gps");
@@ -498,7 +556,7 @@ export default function RoutePlanner({
       });
     };
     tryRoutingAttempt(0);
-  }, [conditionalPassagesEnabled, cruiseSpeedKnots, fix, gpsReliable, journeyState, manualStart, pack, proximityRangeMetres, startMode, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
+  }, [conditionalPassagesEnabled, cruiseSpeedKnots, fix, gpsReliable, journeyState, manualStart, onNavigationSessionChange, pack, proximityRangeMetres, recordNavigationDestination, startMode, warningConfig.distanceMetres, warningConfig.maxSpeedKnots, warningConfig.speedWarningEnabled]);
 
   const fitRoute = useCallback((start = effectiveStart, destination = target) => {
     if (!start || !destination) return;
@@ -506,9 +564,14 @@ export default function RoutePlanner({
     setViewRangeMetres(clampRouteViewRange(routeViewRangeForTarget(2_500, start, destination) * .62));
   }, [effectiveStart, target]);
 
-  const selectTarget = useCallback((destination: GeoPoint, start = effectiveStart) => {
+  const selectTarget = useCallback((destination: GeoPoint, start = effectiveStart, destinationRecord?: NavigationDestination) => {
     const navigableDestination = resolveNavigableDestinationCandidates(pack, destination, start)[0]
       ?? resolvePlaceSearchTarget(pack, destination, undefined, start);
+    const currentDestination = selectedDestination.current;
+    const keepsCurrentDestination = currentDestination
+      && Math.abs(currentDestination.point.latitude - destination.latitude) < 1e-7
+      && Math.abs(currentDestination.point.longitude - destination.longitude) < 1e-7;
+    selectedDestination.current = destinationRecord ?? (keepsCurrentDestination ? currentDestination : createCoordinateDestination(destination));
     requestedDestination.current = destination;
     setTarget(navigableDestination);
     setTargetLatitude(coordinateText(navigableDestination.latitude));
@@ -536,6 +599,9 @@ export default function RoutePlanner({
   }, [calculate, fitRoute, pack, target]);
 
   const focusPlaceResult = (result: PlaceSearchResult) => {
+    const destinationRecord = recordNavigationDestination(createSearchDestination(result));
+    selectedDestination.current = destinationRecord;
+    selectTarget(result);
     const destination = resolveNavigableDestinationCandidates(pack, result, effectiveStart)[0]
       ?? resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
     pendingPlaceTarget.current = pack ? null : result;
@@ -543,11 +609,34 @@ export default function RoutePlanner({
     setPlaceQuery(result.name);
     setPlaceSearchOpen(false);
     setActivePlaceIndex(-1);
-    selectTarget(result);
     if (!effectiveStart) {
       setViewCentre(destination);
       setViewRangeMetres(clampRouteViewRange(result.kind === "place" ? 3_000 : 5_000));
     }
+  };
+
+  const selectHistoryDestination = (destination: NavigationDestination) => {
+    if (destination.kind === "coordinates") {
+      const destinationRecord = recordNavigationDestination(destination);
+      setFocusedPlace(null);
+      setPlaceQuery(destination.name);
+      setPlaceSearchOpen(false);
+      selectTarget(destination.point, effectiveStart, destinationRecord);
+      return;
+    }
+    focusPlaceResult({
+      id: destination.id,
+      name: destination.name,
+      detail: destination.detail,
+      kind: destination.kind,
+      source: "local",
+      ...destination.point,
+    });
+  };
+
+  const clearNavigationHistory = () => {
+    setNavigationHistory([]);
+    window.localStorage.removeItem(NAVIGATION_HISTORY_STORAGE_KEY);
   };
 
   const handlePlaceSearchKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -580,6 +669,7 @@ export default function RoutePlanner({
     const destination = resolveNavigableDestinationCandidates(pack, result, effectiveStart)[0]
       ?? resolvePlaceSearchTarget(pack, result, undefined, effectiveStart);
     setFocusedPlace((current) => current ? { ...current, ...destination } : current);
+    if (selectedDestination.current?.id !== result.id) selectedDestination.current = createSearchDestination(result);
     selectTarget(result);
   }, [effectiveStart, pack, selectTarget]);
 
@@ -611,6 +701,36 @@ export default function RoutePlanner({
       setPlaceSearchState("offline");
     }
   };
+
+  useEffect(() => {
+    if (!resumeSession || !pack || !fix || !gpsReliable || planning || journeyState !== "planning") return;
+    const resumeKey = `${resumeSession.startedAt}:${resumeSession.destination.id}`;
+    if (resumeAttempted.current === resumeKey) return;
+    resumeAttempted.current = resumeKey;
+    const timer = window.setTimeout(() => {
+      const destination = resumeSession.destination;
+      const navigableDestination = resolveNavigableDestinationCandidates(pack, destination.point, fix)[0]
+        ?? resolvePlaceSearchTarget(pack, destination.point, undefined, fix);
+      activeNavigationSession.current = resumeSession;
+      selectedDestination.current = destination;
+      requestedDestination.current = destination.point;
+      setTarget(navigableDestination);
+      setTargetLatitude(coordinateText(navigableDestination.latitude));
+      setTargetLongitude(coordinateText(navigableDestination.longitude));
+      setPlaceQuery(destination.name);
+      setFocusedPlace(destination.kind === "coordinates" ? null : {
+        id: destination.id,
+        name: destination.name,
+        detail: destination.detail,
+        kind: destination.kind,
+        source: "local",
+        ...navigableDestination,
+      });
+      setStartingJourney(true);
+      calculate(destination.point, fix, true, true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [calculate, fix, gpsReliable, journeyState, pack, planning, resumeSession]);
 
   useEffect(() => {
     latestRerouteFix.current = fix;
@@ -786,9 +906,12 @@ export default function RoutePlanner({
 
   useEffect(() => {
     if (journeyState !== "active" || !gpsReliable || !fix || !target || !hasReachedRouteTarget(fix, target)) return;
-    const timer = window.setTimeout(() => setJourneyState("arrived"), 0);
+    const timer = window.setTimeout(() => {
+      clearActiveNavigation();
+      setJourneyState("arrived");
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [fix, gpsReliable, journeyState, target]);
+  }, [clearActiveNavigation, fix, gpsReliable, journeyState, target]);
 
   const readinessGpsState = journeyState === "planning" && startMode === "manual" ? "reliable" : gpsNavigationState;
   const routeReadiness = getRouteReadinessState({ gpsNavigationState: readinessGpsState, planning, hasRoute: route !== null, routeRestricted: route?.mode === "restricted", hasFailure: failure !== null });
@@ -981,6 +1104,7 @@ export default function RoutePlanner({
       setStartLongitude(coordinateText(start.longitude));
     }
     requestedDestination.current = destination;
+    selectedDestination.current = createCoordinateDestination(destination);
     setTarget(navigableDestination);
     setTargetLatitude(coordinateText(navigableDestination.latitude));
     setTargetLongitude(coordinateText(navigableDestination.longitude));
@@ -999,6 +1123,7 @@ export default function RoutePlanner({
     setStartMode("manual");
     manualStartRequest.current = nextStartRequest;
     requestedDestination.current = nextTargetRequest;
+    selectedDestination.current = createCoordinateDestination(nextTargetRequest);
     setManualStart(nextStart);
     setStartLatitude(coordinateText(nextStart.latitude));
     setStartLongitude(coordinateText(nextStart.longitude));
@@ -1018,6 +1143,7 @@ export default function RoutePlanner({
 
   const endJourney = () => {
     cancelLongPress();
+    clearActiveNavigation();
     setJourneyState("planning");
     setJourneyProgressMetres(0);
     manualStartRequest.current = null;
@@ -1034,6 +1160,8 @@ export default function RoutePlanner({
     setManualStart(null);
     manualStartRequest.current = null;
     requestedDestination.current = null;
+    selectedDestination.current = null;
+    clearActiveNavigation();
     setStartMode("gps");
     setJourneyState("planning");
     setRoute(null);
@@ -1108,6 +1236,14 @@ export default function RoutePlanner({
           />
           <button type="submit" disabled={normalizePlaceSearchText(placeQuery).length < 2 || placeSearchState === "loading"}>{copy.search}</button>
         </form>
+        {normalizePlaceSearchText(placeQuery).length < 2 && navigationHistory.length > 0 && <div className="route-destination-history">
+          <div><strong>{copy.recentDestinations}</strong><button type="button" onClick={clearNavigationHistory}>{copy.clearHistory}</button></div>
+          <div>{navigationHistory.slice(0, 5).map((destination) => <button key={`${destination.id}-${destination.selectedAt}`} type="button" onClick={() => selectHistoryDestination(destination)}>
+            <i aria-hidden="true">{destination.kind === "bay" ? "≈" : destination.kind === "island" ? "◇" : destination.kind === "coordinates" ? "⌖" : "●"}</i>
+            <span><strong>{destination.name}</strong><small>{destination.kind === "coordinates" ? copy.manualPoint : formatPlaceSearchDetail({ ...destination.point, id: destination.id, name: destination.name, detail: destination.detail, kind: destination.kind, source: "local" }, language)}</small></span>
+            <b aria-hidden="true">›</b>
+          </button>)}</div>
+        </div>}
         {placeSearchOpen && normalizePlaceSearchText(placeQuery).length >= 2 && <div id="route-place-results" className="route-place-results" role="listbox" aria-label={copy.placeSearch}>
           {placeSearchState === "loading" && <p>{copy.searchLoading}</p>}
           {visiblePlaceResults.map((result, index) => <button id={`route-place-result-${index}`} key={result.id} type="button" role="option" aria-selected={activePlaceIndex === index} onMouseEnter={() => setActivePlaceIndex(index)} onClick={() => focusPlaceResult(result)}>
